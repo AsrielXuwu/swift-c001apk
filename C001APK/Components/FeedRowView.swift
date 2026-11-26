@@ -426,13 +426,13 @@ public struct SecondHandOrExtraCard: View {
                             Text(
                                 !feed.extraTitle.isEmpty
                                     ? feed.extraTitle
-                                    : (isSpecificXianyu ? "前往闲鱼查看宝贝详情" : (isTrade ? "查看商品详情" : actionURL))
+                                    : (isSpecificXianyu ? "前往闲鱼查看宝贝详情" : (isTrade ? "前往平台查看详情" : actionURL))
                             )
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
 
-                            Text(isSpecificXianyu ? "点击跳转闲鱼 · \(actionURL)" : (isTrade ? "点击查看商品 · \(actionURL)" : actionURL))
+                            Text(isSpecificXianyu ? "点击跳转闲鱼 · \(actionURL)" : (isTrade ? "点击跳转平台 · \(actionURL)" : actionURL))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -440,7 +440,7 @@ public struct SecondHandOrExtraCard: View {
 
                         Spacer(minLength: 4)
 
-                        Text(isSpecificXianyu ? "去闲鱼" : (isTrade ? "去看看" : "打开"))
+                        Text(isTrade ? "跳转平台" : "打开")
                             .font(.caption.weight(.semibold))
                             .padding(.horizontal, 9)
                             .padding(.vertical, 5)

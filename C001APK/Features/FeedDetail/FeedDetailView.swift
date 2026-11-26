@@ -225,8 +225,9 @@ public struct FeedDetailView: View {
                                 .font(.system(size: 20 * appState.settings.fontScale, weight: .bold))
                         }
 
-                        let shouldDeferIncompleteBody = feed.articleParts.isEmpty
-                            && (feed.needsDetailRefresh || (viewModel.isRefreshingDetail && feed.kind == .feedArticle))
+                        let shouldDeferIncompleteBody = viewModel.isRefreshingDetail
+                            && feed.articleParts.isEmpty
+                            && (feed.needsDetailRefresh || feed.kind == .feedArticle)
 
                         Group {
                             if !feed.articleParts.isEmpty {

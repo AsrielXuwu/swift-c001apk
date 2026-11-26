@@ -58,6 +58,7 @@ public final class AppState {
 
     public func bootstrap() async {
         await ImagePipeline.shared.updateUserAgent(settings.protocolParameters.userAgent)
+        await ImagePipeline.shared.updateMaxDiskBytes(Int64(max(50, settings.maxImageCacheMB)) * 1024 * 1024)
         await accounts.restoreActiveSessionIntoClient(
             parameters: settings.protocolParameters,
             isInitialBootstrap: true

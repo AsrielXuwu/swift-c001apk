@@ -34,7 +34,8 @@ public actor ImagePipeline {
     private var liveFlagCache: NSCache<NSString, NSNumber> { Self.memoryStore.liveFlags }
     private let session: URLSession
     private let diskDirectory: URL
-    private let maxDiskBytes: Int = 500 * 1024 * 1024
+    private var maxDiskBytes: Int64 = 500 * 1024 * 1024
+    private var diskWritesSincePrune: Int = 0
     private var inFlightTasks: [String: Task<LoadedImageResult?, Never>] = [:]
     private var userAgent: String = CoolapkToken.defaultUserAgent(
         deviceBrand: CoolapkToken.defaultDeviceBrand,
@@ -86,6 +87,11 @@ public actor ImagePipeline {
         }
     }
 
+    public func updateMaxDiskBytes(_ bytes: Int64) {
+        maxDiskBytes = max(50 * 1024 * 1024, bytes)
+        pruneDiskCacheIfNeeded()
+    }
+
     public func purgeMemory() {
         memoryCache.removeAllObjects()
         hdrFlagCache.removeAllObjects()
@@ -123,6 +129,11 @@ public actor ImagePipeline {
         guard let url = normalizedURL(urlString) else { return nil }
         let diskFile = diskFileURL(for: url.absoluteString)
         if let existing = try? Data(contentsOf: diskFile), !existing.isEmpty, existing.count <= maxBytes {
+            if let attrs = try? FileManager.default.attributesOfItem(atPath: diskFile.path),
+               let mtime = attrs[.modificationDate] as? Date,
+               Date().timeIntervalSince(mtime) > 3600 {
+                try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: diskFile.path)
+            }
             return existing
         }
         do {
@@ -137,7 +148,13 @@ public actor ImagePipeline {
                   data.count <= maxBytes else {
                 return nil
             }
-            try? data.write(to: diskFile, options: .atomic)
+            if (try? data.write(to: diskFile, options: .atomic)) != nil {
+                diskWritesSincePrune += 1
+                if diskWritesSincePrune >= 16 || data.count >= 2 * 1024 * 1024 {
+                    diskWritesSincePrune = 0
+                    pruneDiskCacheIfNeeded()
+                }
+            }
             return data
         } catch {
             return nil
@@ -215,8 +232,51 @@ public actor ImagePipeline {
         memoryCache.removeAllObjects()
         hdrFlagCache.removeAllObjects()
         liveFlagCache.removeAllObjects()
+        diskWritesSincePrune = 0
         try? FileManager.default.removeItem(at: diskDirectory)
         try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
+    }
+
+    /// Trims the oldest cached files when disk usage exceeds `maxDiskBytes`, down to 85% of the limit.
+    public func pruneDiskCacheIfNeeded() {
+        guard let enumerator = FileManager.default.enumerator(
+            at: diskDirectory,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
+        ) else { return }
+
+        struct CachedFile {
+            let url: URL
+            let size: Int64
+            let modifiedAt: Date
+        }
+
+        var entries: [CachedFile] = []
+        var total: Int64 = 0
+        for case let fileURL as URL in enumerator {
+            guard let values = try? fileURL.resourceValues(
+                forKeys: [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
+            ), values.isRegularFile == true else { continue }
+            let size = Int64(values.fileSize ?? 0)
+            total += size
+            entries.append(
+                CachedFile(
+                    url: fileURL,
+                    size: size,
+                    modifiedAt: values.contentModificationDate ?? .distantPast
+                )
+            )
+        }
+
+        guard total > maxDiskBytes else { return }
+        let targetBytes = Int64(Double(maxDiskBytes) * 0.85)
+        entries.sort { $0.modifiedAt < $1.modifiedAt }
+
+        for entry in entries {
+            guard total > targetBytes else { break }
+            if (try? FileManager.default.removeItem(at: entry.url)) != nil {
+                total -= entry.size
+            }
+        }
     }
 
     /// Extracts an embedded MotionPhoto MP4 video from JPEG XMP/tail data when present.

@@ -80,7 +80,10 @@ public final class FeedDetailViewModel {
             return
         }
 
-        if let loaded = await fetchFeedDetail(appState: appState) {
+        async let loadedFeed = fetchFeedDetail(appState: appState)
+        async let initialReplies: Void = fetchReplies(page: 1, append: false, appState: appState)
+
+        if let loaded = await loadedFeed {
             feed = loaded
             appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
             if loaded.kind == .question {
@@ -90,7 +93,7 @@ public final class FeedDetailViewModel {
         isRefreshingDetail = false
         isLoadingFeed = false
 
-        await fetchReplies(page: 1, append: false, appState: appState)
+        _ = await initialReplies
         isLoadingReplies = false
     }
 

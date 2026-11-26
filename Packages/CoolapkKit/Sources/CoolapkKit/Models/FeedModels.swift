@@ -421,6 +421,13 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             && lhs.replyNum == rhs.replyNum
             && lhs.isAuthorFollowed == rhs.isAuthorFollowed
             && lhs.authorLoginTime == rhs.authorLoginTime
+            && lhs.messageTitle == rhs.messageTitle
+            && lhs.message == rhs.message
+            && lhs.isTruncated == rhs.isTruncated
+            && lhs.articleParts.count == rhs.articleParts.count
+            && lhs.mediaItems.count == rhs.mediaItems.count
+            && lhs.totalPicCount == rhs.totalPicCount
+            && (lhs.vote == nil) == (rhs.vote == nil)
     }
 
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }

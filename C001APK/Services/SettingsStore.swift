@@ -192,8 +192,17 @@ public final class SettingsStore {
     public var enableHapticFeedback: Bool {
         didSet { defaults.set(enableHapticFeedback, forKey: "settings.enableHapticFeedback") }
     }
+    public static let imageCacheLimitOptionsMB: [Int] = [100, 250, 500, 1024, 2048]
+
     public var livePhotoLoopPlay: Bool {
         didSet { defaults.set(livePhotoLoopPlay, forKey: "settings.livePhotoLoopPlay") }
+    }
+    public var maxImageCacheMB: Int {
+        didSet {
+            defaults.set(maxImageCacheMB, forKey: "settings.maxImageCacheMB")
+            let limitBytes = Int64(max(50, maxImageCacheMB)) * 1024 * 1024
+            Task { await ImagePipeline.shared.updateMaxDiskBytes(limitBytes) }
+        }
     }
     public var useOledPureBlackDarkMode: Bool {
         didSet { defaults.set(useOledPureBlackDarkMode, forKey: "settings.useOledPureBlackDarkMode") }
@@ -263,6 +272,8 @@ public final class SettingsStore {
         self.autoAcquireSzlmOnLaunch = defaults.object(forKey: "settings.autoAcquireSzlmOnLaunch") as? Bool ?? true
         self.enableHapticFeedback = defaults.object(forKey: "settings.enableHapticFeedback") as? Bool ?? true
         self.livePhotoLoopPlay = defaults.bool(forKey: "settings.livePhotoLoopPlay")
+        let savedMaxCacheMB = defaults.integer(forKey: "settings.maxImageCacheMB")
+        self.maxImageCacheMB = savedMaxCacheMB > 0 ? savedMaxCacheMB : 500
         self.useOledPureBlackDarkMode = defaults.bool(forKey: "settings.useOledPureBlackDarkMode")
         self.onboardingCompleted = defaults.bool(forKey: "settings.onboardingCompleted")
         self.searchHistory = defaults.stringArray(forKey: "settings.searchHistory") ?? []

@@ -156,6 +156,13 @@ public struct SettingsView: View {
                 }
                 .disabled(isCheckingUpdate)
 
+                Picker("自动清理缓存上限", selection: $settings.maxImageCacheMB) {
+                    ForEach(SettingsStore.imageCacheLimitOptionsMB, id: \.self) { mb in
+                        Text(mb >= 1024 ? "\(mb / 1024) GB" : "\(mb) MB")
+                            .tag(mb)
+                    }
+                }
+
                 Button(role: .destructive) {
                     showClearCacheDialog = true
                 } label: {
@@ -218,6 +225,12 @@ public struct SettingsView: View {
         }
         .task {
             cacheBytes = await ImagePipeline.shared.diskCacheByteCount()
+        }
+        .onChange(of: settings.maxImageCacheMB) { _, _ in
+            Task {
+                try? await Task.sleep(for: .milliseconds(250))
+                cacheBytes = await ImagePipeline.shared.diskCacheByteCount()
+            }
         }
     }
 

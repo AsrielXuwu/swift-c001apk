@@ -334,7 +334,6 @@ public struct PhotoStackCardView<MenuContent: View>: View {
     @Environment(\.replyCardCoordinateSpace) private var replyCardCoordinateSpace
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
-    @State private var didLockVerticalScroll = false
     @State private var lastDragEndedAt: Date = .distantPast
     @State private var availableWidth: CGFloat = 320
     @State private var detectedRatios: [Int: CGFloat] = [:]
@@ -403,13 +402,16 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         let bottomInset: CGFloat = visibleLayers > 1 ? 16 : 0
         let innerStageWidth = max(160, availableWidth - leftInset - rightInset)
         let activeCardSize = cardFrame(at: activeIdx, maxStageWidth: innerStageWidth)
+        let maxCardHeight: CGFloat = adaptivePerItemAspect
+            ? ((0..<count).map { cardFrame(at: $0, maxStageWidth: innerStageWidth).height }.max() ?? activeCardSize.height)
+            : cardHeight
         let activeRatio = ratioForItem(at: activeIdx)
 
         ZStack {
             OrbitalDeckStage(
                 phase: deckPhase + dragProgress,
                 count: count,
-                cardHeight: activeCardSize.height
+                cardHeight: maxCardHeight
             ) { itemIndex, isFront in
                 let item = items[itemIndex]
                 let sourceID = (isFront && enableZoomSource) ? "media-\(transitionSeed)-\(itemIndex)" : nil
@@ -466,6 +468,56 @@ public struct PhotoStackCardView<MenuContent: View>: View {
             .padding(.leading, leftInset)
             .padding(.trailing, rightInset)
             .padding(.bottom, bottomInset)
+
+            if count > 1 {
+                HorizontalDeckPanOverlay(
+                    isEnabled: count > 1,
+                    activeCardSize: activeCardSize,
+                    onTap: {
+                        guard !isHorizontalDragging,
+                              abs(dragProgress) < 0.04,
+                              Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
+                        onTapCard(activeIdx)
+                    },
+                    onDragChanged: { dx in
+                        if !isHorizontalDragging {
+                            isHorizontalDragging = true
+                            replySwipeLock?.setDraggingMedia(true)
+                        }
+                        dragProgress = max(-1.15, min(1.15, -dx / 210.0))
+                    },
+                    onDragEnded: { dx, predicted, cancelled in
+                        lastDragEndedAt = Date()
+                        isHorizontalDragging = false
+                        replySwipeLock?.setDraggingMedia(false)
+                        guard !cancelled else {
+                            withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
+                                dragProgress = 0
+                            }
+                            return
+                        }
+                        let deltaStep: CGFloat
+                        if dx < -38 || predicted < -85 {
+                            deltaStep = 1
+                        } else if dx > 38 || predicted > 85 {
+                            deltaStep = -1
+                        } else {
+                            deltaStep = 0
+                        }
+                        let combined = deckPhase + dragProgress
+                        let base = deckPhase.rounded()
+                        deckPhase = combined
+                        dragProgress = 0
+                        withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+                            deckPhase = base + deltaStep
+                        }
+                    }
+                )
+                .frame(height: maxCardHeight)
+                .padding(.leading, leftInset)
+                .padding(.trailing, rightInset)
+                .padding(.bottom, bottomInset)
+            }
 
             // Stationary floating controls anchored cleanly to the active front card size.
             VStack {
@@ -536,8 +588,9 @@ public struct PhotoStackCardView<MenuContent: View>: View {
             .padding(.bottom, bottomInset)
         }
         .frame(maxWidth: .infinity)
-        .frame(height: visibleLayers > 1 ? activeCardSize.height + bottomInset + 2 : activeCardSize.height)
+        .frame(height: visibleLayers > 1 ? maxCardHeight + bottomInset + 2 : maxCardHeight)
         .animation(.interpolatingSpring(stiffness: 220, damping: 24), value: activeCardSize)
+        .animation(.interpolatingSpring(stiffness: 220, damping: 24), value: maxCardHeight)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
         } action: { _, newWidth in
@@ -565,61 +618,6 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         } preview: {
             MediaContextMenuPreview(item: activeItem, disableHDR: disableHDR)
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 16)
-                .onChanged { value in
-                    guard count > 1, !didLockVerticalScroll else { return }
-                    let dx = value.translation.width
-                    let dy = value.translation.height
-                    if !isHorizontalDragging {
-                        if abs(dy) >= abs(dx) * 0.8 {
-                            didLockVerticalScroll = true
-                            replySwipeLock?.setDraggingMedia(false)
-                            return
-                        }
-                        if abs(dx) > max(12, abs(dy) * 1.45) {
-                            isHorizontalDragging = true
-                            replySwipeLock?.setDraggingMedia(true)
-                        }
-                    }
-                    if isHorizontalDragging {
-                        dragProgress = max(-1.15, min(1.15, -dx / 210.0))
-                    }
-                }
-                .onEnded { value in
-                    didLockVerticalScroll = false
-                    guard count > 1 else { return }
-                    let dx = value.translation.width
-                    let predicted = value.predictedEndTranslation.width
-                    let wasDragging = isHorizontalDragging
-                    if wasDragging {
-                        lastDragEndedAt = Date()
-                    }
-                    isHorizontalDragging = false
-                    replySwipeLock?.setDraggingMedia(false)
-                    guard wasDragging else {
-                        withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
-                            dragProgress = 0
-                        }
-                        return
-                    }
-                    let deltaStep: CGFloat
-                    if dx < -38 || predicted < -85 {
-                        deltaStep = 1
-                    } else if dx > 38 || predicted > 85 {
-                        deltaStep = -1
-                    } else {
-                        deltaStep = 0
-                    }
-                    let combined = deckPhase + dragProgress
-                    let base = deckPhase.rounded()
-                    deckPhase = combined
-                    dragProgress = 0
-                    withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
-                        deckPhase = base + deltaStep
-                    }
-                }
-        )
     }
 
     private func updateDetectedRatio(index: Int, size: CGSize) {
@@ -997,4 +995,139 @@ private struct MediaShareActivityView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+private struct HorizontalDeckPanOverlay: UIViewRepresentable {
+    let isEnabled: Bool
+    let activeCardSize: CGSize
+    let onTap: () -> Void
+    let onDragChanged: (CGFloat) -> Void
+    let onDragEnded: (CGFloat, CGFloat, Bool) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(
+            isEnabled: isEnabled,
+            onTap: onTap,
+            onDragChanged: onDragChanged,
+            onDragEnded: onDragEnded
+        )
+    }
+
+    func makeUIView(context: Context) -> OverlayView {
+        let view = OverlayView()
+        view.backgroundColor = .clear
+        view.isOpaque = false
+        view.isMultipleTouchEnabled = false
+        view.activeCardSize = activeCardSize
+
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        pan.delegate = context.coordinator
+        pan.maximumNumberOfTouches = 1
+        pan.cancelsTouchesInView = true
+
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        tap.require(toFail: pan)
+
+        context.coordinator.panRecognizer = pan
+        view.addGestureRecognizer(pan)
+        view.addGestureRecognizer(tap)
+        return view
+    }
+
+    func updateUIView(_ uiView: OverlayView, context: Context) {
+        uiView.activeCardSize = activeCardSize
+        uiView.isUserInteractionEnabled = isEnabled
+        context.coordinator.isEnabled = isEnabled
+        context.coordinator.onTap = onTap
+        context.coordinator.onDragChanged = onDragChanged
+        context.coordinator.onDragEnded = onDragEnded
+    }
+
+    final class OverlayView: UIView {
+        var activeCardSize: CGSize = .zero
+
+        override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+            guard isUserInteractionEnabled, bounds.contains(point) else { return nil }
+            let cardMaxX = min(bounds.maxX, (bounds.width + activeCardSize.width) * 0.5)
+            let cardMaxY = min(bounds.maxY, (bounds.height + activeCardSize.height) * 0.5)
+            let buttonExclusion = CGRect(
+                x: cardMaxX - 96,
+                y: cardMaxY - 48,
+                width: 96,
+                height: 48
+            )
+            if buttonExclusion.contains(point) {
+                return nil
+            }
+            return self
+        }
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var isEnabled: Bool
+        var onTap: () -> Void
+        var onDragChanged: (CGFloat) -> Void
+        var onDragEnded: (CGFloat, CGFloat, Bool) -> Void
+        weak var panRecognizer: UIPanGestureRecognizer?
+
+        init(
+            isEnabled: Bool,
+            onTap: @escaping () -> Void,
+            onDragChanged: @escaping (CGFloat) -> Void,
+            onDragEnded: @escaping (CGFloat, CGFloat, Bool) -> Void
+        ) {
+            self.isEnabled = isEnabled
+            self.onTap = onTap
+            self.onDragChanged = onDragChanged
+            self.onDragEnded = onDragEnded
+        }
+
+        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+            guard recognizer.state == .ended else { return }
+            onTap()
+        }
+
+        @objc func handlePan(_ recognizer: UIPanGestureRecognizer) {
+            let dx = recognizer.translation(in: recognizer.view).x
+            switch recognizer.state {
+            case .began, .changed:
+                onDragChanged(dx)
+            case .ended:
+                let vx = recognizer.velocity(in: recognizer.view).x
+                let predicted = dx + vx * 0.18
+                onDragEnded(dx, predicted, false)
+            case .cancelled, .failed:
+                onDragEnded(dx, dx, true)
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard gestureRecognizer === panRecognizer,
+                  let pan = gestureRecognizer as? UIPanGestureRecognizer else {
+                return true
+            }
+            guard isEnabled else { return false }
+            let velocity = pan.velocity(in: pan.view)
+            return abs(velocity.x) > abs(velocity.y) * 1.15 && abs(velocity.x) > 12
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            false
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            guard isEnabled, gestureRecognizer === panRecognizer else { return false }
+            return otherGestureRecognizer is UIPanGestureRecognizer
+                && !(otherGestureRecognizer is UIScreenEdgePanGestureRecognizer)
+        }
+    }
 }
