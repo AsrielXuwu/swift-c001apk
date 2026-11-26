@@ -273,7 +273,7 @@ public struct ChatThreadView: View {
                                 isMine ? Color.accentColor : Color(.secondarySystemBackground),
                                 in: RoundedRectangle(cornerRadius: 16, style: .continuous)
                             )
-                            .foregroundStyle(isMine ? .white : .primary)
+                            .foregroundStyle(isMine ? Color.white : Color.primary)
                     }
 
                     if case .sending = msg.deliveryState {

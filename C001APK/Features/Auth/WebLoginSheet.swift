@@ -55,9 +55,10 @@ private struct WebLoginRepresentable: UIViewRepresentable {
 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
 
+    @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
         let onCapturedCredentials: @MainActor @Sendable (String, String, String, String) -> Void
-        @MainActor private var finished = false
+        private var finished = false
 
         init(onCapturedCredentials: @escaping @MainActor @Sendable (String, String, String, String) -> Void) {
             self.onCapturedCredentials = onCapturedCredentials

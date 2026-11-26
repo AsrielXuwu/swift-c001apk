@@ -124,6 +124,7 @@ private struct CaptchaWebViewRepresentable: UIViewRepresentable {
         """
     }
 
+    @MainActor
     final class Coordinator: NSObject, WKScriptMessageHandler {
         let onVerified: @MainActor @Sendable (String) -> Void
         var lastReload = 0

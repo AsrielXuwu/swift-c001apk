@@ -61,6 +61,7 @@ public struct RichTextView: UIViewRepresentable {
         return CGSize(width: width, height: ceil(fitted.height))
     }
 
+    @MainActor
     public final class Coordinator: NSObject, UITextViewDelegate {
         var onLinkTap: ((String) -> Void)?
 
@@ -75,7 +76,9 @@ public struct RichTextView: UIViewRepresentable {
         ) -> UIAction? {
             if case let .link(url) = textItem.content {
                 return UIAction { [weak self] _ in
-                    self?.onLinkTap?(url.absoluteString)
+                    Task { @MainActor [weak self] in
+                        self?.onLinkTap?(url.absoluteString)
+                    }
                 }
             }
             return defaultAction

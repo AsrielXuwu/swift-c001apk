@@ -270,7 +270,7 @@ public struct FeedRowView: View {
                         .monospacedDigit()
                 }
                 .font(.footnote)
-                .foregroundStyle(isLiked ? Color.pink : .secondary)
+                .foregroundStyle(isLiked ? Color.pink : Color.secondary)
                 .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
                 .contentShape(Rectangle())
             }

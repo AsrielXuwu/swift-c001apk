@@ -36,7 +36,7 @@ public struct FollowView: View {
                                             selected ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground),
                                             in: Capsule()
                                         )
-                                        .foregroundStyle(selected ? Color.accentColor : .primary)
+                                        .foregroundStyle(selected ? Color.accentColor : Color.primary)
                                 }
                                 .buttonStyle(.plain)
                             }

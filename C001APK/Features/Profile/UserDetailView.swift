@@ -175,7 +175,7 @@ public struct UserDetailView: View {
                 (profile.isFollowed || isLocalFollowed) ? Color(.secondarySystemBackground) : Color.accentColor,
                 in: Capsule()
             )
-            .foregroundStyle((profile.isFollowed || isLocalFollowed) ? .primary : .white)
+            .foregroundStyle((profile.isFollowed || isLocalFollowed) ? Color.primary : Color.white)
             .onTapGesture {
                 Task { await handleFollowTap(profile: profile) }
             }

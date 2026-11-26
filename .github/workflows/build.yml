@@ -34,6 +34,8 @@ jobs:
 
       - name: Build unsigned iOS app (arm64)
         run: |
+          mkdir -p build
+          set -o pipefail
           xcodebuild build \
             -project C001APK.xcodeproj \
             -scheme C001APK \
@@ -44,7 +46,19 @@ jobs:
             ONLY_ACTIVE_ARCH=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGNING_ALLOWED=NO
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee build/xcodebuild.log || {
+              echo "=== Compiler Errors ==="
+              grep -n -E "(error:|fatal error:)" build/xcodebuild.log | head -n 120 || true
+              exit 1
+            }
+
+      - name: Upload xcodebuild log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: build/xcodebuild.log
+          retention-days: 7
 
       - name: Package unsigned IPA and verify binary
         run: |

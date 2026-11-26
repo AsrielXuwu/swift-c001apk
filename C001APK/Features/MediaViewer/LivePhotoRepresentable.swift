@@ -43,6 +43,7 @@ public struct LivePhotoRepresentable: UIViewRepresentable {
         context.coordinator.wasLooping = isLooping
     }
 
+    @MainActor
     public final class Coordinator: NSObject, PHLivePhotoViewDelegate {
         var lastTrigger: Int = -1
         var isLooping = false
@@ -111,6 +112,7 @@ public struct ZoomableImageScrollView: UIViewRepresentable {
         }
     }
 
+    @MainActor
     public final class Coordinator: NSObject, UIScrollViewDelegate {
         weak var imageView: UIImageView?
         weak var scrollView: UIScrollView?

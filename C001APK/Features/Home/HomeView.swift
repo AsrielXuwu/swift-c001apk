@@ -34,7 +34,7 @@ public struct HomeView: View {
                                         isSelected ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground),
                                         in: Capsule()
                                     )
-                                    .foregroundStyle(isSelected ? Color.accentColor : .primary)
+                                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
                             }
                             .buttonStyle(.plain)
                         }
@@ -155,7 +155,7 @@ struct HomeTabsEditorSheet: View {
                     ForEach(draftOrder) { tab in
                         HStack {
                             Image(systemName: tab == .feed ? "checkmark.circle.fill" : (draftHidden.contains(tab) ? "circle" : "checkmark.circle.fill"))
-                                .foregroundStyle(tab == .feed || !draftHidden.contains(tab) ? Color.accentColor : .secondary)
+                                .foregroundStyle(tab == .feed || !draftHidden.contains(tab) ? Color.accentColor : Color.secondary)
                                 .onTapGesture {
                                     guard tab != .feed else { return }
                                     if draftHidden.contains(tab) {

@@ -55,7 +55,7 @@ public struct AccountsView: View {
                                         .foregroundStyle(.primary)
                                     Text(account.needsRelogin ? "凭证已过期，点击重新登录" : "UID: \(account.uid) · Lv.\(account.level)")
                                         .font(.caption)
-                                        .foregroundStyle(account.needsRelogin ? .red : .secondary)
+                                        .foregroundStyle(account.needsRelogin ? Color.red : Color.secondary)
                                 }
                                 Spacer()
                                 if appState.accounts.activeUID == account.uid && !account.needsRelogin {

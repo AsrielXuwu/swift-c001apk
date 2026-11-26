@@ -540,7 +540,7 @@ public struct FeedDetailView: View {
                             if reply.likeNum > 0 { Text("\(reply.likeNum)").monospacedDigit() }
                         }
                         .font(.caption)
-                        .foregroundStyle(reply.isLiked ? Color.pink : .secondary)
+                        .foregroundStyle(reply.isLiked ? Color.pink : Color.secondary)
                     }
                     .buttonStyle(.plain)
                 }
@@ -661,7 +661,7 @@ public struct FeedDetailView: View {
             } label: {
                 Image(systemName: feed.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
                     .font(.title3)
-                    .foregroundStyle(feed.isLiked ? Color.pink : .primary)
+                    .foregroundStyle(feed.isLiked ? Color.pink : Color.primary)
             }
 
             let isBookmarked = appState.accounts.isLoggedIn
@@ -672,7 +672,7 @@ public struct FeedDetailView: View {
             } label: {
                 Image(systemName: isBookmarked ? "star.fill" : "star")
                     .font(.title3)
-                    .foregroundStyle(isBookmarked ? Color.orange : .primary)
+                    .foregroundStyle(isBookmarked ? Color.orange : Color.primary)
             }
 
             Button {
