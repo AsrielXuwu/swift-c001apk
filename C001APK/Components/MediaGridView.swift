@@ -256,7 +256,7 @@ public struct MediaGridView: View {
             .foregroundStyle(.primary)
     }
 
-    private static func inferredAspectRatio(from urlString: String) -> CGFloat? {
+    fileprivate static func inferredAspectRatio(from urlString: String) -> CGFloat? {
         let pattern = #"[_@](\d{2,5})x(\d{2,5})(?:\D|$)"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: urlString, range: NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)),

@@ -88,8 +88,8 @@ public struct HistoryAndFavoritesBackup: Codable, Sendable {
 @MainActor
 @Observable
 public final class HistoryAndFavStore {
-    public static let defaultFolderID = "local-default"
-    public static let defaultFolderTitle = "默认本机收藏"
+    nonisolated public static let defaultFolderID = "local-default"
+    nonisolated public static let defaultFolderTitle = "默认本机收藏"
 
     private let defaults = UserDefaults.standard
     private static let historyKey = "c001apk.localHistory.v1"

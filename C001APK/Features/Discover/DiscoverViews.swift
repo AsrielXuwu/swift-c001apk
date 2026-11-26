@@ -269,7 +269,6 @@ public struct ProductDetailView: View {
     @State private var loadingTabs: Set<String> = []
     @State private var pageByTab: [String: Int] = [:]
     @State private var hasMoreByTab: [String: Bool] = [:]
-    @State private var hasInitialized = false
     @State private var isLoadingHeader = true
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
