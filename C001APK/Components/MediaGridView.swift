@@ -447,7 +447,7 @@ private struct PhotoStackCardView<MenuContent: View>: View {
 }
 
 /// Shared continuous Animatable card-deck stage supporting orbital edge crossing and smooth z-order handoff.
-public struct OrbitalDeckStage<CardContent: View>: View, Animatable {
+public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
     public var phase: CGFloat
     public let count: Int
     public let cardHeight: CGFloat
