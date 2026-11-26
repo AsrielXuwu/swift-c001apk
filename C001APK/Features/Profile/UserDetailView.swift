@@ -390,16 +390,31 @@ public struct UserDetailView: View {
                 likedRows = fetched
                 hasMoreByTab[.likes] = !fetched.isEmpty
             case .collections:
+                if !appState.settings.enableCloudFavoritesLoad {
+                    userCollections = []
+                    hasMoreByTab[.collections] = false
+                    return
+                }
                 let fetched = try await API.collectionList(uid: uid, page: 1)
                 guard !Task.isCancelled else { return }
                 userCollections = fetched
                 hasMoreByTab[.collections] = !fetched.isEmpty
             case .following:
+                if !appState.settings.enableCloudFollowLoad {
+                    following = []
+                    hasMoreByTab[.following] = false
+                    return
+                }
                 let fetched = try await API.userList(uid: uid, followers: false, page: 1)
                 guard !Task.isCancelled else { return }
                 following = fetched
                 hasMoreByTab[.following] = !fetched.isEmpty
             case .fans:
+                if !appState.settings.enableCloudFollowLoad {
+                    followers = []
+                    hasMoreByTab[.fans] = false
+                    return
+                }
                 let fetched = try await API.userList(uid: uid, followers: true, page: 1)
                 guard !Task.isCancelled else { return }
                 followers = fetched

@@ -114,15 +114,17 @@ public final class FollowViewModel {
                 loaded = try await fetchLocalFollowRows(page: page, appState: appState)
 
             case .users:
-                guard appState.accounts.isLoggedIn, let myUID = appState.accounts.activeUID else {
-                    if !append { rowsBySegment[targetSegment] = [] }
-                    hasMoreBySegment[targetSegment] = false
-                    return
+                guard appState.settings.enableCloudFollowLoad,
+                      appState.accounts.isLoggedIn,
+                      let myUID = appState.accounts.activeUID else {
+                    loaded = appState.settings.enableCloudFollowLoad ? [] : (try await fetchLocalFollowRows(page: page, appState: appState))
+                    hasMoreBySegment[targetSegment] = appState.settings.enableCloudFollowLoad ? false : !loaded.isEmpty
+                    break
                 }
                 loaded = try await fetchFollowedUsersRows(myUID: myUID, page: page)
 
             case .topics:
-                guard appState.accounts.isLoggedIn else {
+                guard appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn else {
                     if !append { rowsBySegment[targetSegment] = [] }
                     hasMoreBySegment[targetSegment] = false
                     return
@@ -138,7 +140,7 @@ public final class FollowViewModel {
                 }
 
             case .all:
-                guard appState.accounts.isLoggedIn else {
+                guard appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn else {
                     loaded = try await fetchLocalFollowRows(page: page, appState: appState)
                     break
                 }

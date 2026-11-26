@@ -9,6 +9,8 @@ public struct SwipeableReplyCard<Content: View>: View {
 
     @State private var offsetX: CGFloat = 0
     @State private var isOpen = false
+    @State private var isDraggingHorizontally = false
+    @State private var lastSwipeEndedAt: Date = .distantPast
 
     public init(
         onReply: @escaping () -> Void,
@@ -26,6 +28,10 @@ public struct SwipeableReplyCard<Content: View>: View {
 
     private var revealWidth: CGFloat {
         onLike == nil ? 100 : 148
+    }
+
+    private var shouldSuppressChildMediaTap: Bool {
+        isDraggingHorizontally || abs(offsetX) > 2 || Date().timeIntervalSince(lastSwipeEndedAt) < 0.35
     }
 
     public var body: some View {
@@ -76,13 +82,15 @@ public struct SwipeableReplyCard<Content: View>: View {
             }
 
             content()
+                .environment(\.suppressMediaTap, shouldSuppressChildMediaTap)
                 .offset(x: offsetX)
                 .simultaneousGesture(
-                    DragGesture(minimumDistance: 20)
+                    DragGesture(minimumDistance: 16)
                         .onChanged { value in
                             let dx = value.translation.width
                             let dy = value.translation.height
-                            guard abs(dx) > abs(dy) * 1.35 else { return }
+                            guard isDraggingHorizontally || abs(dx) > max(14, abs(dy) * 1.25) else { return }
+                            isDraggingHorizontally = true
                             if isOpen {
                                 let next = -revealWidth + dx
                                 offsetX = min(0, max(-revealWidth - 18, next))
@@ -93,12 +101,15 @@ public struct SwipeableReplyCard<Content: View>: View {
                         .onEnded { value in
                             let dx = value.translation.width
                             let dy = value.translation.height
-                            guard abs(dx) > abs(dy) * 1.35 else {
+                            let wasSwiping = isDraggingHorizontally || abs(dx) > max(14, abs(dy) * 1.25)
+                            isDraggingHorizontally = false
+                            guard wasSwiping else {
                                 withAnimation(.snappy(duration: 0.22)) {
                                     offsetX = isOpen ? -revealWidth : 0
                                 }
                                 return
                             }
+                            lastSwipeEndedAt = Date()
                             withAnimation(.snappy(duration: 0.24)) {
                                 if (!isOpen && dx < -46) || (isOpen && dx < 28) {
                                     offsetX = -revealWidth

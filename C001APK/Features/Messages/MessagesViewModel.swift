@@ -15,10 +15,10 @@ public enum MessagesSegment: String, CaseIterable, Identifiable, Sendable {
     var notificationEndpointType: String {
         switch self {
         case .chat: return ""
-        case .reply: return "commentMe"
-        case .atMe: return "atMe"
-        case .likes: return "feedLike"
-        case .follow: return "contactsFollow"
+        case .reply: return "commentMeList"
+        case .atMe: return "atMeList"
+        case .likes: return "feedLikeList"
+        case .follow: return "contactsFollowList"
         case .system: return "list"
         }
     }

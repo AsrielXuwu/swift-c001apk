@@ -56,6 +56,9 @@ public struct RootTabView: View {
         .sheet(isPresented: $state.showWebLoginSheet) {
             WebLoginSheet()
         }
+        .sheet(item: $state.favoritePickerFeed) { feed in
+            CollectionPickerSheet(feed: feed)
+        }
         .sheet(item: $state.activeCaptchaRequest) { request in
             CaptchaWebViewSheet(challenge: request.challenge) { token in
                 appState.completeCaptcha(validateToken: token)

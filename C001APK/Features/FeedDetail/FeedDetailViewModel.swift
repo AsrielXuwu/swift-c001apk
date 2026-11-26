@@ -165,25 +165,8 @@ public final class FeedDetailViewModel {
     }
 
     public func toggleCollect(appState: AppState) async {
-        guard var current = feed else { return }
-        guard appState.accounts.isLoggedIn else {
-            appState.historyAndFav.toggleLocalFavorite(current)
-            appState.showToast(appState.historyAndFav.isLocallyFavorited(id: current.id) ? "已加入本地收藏" : "已取消本地收藏")
-            return
-        }
-        let target = !current.isFavorited
-        current.isFavorited = target
-        current.favNum = max(0, current.favNum + (target ? 1 : -1))
-        feed = current
-        do {
-            try await API.collectFeed(id: current.id, collected: target)
-            appState.showToast(target ? "已收藏" : "已取消收藏")
-        } catch {
-            current.isFavorited = !target
-            current.favNum = max(0, current.favNum + (target ? -1 : 1))
-            feed = current
-            _ = await appState.handleAPIError(error)
-        }
+        guard let current = feed else { return }
+        appState.favoritePickerFeed = current
     }
 
     public func toggleReplyLike(_ reply: ReplyItem, appState: AppState) async {

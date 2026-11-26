@@ -7,10 +7,19 @@ private struct ZoomNamespaceKey: EnvironmentKey {
     static let defaultValue: Namespace.ID? = nil
 }
 
+private struct SuppressMediaTapKey: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+
 public extension EnvironmentValues {
     var zoomNamespace: Namespace.ID? {
         get { self[ZoomNamespaceKey.self] }
         set { self[ZoomNamespaceKey.self] = newValue }
+    }
+
+    var suppressMediaTap: Bool {
+        get { self[SuppressMediaTapKey.self] }
+        set { self[SuppressMediaTapKey.self] = newValue }
     }
 }
 
@@ -59,24 +68,16 @@ private struct StatusBarGradientBlurOverlay: View {
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
-        let topHeight = currentStatusBarHeight() + 8
-        Rectangle()
-            .fill(.ultraThinMaterial)
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .black, location: 0.0),
-                        .init(color: .black.opacity(0.76), location: 0.48),
-                        .init(color: .clear, location: 1.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .frame(height: topHeight)
-            .frame(maxWidth: .infinity)
-            .ignoresSafeArea(edges: .top)
-            .allowsHitTesting(false)
+        let topHeight = currentStatusBarHeight() + 18
+        VariableBlurView(
+            maxBlurRadius: 18,
+            direction: .blurredTopClearBottom,
+            startOffset: 0.35
+        )
+        .frame(height: topHeight)
+        .frame(maxWidth: .infinity)
+        .ignoresSafeArea(edges: .top)
+        .allowsHitTesting(false)
     }
 
     private func currentStatusBarHeight() -> CGFloat {

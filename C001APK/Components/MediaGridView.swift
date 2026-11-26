@@ -1,5 +1,8 @@
 import CoolapkKit
+import ImageIO
+import os
 import Photos
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -9,6 +12,7 @@ public struct MediaGridView: View {
 
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
+    @Environment(\.suppressMediaTap) private var suppressMediaTap
     @State private var transitionSeed = UUID().uuidString
     @State private var deckPhase: CGFloat = 0
     @State private var shareFileURL: URL?
@@ -57,26 +61,26 @@ public struct MediaGridView: View {
             ForEach(Array(displayItems.enumerated()), id: \.offset) { index, item in
                 let sourceID = onTapItem == nil ? "media-\(transitionSeed)-\(index)" : nil
                 ZStack(alignment: .topTrailing) {
-                    Button {
-                        triggerTap(at: index)
-                    } label: {
-                        Color.clear
-                            .aspectRatio(1, contentMode: .fit)
-                            .overlay {
-                                RemoteImageView(
-                                    url: item.thumbnailUrl,
-                                    maxPixelSize: 420
-                                )
-                            }
-                            .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            .applyZoomSource(id: sourceID, in: zoomNamespace)
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        mediaContextMenu(item: item, index: index)
-                    }
+                    Color.clear
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay {
+                            RemoteImageView(
+                                url: item.thumbnailUrl,
+                                maxPixelSize: 420
+                            )
+                        }
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .applyZoomSource(id: sourceID, in: zoomNamespace)
+                        .onTapGesture {
+                            triggerTap(at: index)
+                        }
+                        .contextMenu {
+                            mediaContextMenu(item: item, index: index)
+                        } preview: {
+                            MediaContextMenuPreview(item: item, disableHDR: appState.settings.disableHDR)
+                        }
 
                     badgeStack(for: item)
 
@@ -96,6 +100,7 @@ public struct MediaGridView: View {
     }
 
     private func triggerTap(at index: Int) {
+        guard !suppressMediaTap else { return }
         if let onTapItem {
             onTapItem(index)
         } else {
@@ -111,32 +116,32 @@ public struct MediaGridView: View {
         let targetHeight: CGFloat = min(300, max(120, targetWidth / clampedRatio))
         let sourceID = onTapItem == nil ? "media-\(transitionSeed)-\(index)" : nil
 
-        return Button {
-            triggerTap(at: index)
-        } label: {
-            ZStack(alignment: .topTrailing) {
-                RemoteImageView(
-                    url: item.thumbnailUrl,
-                    maxPixelSize: 1080,
-                    contentMode: .fill,
-                    honorHDR: false
-                )
-                .frame(width: targetWidth, height: targetHeight)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
-                }
-                .applyZoomSource(id: sourceID, in: zoomNamespace)
-
-                badgeStack(for: item, isLong: (ratio < 0.42))
+        return ZStack(alignment: .topTrailing) {
+            RemoteImageView(
+                url: item.thumbnailUrl,
+                maxPixelSize: 1080,
+                contentMode: .fill,
+                honorHDR: false
+            )
+            .frame(width: targetWidth, height: targetHeight)
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
             }
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            mediaContextMenu(item: item, index: index)
+            .applyZoomSource(id: sourceID, in: zoomNamespace)
+            .onTapGesture {
+                triggerTap(at: index)
+            }
+            .contextMenu {
+                mediaContextMenu(item: item, index: index)
+            } preview: {
+                MediaContextMenuPreview(item: item, disableHDR: appState.settings.disableHDR)
+            }
+
+            badgeStack(for: item, isLong: (ratio < 0.42))
         }
     }
 
@@ -302,7 +307,7 @@ private struct PhotoStackCardView<MenuContent: View>: View {
                 let item = items[itemIndex]
                 let sourceID = (isFront && enableZoomSource) ? "media-\(transitionSeed)-\(itemIndex)" : nil
 
-                Color.clear
+                Color(.secondarySystemGroupedBackground)
                     .frame(height: 218)
                     .overlay {
                         RemoteImageView(
@@ -327,6 +332,8 @@ private struct PhotoStackCardView<MenuContent: View>: View {
                     }
                     .contextMenu {
                         contextMenuBuilder(item, itemIndex)
+                    } preview: {
+                        MediaContextMenuPreview(item: item, disableHDR: disableHDR)
                     }
             }
             .padding(.leading, visibleLayers > 2 ? 16 : 0)
@@ -524,9 +531,12 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
                 let y = (p * 6.0) + (tuckRatio * (rearTargetY - 6.0))
                 let scale = 1.0 - (targetShrink * p)
                 let angle = Double(-swingOut * 7.5) + (tuckRatio * rearTargetAngle)
-                let zIndex: Double = p < 0.48 ? 100.0 : 40.0
-                let restFade = count == 2 ? max(0.0, 1.0 - max(0.0, (p - 0.72) / 0.24)) : 1.0
-                let opacity = (1.0 - Double(tuckRatio) * 0.12) * restFade
+                // For 2-card stacks, keep t == -1 at the exact same rest transform/opacity as t == +1
+                // so reversing from card 2 back to card 1 across integer boundaries never pops/vanishes.
+                let zIndex: Double = p < 0.48 ? 100.0 : (count == 2 ? 68.0 : 40.0)
+                let opacity = count == 2
+                    ? (1.0 - Double(tuckRatio) * 0.04)
+                    : (1.0 - Double(tuckRatio) * 0.12)
                 return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
             } else {
                 let fade = max(0.0, 1.0 - Double((-t - 1.0) / 0.45))
@@ -564,6 +574,139 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
 private struct MediaShareFileItem: Identifiable {
     let id = UUID()
     let url: URL
+}
+
+public struct AnimatedGIFView: UIViewRepresentable {
+    public let data: Data
+    public var contentMode: UIView.ContentMode = .scaleAspectFit
+
+    public init(data: Data, contentMode: UIView.ContentMode = .scaleAspectFit) {
+        self.data = data
+        self.contentMode = contentMode
+    }
+
+    public func makeUIView(context: Context) -> UIImageView {
+        let imageView = UIImageView()
+        imageView.contentMode = contentMode
+        imageView.clipsToBounds = true
+        imageView.backgroundColor = .clear
+        return imageView
+    }
+
+    public func updateUIView(_ uiView: UIImageView, context: Context) {
+        uiView.contentMode = contentMode
+        guard context.coordinator.lastDataHash != data.hashValue else { return }
+        context.coordinator.lastDataHash = data.hashValue
+        uiView.image = Self.decodeAnimatedGIF(from: data) ?? UIImage(data: data)
+    }
+
+    public func makeCoordinator() -> Coordinator { Coordinator() }
+
+    @MainActor
+    public final class Coordinator {
+        var lastDataHash: Int = 0
+    }
+
+    private static func decodeAnimatedGIF(from data: Data) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else { return nil }
+        let count = CGImageSourceGetCount(source)
+        guard count > 1 else { return UIImage(data: data) }
+
+        var frames: [UIImage] = []
+        var totalDuration: TimeInterval = 0
+        for index in 0..<count {
+            guard let cgImage = CGImageSourceCreateImageAtIndex(source, index, nil) else { continue }
+            var frameDuration: TimeInterval = 0.1
+            if let props = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
+               let gifProps = props[kCGImagePropertyGIFDictionary] as? [CFString: Any] {
+                if let unclamped = gifProps[kCGImagePropertyGIFUnclampedDelayTime] as? Double, unclamped > 0 {
+                    frameDuration = unclamped
+                } else if let delay = gifProps[kCGImagePropertyGIFDelayTime] as? Double, delay > 0 {
+                    frameDuration = delay
+                }
+            }
+            if frameDuration < 0.02 { frameDuration = 0.08 }
+            totalDuration += frameDuration
+            frames.append(UIImage(cgImage: cgImage))
+        }
+        guard !frames.isEmpty else { return nil }
+        return UIImage.animatedImage(with: frames, duration: max(0.1, totalDuration))
+    }
+}
+
+private struct MediaContextMenuPreview: View {
+    let item: FeedMedia
+    let disableHDR: Bool
+
+    @State private var livePhoto: PHLivePhoto?
+    @State private var playTrigger = 0
+    @State private var gifData: Data?
+
+    var body: some View {
+        let ratio = MediaGridView.inferredAspectRatio(from: item.thumbnailUrl) ?? 1.25
+        let clamped = max(0.5, min(ratio, 2.0))
+        let width: CGFloat = 320
+        let height: CGFloat = min(380, max(180, width / clamped))
+
+        ZStack {
+            RemoteImageView(
+                url: item.sourceUrl,
+                maxPixelSize: 1200,
+                contentMode: .fit,
+                honorHDR: !disableHDR
+            )
+
+            if let gifData, item.isGif {
+                AnimatedGIFView(data: gifData, contentMode: .scaleAspectFit)
+            } else if let livePhoto, item.isLivePhoto {
+                LivePhotoRepresentable(
+                    livePhoto: livePhoto,
+                    autoPlayTrigger: playTrigger,
+                    isLooping: true
+                )
+            }
+        }
+        .frame(width: width, height: height)
+        .background(Color.black.opacity(0.04))
+        .task(id: item.id) {
+            if item.isGif {
+                gifData = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl)
+            } else if item.isLivePhoto, let videoURL = item.videoUrl {
+                guard let imgFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: item.sourceUrl, defaultExtension: "jpg"),
+                      let vidFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: videoURL, defaultExtension: "mov") else {
+                    return
+                }
+                let lock = OSAllocatedUnfairLock(initialState: false)
+                let box: LivePhotoPreviewBox = await withCheckedContinuation { continuation in
+                    PHLivePhoto.request(
+                        withResourceFileURLs: [imgFile, vidFile],
+                        placeholderImage: nil,
+                        targetSize: .zero,
+                        contentMode: .aspectFit
+                    ) { photo, info in
+                        let isDegraded = (info[PHLivePhotoInfoIsDegradedKey] as? Bool) ?? false
+                        guard !isDegraded || photo == nil else { return }
+                        let shouldResume = lock.withLock { state -> Bool in
+                            guard !state else { return false }
+                            state = true
+                            return true
+                        }
+                        if shouldResume {
+                            continuation.resume(returning: LivePhotoPreviewBox(photo: photo))
+                        }
+                    }
+                }
+                if let assembled = box.photo {
+                    livePhoto = assembled
+                    playTrigger += 1
+                }
+            }
+        }
+    }
+}
+
+private struct LivePhotoPreviewBox: @unchecked Sendable {
+    let photo: PHLivePhoto?
 }
 
 private struct MediaShareActivityView: UIViewControllerRepresentable {

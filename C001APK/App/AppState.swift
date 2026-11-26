@@ -45,6 +45,9 @@ public final class AppState {
     public var homeDoubleTapTrigger: Int = 0
     public var followDoubleTapTrigger: Int = 0
     public var feedRefreshTrigger: Int = 0
+    public var pageTabSelections: [String: String] = [:]
+    public var homeSelectedTab: HomeTabType = .feed
+    public var favoritePickerFeed: FeedItem?
 
     public init() {
         self.showOnboarding = !settings.onboardingCompleted
@@ -53,6 +56,10 @@ public final class AppState {
     public func bootstrap() async {
         await settings.syncProtocolToClient()
         await accounts.restoreActiveSessionIntoClient()
+        if settings.autoAcquireSzlmOnLaunch,
+           settings.protocolParameters.szlmID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            _ = try? await settings.acquireSzlmID()
+        }
         await refreshLoginAndBadge()
     }
 

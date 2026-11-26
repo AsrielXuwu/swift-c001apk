@@ -73,6 +73,20 @@ public enum MediaDisplayStyle: Int, CaseIterable, Codable, Identifiable, Sendabl
     }
 }
 
+public enum FavoriteStorageMode: Int, CaseIterable, Codable, Identifiable, Sendable {
+    case local = 0
+    case cloud = 1
+
+    public var id: Int { rawValue }
+
+    public var label: String {
+        switch self {
+        case .local: return "本机收藏（防风控推荐）"
+        case .cloud: return "同步至云端收藏夹"
+        }
+    }
+}
+
 public struct BrandPreset: Identifiable, Sendable {
     public let id: Int
     public let name: String
@@ -143,6 +157,30 @@ public final class SettingsStore {
     public var autoCheckUpdate: Bool {
         didSet { defaults.set(autoCheckUpdate, forKey: "settings.autoCheckUpdate") }
     }
+    public var defaultFavoriteTarget: FavoriteStorageMode {
+        didSet { defaults.set(defaultFavoriteTarget.rawValue, forKey: "settings.defaultFavoriteTarget") }
+    }
+    public var enableCloudFavoritesLoad: Bool {
+        didSet { defaults.set(enableCloudFavoritesLoad, forKey: "settings.enableCloudFavoritesLoad") }
+    }
+    public var enableCloudFollowLoad: Bool {
+        didSet { defaults.set(enableCloudFollowLoad, forKey: "settings.enableCloudFollowLoad") }
+    }
+    public var enableCloudHistoryLoad: Bool {
+        didSet { defaults.set(enableCloudHistoryLoad, forKey: "settings.enableCloudHistoryLoad") }
+    }
+    public var autoAcquireSzlmOnLaunch: Bool {
+        didSet { defaults.set(autoAcquireSzlmOnLaunch, forKey: "settings.autoAcquireSzlmOnLaunch") }
+    }
+    public var enableHapticFeedback: Bool {
+        didSet { defaults.set(enableHapticFeedback, forKey: "settings.enableHapticFeedback") }
+    }
+    public var livePhotoLoopPlay: Bool {
+        didSet { defaults.set(livePhotoLoopPlay, forKey: "settings.livePhotoLoopPlay") }
+    }
+    public var useOledPureBlackDarkMode: Bool {
+        didSet { defaults.set(useOledPureBlackDarkMode, forKey: "settings.useOledPureBlackDarkMode") }
+    }
     public var onboardingCompleted: Bool {
         didSet { defaults.set(onboardingCompleted, forKey: "settings.onboardingCompleted") }
     }
@@ -197,6 +235,14 @@ public final class SettingsStore {
         self.recordHistory = defaults.object(forKey: "settings.recordHistory") as? Bool ?? true
         self.openInBrowser = defaults.bool(forKey: "settings.openInBrowser")
         self.autoCheckUpdate = defaults.object(forKey: "settings.autoCheckUpdate") as? Bool ?? true
+        self.defaultFavoriteTarget = FavoriteStorageMode(rawValue: defaults.integer(forKey: "settings.defaultFavoriteTarget")) ?? .local
+        self.enableCloudFavoritesLoad = defaults.object(forKey: "settings.enableCloudFavoritesLoad") as? Bool ?? true
+        self.enableCloudFollowLoad = defaults.object(forKey: "settings.enableCloudFollowLoad") as? Bool ?? true
+        self.enableCloudHistoryLoad = defaults.object(forKey: "settings.enableCloudHistoryLoad") as? Bool ?? true
+        self.autoAcquireSzlmOnLaunch = defaults.object(forKey: "settings.autoAcquireSzlmOnLaunch") as? Bool ?? true
+        self.enableHapticFeedback = defaults.object(forKey: "settings.enableHapticFeedback") as? Bool ?? true
+        self.livePhotoLoopPlay = defaults.bool(forKey: "settings.livePhotoLoopPlay")
+        self.useOledPureBlackDarkMode = defaults.bool(forKey: "settings.useOledPureBlackDarkMode")
         self.onboardingCompleted = defaults.bool(forKey: "settings.onboardingCompleted")
         self.searchHistory = defaults.stringArray(forKey: "settings.searchHistory") ?? []
 

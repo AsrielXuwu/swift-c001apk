@@ -91,6 +91,11 @@ public struct MediaViewerView: View {
         }
         .statusBarHidden(!showControls)
         .persistentSystemOverlays(showControls ? .automatic : .hidden)
+        .onAppear {
+            if appState.settings.livePhotoLoopPlay {
+                loopLivePhoto = true
+            }
+        }
         .applyZoomTransition(sourceID: presentation.sourceID(at: currentIndex), in: zoomNamespace)
     }
 
@@ -278,6 +283,7 @@ private struct MediaPageItemView: View {
 
     @State private var loadedResult: LoadedImageResult?
     @State private var livePhoto: PHLivePhoto?
+    @State private var gifData: Data?
     @State private var liveAutoPlayTrigger = 0
     @State private var didFail = false
 
@@ -291,6 +297,10 @@ private struct MediaPageItemView: View {
                 )
                 .ignoresSafeArea(.all)
                 .onTapGesture(perform: onToggleControls)
+            } else if let gifData, item.isGif {
+                AnimatedGIFView(data: gifData, contentMode: .scaleAspectFit)
+                    .ignoresSafeArea(.all)
+                    .onTapGesture(perform: onToggleControls)
             } else if let loadedResult {
                 let isHDR = !disableHDR && (loadedResult.hasHDRGainMap || item.isHdr)
                 ZoomableImageScrollView(image: loadedResult.image, preferHDR: isHDR, onSingleTap: onToggleControls)
@@ -312,6 +322,9 @@ private struct MediaPageItemView: View {
         .ignoresSafeArea(.all)
         .task(id: item.id) {
             didFail = false
+            if item.isGif {
+                gifData = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl)
+            }
             let result = await ImagePipeline.shared.loadImage(urlString: item.sourceUrl, maxPixelSize: nil)
             loadedResult = result
             if let result {

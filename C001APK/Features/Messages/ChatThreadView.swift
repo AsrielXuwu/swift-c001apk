@@ -40,7 +40,7 @@ public final class ChatThreadViewModel {
 
     private func fetch(page: Int, append: Bool, appState: AppState) async {
         do {
-            let fetched = try await API.chatMessages(ukey: ukey, page: page)
+            let fetched = try await API.chatMessages(ukey: ukey, peerUID: peerUID, page: page)
             let chronological = fetched.reversed()
             if append {
                 var seen = Set(messages.map(\.id))

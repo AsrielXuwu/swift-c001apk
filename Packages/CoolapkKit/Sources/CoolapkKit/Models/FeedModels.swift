@@ -69,11 +69,16 @@ public struct FeedMedia: Hashable, Identifiable, Sendable, Codable {
                 ))
             }
         }
-        if !result.isEmpty { return result }
+        if !result.isEmpty {
+            var seen = Set<String>()
+            return result.filter { seen.insert($0.id).inserted }
+        }
 
         let pictures = json.picArr.array.map(\.string).filter { !$0.isEmpty }
         if !pictures.isEmpty {
+            var seen = Set<String>()
             return pictures.map { FeedMedia(sourceUrl: $0, contentId: contentId, contentType: contentType) }
+                .filter { seen.insert($0.id).inserted }
         }
         let single = json.pic.string.isEmpty ? json.media_pic.string : json.pic.string
         if !single.isEmpty {
@@ -237,19 +242,44 @@ public struct ReplyItem: Identifiable, Hashable, Sendable, Codable {
         ipLocation = json.ip_location.string
     }
 
+    public var hasVisibleContent: Bool {
+        let stripped = FeedHTMLParser.plainText(message)
+            .replacingOccurrences(of: "\u{200B}", with: "")
+            .replacingOccurrences(of: "\u{FEFF}", with: "")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return !stripped.isEmpty || !mediaItems.isEmpty
+    }
+
     public static func isValidReplyJSON(_ json: JSON) -> Bool {
         let entityType = json.entityType.string.lowercased()
         let template = json.entityTemplate.string.lowercased()
-        if entityType == "card" || entityType.contains("ad") || entityType.contains("sponsor") {
+        if !entityType.isEmpty && entityType != "feed_reply" && entityType != "reply" {
             return false
         }
-        if template.contains("ad") || template.contains("sponsor") || json.is_ad.int > 0 {
+        if template.contains("ad")
+            || template.contains("sponsor")
+            || template.contains("card")
+            || json.is_ad.int > 0
+            || json.ad.exists
+            || json.adInfo.exists
+            || json.ad_info.exists
+            || !json.ad_url.string.isEmpty
+            || json.block_status.int != 0 {
             return false
         }
-        let hasText = !json.message.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let hasMedia = !json.pic.string.isEmpty || !json.picArr.array.isEmpty || !json.imageUriList.array.isEmpty || !json.image_uri_list.array.isEmpty
-        let hasUser = !json.username.string.isEmpty || !json.uid.identifier.isEmpty
-        return (hasText || hasMedia) && hasUser
+        let stripped = FeedHTMLParser.plainText(json.message.string)
+            .replacingOccurrences(of: "\u{200B}", with: "")
+            .replacingOccurrences(of: "\u{FEFF}", with: "")
+            .replacingOccurrences(of: "\u{00A0}", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasMedia = !json.pic.string.isEmpty
+            || !json.picArr.array.isEmpty
+            || !json.imageUriList.array.isEmpty
+            || !json.image_uri_list.array.isEmpty
+        let hasUser = !json.username.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !json.uid.identifier.isEmpty
+        return (!stripped.isEmpty || hasMedia) && hasUser
     }
 }
 

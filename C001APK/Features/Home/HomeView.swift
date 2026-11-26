@@ -123,6 +123,7 @@ public struct HomeView: View {
                 }
             }
             .onChange(of: activeTab) { _, newTab in
+                appState.homeSelectedTab = newTab
                 if scrolledTab != newTab {
                     withAnimation(.snappy(duration: 0.25)) {
                         scrolledTab = newTab
@@ -135,6 +136,12 @@ public struct HomeView: View {
                 }
                 withAnimation(.snappy(duration: 0.25)) {
                     proxy.scrollTo("tab-chip-\(newTab.rawValue)", anchor: .center)
+                }
+            }
+            .onAppear {
+                if visibleTabs.contains(appState.homeSelectedTab), selectedTab != appState.homeSelectedTab {
+                    selectedTab = appState.homeSelectedTab
+                    scrolledTab = appState.homeSelectedTab
                 }
             }
             .task(id: "\(appState.sessionVersion)|\(activeTab.rawValue)") {

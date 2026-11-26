@@ -2,6 +2,20 @@ import CoolapkKit
 import Foundation
 import Observation
 
+public struct LocalCollectionFolder: Codable, Identifiable, Hashable, Sendable {
+    public let id: String
+    public var title: String
+    public var isCloudLinked: Bool
+    public var createdAt: Date
+
+    public init(id: String, title: String, isCloudLinked: Bool = false, createdAt: Date = Date()) {
+        self.id = id
+        self.title = title
+        self.isCloudLinked = isCloudLinked
+        self.createdAt = createdAt
+    }
+}
+
 public struct LocalHistoryEntry: Codable, Identifiable, Hashable, Sendable {
     public let id: String
     public var username: String
@@ -33,14 +47,30 @@ public struct LocalFavoriteEntry: Codable, Identifiable, Hashable, Sendable {
     public var preview: String
     public var savedAt: Date
     public var feed: FeedItem?
+    public var collectionID: String?
+    public var collectionTitle: String?
+    public var isCloudSynced: Bool?
 
-    public init(feed: FeedItem, savedAt: Date = Date()) {
+    public var resolvedCollectionID: String { collectionID ?? HistoryAndFavStore.defaultFolderID }
+    public var resolvedCollectionTitle: String { collectionTitle ?? HistoryAndFavStore.defaultFolderTitle }
+    public var resolvedIsCloudSynced: Bool { isCloudSynced ?? false }
+
+    public init(
+        feed: FeedItem,
+        savedAt: Date = Date(),
+        collectionID: String = HistoryAndFavStore.defaultFolderID,
+        collectionTitle: String = HistoryAndFavStore.defaultFolderTitle,
+        isCloudSynced: Bool = false
+    ) {
         self.id = feed.id
         self.username = feed.username
         self.avatar = feed.avatar
         self.title = feed.messageTitle.isEmpty ? feed.title : feed.messageTitle
         self.preview = FeedHTMLParser.plainText(feed.message)
         self.savedAt = savedAt
+        self.collectionID = collectionID
+        self.collectionTitle = collectionTitle
+        self.isCloudSynced = isCloudSynced
         var trimmed = feed
         trimmed.replyRows = []
         trimmed.topReplyRows = Array(feed.topReplyRows.prefix(2))
@@ -48,15 +78,27 @@ public struct LocalFavoriteEntry: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+public struct HistoryAndFavoritesBackup: Codable, Sendable {
+    public var version: Int = 1
+    public var exportedAt: Date = Date()
+    public var folders: [LocalCollectionFolder]
+    public var favorites: [LocalFavoriteEntry]
+}
+
 @MainActor
 @Observable
 public final class HistoryAndFavStore {
+    public static let defaultFolderID = "local-default"
+    public static let defaultFolderTitle = "默认本机收藏"
+
     private let defaults = UserDefaults.standard
     private static let historyKey = "c001apk.localHistory.v1"
     private static let favoritesKey = "c001apk.localFavorites.v1"
+    private static let foldersKey = "c001apk.localCollectionFolders.v1"
 
     public private(set) var history: [LocalHistoryEntry] = []
     public private(set) var favorites: [LocalFavoriteEntry] = []
+    public private(set) var folders: [LocalCollectionFolder] = []
 
     public init() {
         if let hData = defaults.data(forKey: Self.historyKey),
@@ -67,13 +109,66 @@ public final class HistoryAndFavStore {
            let decoded = try? JSONDecoder().decode([LocalFavoriteEntry].self, from: fData) {
             favorites = decoded
         }
+        if let folderData = defaults.data(forKey: Self.foldersKey),
+           let decoded = try? JSONDecoder().decode([LocalCollectionFolder].self, from: folderData) {
+            folders = decoded
+        }
+        ensureDefaultFolderExists()
+    }
+
+    private func ensureDefaultFolderExists() {
+        if !folders.contains(where: { $0.id == Self.defaultFolderID }) {
+            folders.insert(
+                LocalCollectionFolder(
+                    id: Self.defaultFolderID,
+                    title: Self.defaultFolderTitle,
+                    isCloudLinked: false
+                ),
+                at: 0
+            )
+            persistFolders()
+        }
+    }
+
+    @discardableResult
+    public func createFolder(title: String, linkedCloudID: String? = nil) -> LocalCollectionFolder {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle = trimmed.isEmpty ? "新建收藏夹" : trimmed
+        let folderID = linkedCloudID ?? "local-\(UUID().uuidString)"
+        if let existing = folders.first(where: { $0.id == folderID }) {
+            return existing
+        }
+        let created = LocalCollectionFolder(
+            id: folderID,
+            title: resolvedTitle,
+            isCloudLinked: linkedCloudID != nil
+        )
+        folders.append(created)
+        persistFolders()
+        return created
+    }
+
+    public func deleteFolder(id: String) {
+        guard id != Self.defaultFolderID else { return }
+        folders.removeAll { $0.id == id }
+        for index in favorites.indices where favorites[index].resolvedCollectionID == id {
+            favorites[index].collectionID = Self.defaultFolderID
+            favorites[index].collectionTitle = Self.defaultFolderTitle
+        }
+        persistFolders()
+        persistFavorites()
     }
 
     public func recordVisit(_ feed: FeedItem, enabled: Bool) {
-        let idx = favorites.firstIndex { $0.id == feed.id }
-        if let idx, favorites[idx].feed == nil {
-            let existingDate = favorites[idx].savedAt
-            favorites[idx] = LocalFavoriteEntry(feed: feed, savedAt: existingDate)
+        if let idx = favorites.firstIndex(where: { $0.id == feed.id && $0.feed == nil }) {
+            let existing = favorites[idx]
+            favorites[idx] = LocalFavoriteEntry(
+                feed: feed,
+                savedAt: existing.savedAt,
+                collectionID: existing.resolvedCollectionID,
+                collectionTitle: existing.resolvedCollectionTitle,
+                isCloudSynced: existing.resolvedIsCloudSynced
+            )
             persistFavorites()
         }
         guard enabled, !feed.id.isEmpty else { return }
@@ -97,12 +192,50 @@ public final class HistoryAndFavStore {
         favorites.contains { $0.id == id }
     }
 
+    public func isFavorited(feedID: String, inFolder folderID: String) -> Bool {
+        favorites.contains { $0.id == feedID && $0.resolvedCollectionID == folderID }
+    }
+
+    public func favorites(inFolder folderID: String?) -> [LocalFavoriteEntry] {
+        guard let folderID, !folderID.isEmpty else { return favorites }
+        return favorites.filter { $0.resolvedCollectionID == folderID }
+    }
+
+    public func count(inFolder folderID: String) -> Int {
+        favorites.filter { $0.resolvedCollectionID == folderID }.count
+    }
+
     public func toggleLocalFavorite(_ feed: FeedItem) {
         if isLocallyFavorited(id: feed.id) {
             favorites.removeAll { $0.id == feed.id }
         } else {
+            ensureDefaultFolderExists()
             favorites.insert(LocalFavoriteEntry(feed: feed), at: 0)
         }
+        persistFavorites()
+    }
+
+    public func saveFavorite(
+        _ feed: FeedItem,
+        folderID: String,
+        folderTitle: String,
+        isCloudSynced: Bool
+    ) {
+        ensureDefaultFolderExists()
+        if !folders.contains(where: { $0.id == folderID }) {
+            folders.append(LocalCollectionFolder(id: folderID, title: folderTitle, isCloudLinked: isCloudSynced))
+            persistFolders()
+        }
+        favorites.removeAll { $0.id == feed.id }
+        favorites.insert(
+            LocalFavoriteEntry(
+                feed: feed,
+                collectionID: folderID,
+                collectionTitle: folderTitle,
+                isCloudSynced: isCloudSynced
+            ),
+            at: 0
+        )
         persistFavorites()
     }
 
@@ -123,11 +256,43 @@ public final class HistoryAndFavStore {
 
         var changedFav = false
         if let idx = favorites.firstIndex(where: { $0.id == feed.id && $0.feed == nil }) {
-            let date = favorites[idx].savedAt
-            favorites[idx] = LocalFavoriteEntry(feed: feed, savedAt: date)
+            let existing = favorites[idx]
+            favorites[idx] = LocalFavoriteEntry(
+                feed: feed,
+                savedAt: existing.savedAt,
+                collectionID: existing.resolvedCollectionID,
+                collectionTitle: existing.resolvedCollectionTitle,
+                isCloudSynced: existing.resolvedIsCloudSynced
+            )
             changedFav = true
         }
         if changedFav { persistFavorites() }
+    }
+
+    public func exportBackupJSON() -> Data? {
+        let payload = HistoryAndFavoritesBackup(folders: folders, favorites: favorites)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try? encoder.encode(payload)
+    }
+
+    @discardableResult
+    public func importBackupJSON(_ data: Data) -> Int {
+        guard let decoded = try? JSONDecoder().decode(HistoryAndFavoritesBackup.self, from: data) else {
+            return 0
+        }
+        var importedCount = 0
+        for folder in decoded.folders where !folders.contains(where: { $0.id == folder.id }) {
+            folders.append(folder)
+        }
+        ensureDefaultFolderExists()
+        for entry in decoded.favorites where !favorites.contains(where: { $0.id == entry.id }) {
+            favorites.append(entry)
+            importedCount += 1
+        }
+        persistFolders()
+        persistFavorites()
+        return importedCount
     }
 
     private func persistHistory() {
@@ -139,6 +304,12 @@ public final class HistoryAndFavStore {
     private func persistFavorites() {
         if let data = try? JSONEncoder().encode(favorites) {
             defaults.set(data, forKey: Self.favoritesKey)
+        }
+    }
+
+    private func persistFolders() {
+        if let data = try? JSONEncoder().encode(folders) {
+            defaults.set(data, forKey: Self.foldersKey)
         }
     }
 }

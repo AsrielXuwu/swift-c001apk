@@ -139,7 +139,7 @@ struct BannerCarouselView: View {
                     cardHeight: 184
                 ) { idx, isFront in
                     let banner = banners[idx]
-                    Color.clear
+                    Color(.secondarySystemGroupedBackground)
                         .frame(height: 184)
                         .overlay {
                             RemoteImageView(url: banner.image, maxPixelSize: 1080)
@@ -332,37 +332,192 @@ struct IconLinksScrollView: View {
 struct ImageTextSectionsView: View {
     let sections: [HomeSection]
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var deckPhase: CGFloat = 0
+    @State private var dragProgress: CGFloat = 0
+    @State private var isHorizontalDragging = false
+    @State private var lastDragEndedAt: Date = .distantPast
+    @State private var transitionSeed = UUID().uuidString
+
+    private var currentNearestIndex: Int {
+        let count = sections.count
+        guard count > 0 else { return 0 }
+        let rounded = Int((deckPhase + dragProgress).rounded())
+        return ((rounded % count) + count) % count
+    }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 12) {
-                ForEach(sections) { section in
-                    Button {
-                        if !section.url.isEmpty { appState.openRawLink(section.url) }
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            RemoteImageView(url: section.style, maxPixelSize: 480)
-                                .frame(width: 180, height: 100)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            Text(section.title)
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                            if !section.subtitle.isEmpty {
-                                Text(section.subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(1)
+        if sections.isEmpty {
+            EmptyView()
+        } else {
+            let count = sections.count
+            let visibleLayers = min(count, 3)
+            let activeIdx = currentNearestIndex
+
+            ZStack {
+                OrbitalDeckStage(
+                    phase: deckPhase + dragProgress,
+                    count: count,
+                    cardHeight: 176
+                ) { idx, isFront in
+                    let section = sections[idx]
+                    let tid = "section-\(transitionSeed)-\(idx)"
+                    Color(.secondarySystemGroupedBackground)
+                        .frame(height: 176)
+                        .overlay {
+                            RemoteImageView(url: section.style, maxPixelSize: 960)
+                        }
+                        .clipped()
+                        .overlay(alignment: .bottomLeading) {
+                            if !section.title.isEmpty || !section.subtitle.isEmpty {
+                                ZStack(alignment: .bottomLeading) {
+                                    LinearGradient(
+                                        colors: [.clear, .black.opacity(0.74)],
+                                        startPoint: .center,
+                                        endPoint: .bottom
+                                    )
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        if !section.title.isEmpty {
+                                            Text(section.title)
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(.white)
+                                                .lineLimit(2)
+                                        }
+                                        if !section.subtitle.isEmpty {
+                                            Text(section.subtitle)
+                                                .font(.caption)
+                                                .foregroundStyle(.white.opacity(0.86))
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 12)
+                                    .padding(.trailing, count > 1 ? 68 : 12)
+                                }
+                                .allowsHitTesting(false)
                             }
                         }
-                        .frame(width: 180, alignment: .leading)
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
+                        }
+                        .applyZoomSource(id: tid, in: zoomNamespace)
+                        .onTapGesture {
+                            guard isFront,
+                                  !isHorizontalDragging,
+                                  abs(dragProgress) < 0.04,
+                                  Date().timeIntervalSince(lastDragEndedAt) > 0.30,
+                                  !section.url.isEmpty else { return }
+                            appState.openRawLink(section.url, transitionID: tid)
+                        }
+                }
+                .padding(.leading, visibleLayers > 2 ? 24 : 12)
+                .padding(.trailing, visibleLayers > 1 ? 24 : 12)
+                .padding(.bottom, visibleLayers > 1 ? 15 : 0)
+
+                if count > 1 {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Text("\(activeIdx + 1)/\(count)")
+                                .font(.caption2.weight(.semibold))
+                                .monospacedDigit()
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .glassEffect(.regular, in: .capsule)
+                                .foregroundStyle(.primary)
+                        }
+                        .allowsHitTesting(false)
+
+                        Spacer()
+
+                        HStack {
+                            Spacer()
+                            HStack(spacing: 6) {
+                                Button {
+                                    stepDeck(by: -1)
+                                } label: {
+                                    Image(systemName: "chevron.left")
+                                        .frame(width: 22, height: 22)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    stepDeck(by: 1)
+                                } label: {
+                                    Image(systemName: "chevron.right")
+                                        .frame(width: 22, height: 22)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .padding(.top, 10)
+                    .padding(.bottom, (visibleLayers > 1 ? 15 : 0) + 10)
+                    .padding(.leading, visibleLayers > 2 ? 34 : 22)
+                    .padding(.trailing, (visibleLayers > 1 ? 24 : 12) + 10)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            .frame(height: visibleLayers > 1 ? 194 : 176)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { value in
+                        guard count > 1 else { return }
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        if isHorizontalDragging || abs(dx) > max(12, abs(dy) * 1.15) {
+                            isHorizontalDragging = true
+                            dragProgress = max(-1.15, min(1.15, -dx / 210.0))
+                        }
+                    }
+                    .onEnded { value in
+                        guard count > 1 else { return }
+                        let dx = value.translation.width
+                        let predicted = value.predictedEndTranslation.width
+                        let wasDragging = isHorizontalDragging || abs(dx) > 10
+                        if wasDragging {
+                            lastDragEndedAt = Date()
+                        }
+                        isHorizontalDragging = false
+                        guard wasDragging else {
+                            withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
+                                dragProgress = 0
+                            }
+                            return
+                        }
+                        let deltaStep: CGFloat
+                        if dx < -38 || predicted < -85 {
+                            deltaStep = 1
+                        } else if dx > 38 || predicted > 85 {
+                            deltaStep = -1
+                        } else {
+                            deltaStep = 0
+                        }
+                        let combined = deckPhase + dragProgress
+                        let base = deckPhase.rounded()
+                        deckPhase = combined
+                        dragProgress = 0
+                        withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+                            deckPhase = base + deltaStep
+                        }
+                    }
+            )
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func stepDeck(by delta: CGFloat) {
+        withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+            deckPhase = deckPhase.rounded() + delta
         }
     }
 }

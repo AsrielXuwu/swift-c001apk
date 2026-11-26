@@ -36,12 +36,14 @@ public struct SettingsView: View {
                         Text(mode.label).tag(mode)
                     }
                 }
+                Toggle("OLED 纯黑深色背景", isOn: $settings.useOledPureBlackDarkMode)
 
                 Button("编辑主页分类顺序与显隐") {
                     showTabEditor = true
                 }
 
                 Toggle("不写东西（隐藏主页发布按钮）", isOn: $settings.hideHomePublishButton)
+                Toggle("触感反馈", isOn: $settings.enableHapticFeedback)
             }
 
             Section("阅读与评论") {
@@ -78,10 +80,19 @@ public struct SettingsView: View {
                     }
                 }
                 Toggle("实况图片进入大图自动播放一次", isOn: $settings.livePhotoAutoPlay)
+                Toggle("实况图片大图默认循环播放", isOn: $settings.livePhotoLoopPlay)
                 Toggle("我不想看 HDR", isOn: $settings.disableHDR)
             }
 
             Section {
+                Picker("收藏写入位置", selection: $settings.defaultFavoriteTarget) {
+                    ForEach(FavoriteStorageMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                Toggle("读取云端收藏夹列表", isOn: $settings.enableCloudFavoritesLoad)
+                Toggle("读取云端关注列表与关注流", isOn: $settings.enableCloudFollowLoad)
+                Toggle("读取云端浏览历史", isOn: $settings.enableCloudHistoryLoad)
                 if appState.accounts.isLoggedIn {
                     Toggle("悄悄关注", isOn: $localFollow.secretFollowEnabled)
                 }
@@ -89,11 +100,9 @@ public struct SettingsView: View {
                     Text(appState.accounts.isLoggedIn ? "管理悄悄关注名单" : "管理本机关注名单")
                 }
             } header: {
-                Text("关注")
+                Text("收藏、关注与防风控")
             } footer: {
-                Text(appState.accounts.isLoggedIn
-                     ? "开启后，长按用户主页的关注按钮即可加入或移出本机悄悄关注，不会同步到账号。"
-                     : "游客可在用户主页直接加入本机关注，并在“关注”页浏览。")
+                Text("默认仅读取并保存至本机收藏与关注，开启后可同步或读取酷安云端收藏夹、关注与历史，关闭云端读取可最大程度减少接口风控。")
             }
 
             Section("内容屏蔽") {
@@ -155,6 +164,7 @@ public struct SettingsView: View {
             }
 
             Section("协议与设备") {
+                Toggle("启动时自动获取数盟 DUID", isOn: $settings.autoAcquireSzlmOnLaunch)
                 NavigationLink(value: AppRoute.deviceIdentity) {
                     Text("设备标识（数盟 DUID）")
                 }

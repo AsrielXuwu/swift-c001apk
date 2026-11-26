@@ -512,8 +512,7 @@ public struct FeedDetailView: View {
     @ViewBuilder
     private func repliesSection(_ feed: FeedItem) -> some View {
         let visibleReplies = viewModel.replies.filter { reply in
-            let hasContent = !FeedHTMLParser.plainText(reply.message).isEmpty || !reply.mediaItems.isEmpty
-            return hasContent && !appState.blacklist.isUserBlocked(reply.uid) && appState.contentFilter.match(reply: reply) == nil
+            reply.hasVisibleContent && !appState.blacklist.isUserBlocked(reply.uid) && appState.contentFilter.match(reply: reply) == nil
         }
 
         let coinOnlyReplies = appState.settings.foldCoinReplies
@@ -745,9 +744,7 @@ public struct FeedDetailView: View {
     }
 
     private func bottomInteractionBar(_ feed: FeedItem) -> some View {
-        let isBookmarked = appState.accounts.isLoggedIn
-            ? feed.isFavorited
-            : appState.historyAndFav.isLocallyFavorited(id: feed.id)
+        let isBookmarked = feed.isFavorited || appState.historyAndFav.isLocallyFavorited(id: feed.id)
 
         return GlassEffectContainer(spacing: 10) {
             HStack(spacing: 10) {

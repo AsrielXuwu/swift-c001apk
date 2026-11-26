@@ -181,12 +181,23 @@ public enum API: Sendable {
         listType: String = "lastupdate_desc",
         page: Int
     ) async throws -> [HomeFeedRow] {
-        if let tabURL = tabURL?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !tabURL.isEmpty,
-           !tabURL.hasPrefix("/product/"),
-           tabURL != "/product/\(productID)" {
-            let loaded = (try? await linkFeed(link: tabURL, page: page)) ?? []
-            if !loaded.isEmpty { return loaded }
+        let cleanedTabURL = tabURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let lowerTab = cleanedTabURL.lowercased()
+        let isConfigTab = lowerTab.contains("config") || lowerTab.contains("param")
+        if isConfigTab {
+            return []
+        }
+
+        if !cleanedTabURL.isEmpty, cleanedTabURL != "/product/\(productID)" {
+            if cleanedTabURL.hasPrefix("/v6/") {
+                let json = try? await client.get(cleanedTabURL, ["id": productID, "page": String(page), "listType": listType])
+                if let mapped = json.map({ rows(from: $0.data.array) }), !mapped.isEmpty {
+                    return mapped
+                }
+            } else {
+                let loaded = (try? await linkFeed(link: cleanedTabURL, page: page)) ?? []
+                if !loaded.isEmpty { return loaded }
+            }
         }
 
         // Endpoint 1: V11/V9 dataList product feed list
@@ -222,6 +233,85 @@ public enum API: Sendable {
         }
 
         return []
+    }
+
+    public static func productConfig(
+        productID: String,
+        tabURL: String? = nil
+    ) async -> (variants: [ProductConfigVariant], specs: [ProductSpecEntry], rawRows: [HomeFeedRow]) {
+        var variants: [ProductConfigVariant] = []
+        var specs: [ProductSpecEntry] = []
+        var rawRows: [HomeFeedRow] = []
+
+        func ingestConfigJSON(_ data: JSON) {
+            if data.isArray {
+                let arr = data.array
+                let parsedVariants = arr.enumerated().compactMap { idx, elem -> ProductConfigVariant? in
+                    guard elem.isObject else { return nil }
+                    let variant = ProductConfigVariant(json: elem, index: idx)
+                    return (variant.title.isEmpty && variant.specs.isEmpty) ? nil : variant
+                }
+                if !parsedVariants.isEmpty && variants.isEmpty {
+                    variants = parsedVariants
+                }
+                for (idx, elem) in arr.enumerated() where elem.isObject {
+                    let extracted = ProductConfigVariant.extractSpecEntries(from: elem, prefix: "cfg-arr-\(idx)")
+                    for entry in extracted where !specs.contains(where: { $0.label == entry.label }) {
+                        specs.append(entry)
+                    }
+                    let directTitle = [elem.title.string, elem.name.string, elem.label.string].first { !$0.isEmpty } ?? ""
+                    let directVal = [elem.value.string, elem.content.string, elem.description.string].first { !$0.isEmpty } ?? ""
+                    if !directTitle.isEmpty && !directVal.isEmpty && !specs.contains(where: { $0.label == directTitle }) {
+                        specs.append(ProductSpecEntry(id: "cfg-kv-\(idx)-\(directTitle)", label: directTitle, value: directVal))
+                    }
+                }
+                let mappedRows = rows(from: arr).filter { row in
+                    if case .feed = row { return false }
+                    return true
+                }
+                if !mappedRows.isEmpty && rawRows.isEmpty {
+                    rawRows = mappedRows
+                }
+            } else if data.isObject {
+                let parsed = ProductItem(json: data)
+                if !parsed.configVariants.isEmpty && variants.isEmpty {
+                    variants = parsed.configVariants
+                }
+                for entry in parsed.specEntries where !specs.contains(where: { $0.label == entry.label }) {
+                    specs.append(entry)
+                }
+            }
+        }
+
+        let cleaned = tabURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !cleaned.isEmpty {
+            if cleaned.hasPrefix("/v6/") {
+                if let json = try? await client.get(cleaned, ["id": productID]) {
+                    ingestConfigJSON(json.data)
+                }
+            } else {
+                let parsed = parsePageLink(cleaned)
+                if let items = try? await client.dataList(url: parsed.url, page: 1, extra: parsed.extra) {
+                    ingestConfigJSON(JSON(items.map(\.rawValue)))
+                }
+            }
+        }
+
+        if variants.isEmpty || specs.isEmpty {
+            let candidates: [(String, [String: String])] = [
+                ("/v6/product/configList", ["id": productID]),
+                ("/v6/product/configList", ["productId": productID]),
+                ("/v6/product/detail", ["id": productID, "type": "config"])
+            ]
+            for (path, params) in candidates {
+                if let json = try? await client.get(path, params) {
+                    ingestConfigJSON(json.data)
+                    if !variants.isEmpty && !specs.isEmpty { break }
+                }
+            }
+        }
+
+        return (variants, specs, rawRows)
     }
 
     private static func parsePageLink(_ link: String) -> (url: String, extra: [String: String]) {
@@ -655,7 +745,12 @@ public enum API: Sendable {
     }
 
     public static func followTopic(tag: String, follow: Bool) async throws {
-        _ = try await client.post(follow ? "/v6/feed/followTag" : "/v6/feed/unFollowTag", ["tag": tag])
+        let cleanTag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTag.isEmpty else {
+            throw APIError.message("话题标签不能为空")
+        }
+        let path = follow ? "/v6/feed/followTag" : "/v6/feed/unFollowTag"
+        _ = try await client.get(path, ["tag": cleanTag])
     }
 
     public static func followProduct(id: String, follow: Bool) async throws {
@@ -857,10 +952,45 @@ public enum API: Sendable {
         return rows(from: items)
     }
 
-    public static func collectionList(uid: String?, page: Int) async throws -> [CollectionItem] {
-        let uid = uid ?? ""
-        let json = try await client.get("/v6/collection/list", ["uid": uid, "page": String(page)])
+    public static func collectionList(uid: String?, feedID: String? = nil, page: Int) async throws -> [CollectionItem] {
+        var params: [String: String] = ["uid": uid ?? "", "page": String(page)]
+        if let feedID, !feedID.isEmpty {
+            params["id"] = feedID
+            params["type"] = "feed"
+            params["showDefault"] = "1"
+        }
+        let json = try await client.get("/v6/collection/list", params)
         return json.data.array.map { CollectionItem(json: $0) }
+    }
+
+    public static func collectFeedToCollection(
+        feedID: String,
+        addCollectionIDs: [String],
+        cancelCollectionIDs: [String] = []
+    ) async throws {
+        let form: [String: String] = [
+            "id": addCollectionIDs.joined(separator: ","),
+            "cancelId": cancelCollectionIDs.joined(separator: ","),
+            "targetId": feedID,
+            "type": "feed"
+        ]
+        _ = try await client.post("/v6/collection/addItem", form)
+    }
+
+    public static func createCollection(
+        title: String,
+        description: String = "",
+        isOpen: Bool = true
+    ) async throws -> CollectionItem? {
+        let json = try await client.post("/v6/collection/create", [
+            "title": title,
+            "description": description,
+            "isOpen": isOpen ? "1" : "0"
+        ])
+        if json.data.isObject {
+            return CollectionItem(json: json.data)
+        }
+        return nil
     }
 
     public static func collectionDetail(id: String) async throws -> CollectionItem {
@@ -950,8 +1080,35 @@ public enum API: Sendable {
     }
 
     public static func notifications(type: String, page: Int) async throws -> [NotificationItem] {
-        let json = try await client.get("/v6/notification/\(type)", ["page": String(page)])
-        return json.data.array.map { NotificationItem(json: $0) }
+        let candidates: [String]
+        switch type {
+        case "commentMeList", "commentMe":
+            candidates = ["commentMeList", "commentList"]
+        case "atMeList", "atMe":
+            candidates = ["atMeList", "atList", "atCommentMeList"]
+        case "feedLikeList", "feedLike":
+            candidates = ["feedLikeList", "likeList"]
+        case "contactsFollowList", "contactsFollow":
+            candidates = ["contactsFollowList", "followList"]
+        default:
+            candidates = [type]
+        }
+
+        var lastError: Error?
+        for endpoint in candidates {
+            do {
+                let json = try await client.get("/v6/notification/\(endpoint)", ["page": String(page)])
+                return json.data.array.map { NotificationItem(json: $0) }
+            } catch let error as APIError {
+                lastError = error
+                if case let .message(msg) = error,
+                   msg.lowercased().contains("does not exist") || msg.contains("不存在") {
+                    continue
+                }
+                throw error
+            }
+        }
+        throw lastError ?? APIError.message("暂无通知")
     }
 
     public static func messageThreads(page: Int) async throws -> [MessageThread] {
@@ -959,9 +1116,60 @@ public enum API: Sendable {
         return json.data.array.map { MessageThread(json: $0) }
     }
 
-    public static func chatMessages(ukey: String, page: Int) async throws -> [ChatMessage] {
-        let json = try await client.get("/v6/message/chat", ["ukey": ukey, "page": String(page)])
-        return json.data.array.map { ChatMessage(json: $0) }
+    public static func chatMessages(ukey: String, peerUID: String = "", page: Int) async throws -> [ChatMessage] {
+        var resolvedUkey = ukey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetUID = peerUID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let startedWithBareUID = !targetUID.isEmpty && (resolvedUkey.isEmpty || resolvedUkey == targetUID)
+
+        if startedWithBareUID, page == 1,
+           let threads = try? await messageThreads(page: 1),
+           let matched = threads.first(where: { $0.uid == targetUID }),
+           !matched.ukey.isEmpty {
+            resolvedUkey = matched.ukey
+        }
+
+        var queries: [[String: String]] = []
+        if !resolvedUkey.isEmpty && resolvedUkey != targetUID {
+            queries.append(["ukey": resolvedUkey, "page": String(page)])
+        }
+        if !targetUID.isEmpty {
+            queries.append(["uid": targetUID, "page": String(page)])
+            let myUID = await client.sessionSnapshot().uid
+            if !myUID.isEmpty,
+               let myNum = Int64(myUID),
+               let peerNum = Int64(targetUID) {
+                let low = min(myNum, peerNum)
+                let high = max(myNum, peerNum)
+                queries.append(["ukey": "\(low),\(high)", "page": String(page)])
+                queries.append(["ukey": "\(low)_\(high)", "page": String(page)])
+            }
+        }
+        if queries.isEmpty && !resolvedUkey.isEmpty {
+            queries.append(["ukey": resolvedUkey, "page": String(page)])
+        }
+
+        var lastError: Error?
+        for query in queries {
+            do {
+                let json = try await client.get("/v6/message/chat", query)
+                return json.data.array.map { ChatMessage(json: $0) }
+            } catch let error as APIError {
+                lastError = error
+                if case let .message(msg) = error,
+                   msg.contains("无法查看") || msg.contains("不存在") || msg.contains("无效") {
+                    continue
+                }
+                throw error
+            }
+        }
+
+        // Brand-new 1v1 chat started from a user profile before any message exists has no server ukey yet.
+        if startedWithBareUID, let err = lastError as? APIError,
+           case let .message(msg) = err, msg.contains("无法查看") {
+            return []
+        }
+        if let lastError { throw lastError }
+        return []
     }
 
     public static func sendChatMessage(uid: String, text: String, picturePath: String = "") async throws -> [ChatMessage] {

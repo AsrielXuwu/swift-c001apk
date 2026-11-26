@@ -116,11 +116,20 @@ public struct FeedRowView: View {
 
             Menu {
                 Button {
-                    appState.historyAndFav.toggleLocalFavorite(feed)
-                    appState.showToast(appState.historyAndFav.isLocallyFavorited(id: feed.id) ? "已加入本地收藏" : "已取消本地收藏")
+                    appState.favoritePickerFeed = feed
                 } label: {
                     Label(
-                        appState.historyAndFav.isLocallyFavorited(id: feed.id) ? "取消本地收藏" : "本地收藏",
+                        appState.historyAndFav.isLocallyFavorited(id: feed.id) ? "已收藏（管理收藏夹）" : "加入收藏夹…",
+                        systemImage: appState.historyAndFav.isLocallyFavorited(id: feed.id) ? "star.fill" : "star"
+                    )
+                }
+
+                Button {
+                    appState.historyAndFav.toggleLocalFavorite(feed)
+                    appState.showToast(appState.historyAndFav.isLocallyFavorited(id: feed.id) ? "已加入本机收藏" : "已取消本机收藏")
+                } label: {
+                    Label(
+                        appState.historyAndFav.isLocallyFavorited(id: feed.id) ? "快速取消本机收藏" : "快速本机收藏",
                         systemImage: appState.historyAndFav.isLocallyFavorited(id: feed.id) ? "bookmark.fill" : "bookmark"
                     )
                 }

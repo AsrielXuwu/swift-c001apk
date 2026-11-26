@@ -259,6 +259,133 @@ public struct LiveTopic: Identifiable, Hashable, Sendable {
     }
 }
 
+public struct ProductSpecEntry: Identifiable, Hashable, Sendable {
+    public let id: String
+    public var label: String
+    public var value: String
+
+    public init(id: String, label: String, value: String) {
+        self.id = id
+        self.label = label
+        self.value = value
+    }
+}
+
+public struct ProductConfigVariant: Identifiable, Hashable, Sendable {
+    public let id: String
+    public var title: String
+    public var priceText: String
+    public var releaseTime: String
+    public var keywords: String
+    public var description: String
+    public var specs: [ProductSpecEntry]
+
+    public init(
+        id: String,
+        title: String,
+        priceText: String = "",
+        releaseTime: String = "",
+        keywords: String = "",
+        description: String = "",
+        specs: [ProductSpecEntry] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.priceText = priceText
+        self.releaseTime = releaseTime
+        self.keywords = keywords
+        self.description = description
+        self.specs = specs
+    }
+
+    public init(json: JSON, index: Int) {
+        let rawID = json.id.exists ? json.id.identifier : json.config_id.identifier
+        id = rawID.isEmpty ? "cfg-\(index)" : rawID
+        title = [json.title.string, json.version_name.string, json.config_name.string, json.name.string]
+            .first { !$0.isEmpty } ?? "版本 \(index + 1)"
+        if json.price.double > 0 {
+            priceText = "¥\(Int(json.price.double))"
+        } else {
+            priceText = [json.price_text.string, json.price.string, json.rmb_price.string].first { !$0.isEmpty } ?? ""
+        }
+        releaseTime = json.release_time.string
+        keywords = json.keywords.string
+        description = json.description.string
+        specs = Self.extractSpecEntries(from: json, prefix: id)
+    }
+
+    public static func extractSpecEntries(from json: JSON, prefix: String) -> [ProductSpecEntry] {
+        var entries: [ProductSpecEntry] = []
+        var seenLabels = Set<String>()
+
+        func appendEntry(_ label: String, _ value: String) {
+            let l = label.trimmingCharacters(in: .whitespacesAndNewlines)
+            let v = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !l.isEmpty, !v.isEmpty, seenLabels.insert(l).inserted else { return }
+            entries.append(ProductSpecEntry(id: "\(prefix)-\(entries.count)-\(l)", label: l, value: v))
+        }
+
+        let candidates: [(JSON, String)] = [
+            (json.config_data.parsed.exists ? json.config_data.parsed : json.config_data, "cd"),
+            (json.param_list.parsed.exists ? json.param_list.parsed : json.param_list, "pl"),
+            (json.params.parsed.exists ? json.params.parsed : json.params, "pr")
+        ]
+        for (source, _) in candidates where !source.isNull {
+            for item in source.array {
+                if item.isObject {
+                    let lbl = [item.title.string, item.name.string, item.key.string, item.label.string]
+                        .first { !$0.isEmpty } ?? ""
+                    let val = [item.value.string, item.content.string, item.desc.string, item.text.string]
+                        .first { !$0.isEmpty } ?? ""
+                    appendEntry(lbl, val)
+                    for child in item.entities.array {
+                        let cLbl = [child.title.string, child.name.string, child.key.string].first { !$0.isEmpty } ?? ""
+                        let cVal = [child.value.string, child.content.string, child.description.string].first { !$0.isEmpty } ?? ""
+                        appendEntry(cLbl, cVal)
+                    }
+                }
+            }
+            if let dict = source.dictionary {
+                for (k, v) in dict.sorted(by: { $0.key < $1.key }) {
+                    let valStr = v.string.isEmpty ? (v.number?.stringValue ?? "") : v.string
+                    if !valStr.isEmpty {
+                        appendEntry(k, valStr)
+                    } else if !v.array.isEmpty {
+                        let joined = v.array.compactMap { elem in
+                            let sub = elem.string.isEmpty ? elem.title.string : elem.string
+                            return sub.isEmpty ? nil : sub
+                        }.joined(separator: " / ")
+                        appendEntry(k, joined)
+                    }
+                }
+            }
+        }
+
+        let knownFields: [(String, [String])] = [
+            ("处理器 / SoC", [json.cpu.string, json.soc.string]),
+            ("内存 / 存储", [
+                [json.ram.string, json.rom.string].filter { !$0.isEmpty }.joined(separator: " + "),
+                json.memory.string
+            ]),
+            ("屏幕参数", [json.screen.string, json.screen_size.string, json.display.string]),
+            ("电池与充电", [json.battery.string, json.charge.string]),
+            ("影像系统", [json.camera.string]),
+            ("操作系统", [json.os.string, json.system.string]),
+            ("机身尺寸 / 重量", [[json.size.string, json.weight.string].filter { !$0.isEmpty }.joined(separator: " · ")]),
+            ("参考价格", [json.price_text.string, json.price.string]),
+            ("发布时间", [json.release_time.string]),
+            ("版本特性", [json.keywords.string])
+        ]
+        for (label, vals) in knownFields {
+            if let first = vals.first(where: { !$0.isEmpty }) {
+                appendEntry(label, first)
+            }
+        }
+
+        return entries
+    }
+}
+
 public struct ProductItem: Identifiable, Hashable, Sendable {
     public let id: String
     public var title: String
@@ -277,6 +404,8 @@ public struct ProductItem: Identifiable, Hashable, Sendable {
     public var isFollowed: Bool
     public var url: String
     public var tabs: [HomeSection]
+    public var configVariants: [ProductConfigVariant]
+    public var specEntries: [ProductSpecEntry]
 
     public init(json: JSON) {
         id = json.id.exists ? json.id.identifier : json.entityId.identifier
@@ -319,6 +448,21 @@ public struct ProductItem: Identifiable, Hashable, Sendable {
                 style: entry.pic.string
             )
         }
+
+        let variantArrays = [
+            json.configRows.array,
+            json.configList.array,
+            json.version_list.array,
+            json.skuRows.array,
+            json.config_data.array,
+            json.config_data.parsed.array
+        ]
+        if let found = variantArrays.first(where: { !$0.isEmpty }) {
+            configVariants = found.enumerated().map { ProductConfigVariant(json: $0.element, index: $0.offset) }
+        } else {
+            configVariants = []
+        }
+        specEntries = ProductConfigVariant.extractSpecEntries(from: json, prefix: id)
     }
 }
 
@@ -356,6 +500,7 @@ public struct CollectionItem: Identifiable, Hashable, Sendable {
     public var followNum: Int
     public var likeNum: Int
     public var isFollowed: Bool
+    public var isBeCollected: Bool
 
     public init(json: JSON) {
         id = json.id.exists ? json.id.identifier : json.entityId.identifier
@@ -370,6 +515,7 @@ public struct CollectionItem: Identifiable, Hashable, Sendable {
         followNum = json.follow_num.int
         likeNum = json.like_num.int
         isFollowed = json.isFollowed.int > 0 || json.follow.int > 0
+        isBeCollected = json.isBeCollected.int > 0 || json.isBeCollected.bool
     }
 }
 

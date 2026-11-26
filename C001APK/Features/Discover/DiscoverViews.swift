@@ -24,6 +24,7 @@ public struct TopicDetailView: View {
     @State private var hasMoreBySort: [String: Bool] = [:]
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
+    @State private var hasInitialized = false
 
     private let sortOptions: [ChoiceChip] = [
         ChoiceChip(id: "lastupdate_desc", title: "最新回复"),
@@ -96,6 +97,7 @@ public struct TopicDetailView: View {
                 }
             }
             .onChange(of: listType) { _, newValue in
+                appState.pageTabSelections["topic-\(tag)"] = newValue
                 if scrolledType != newValue {
                     withAnimation(.snappy(duration: 0.24)) {
                         scrolledType = newValue
@@ -104,8 +106,16 @@ public struct TopicDetailView: View {
                 Task { await reloadFeeds(for: newValue, force: false) }
             }
             .task(id: tag) {
+                if let saved = appState.pageTabSelections["topic-\(tag)"],
+                   sortOptions.contains(where: { $0.id == saved }),
+                   saved != listType {
+                    listType = saved
+                    scrolledType = saved
+                }
+                guard !hasInitialized || topic == nil else { return }
+                hasInitialized = true
                 topic = try? await API.topicDetail(tag: tag)
-                await reloadFeeds(for: listType, force: true)
+                await reloadFeeds(for: listType, force: !loadedSorts.contains(listType))
             }
         }
     }
@@ -224,12 +234,18 @@ public struct TopicDetailView: View {
     private func toggleFollow(_ current: TopicItem) async {
         guard appState.accounts.isLoggedIn else { appState.showLoginSheet = true; return }
         guard !isTogglingFollow else { return }
+        let rawTitle = current.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetTag = rawTitle.isEmpty ? tag.trimmingCharacters(in: .whitespacesAndNewlines) : rawTitle
+        guard !targetTag.isEmpty else {
+            appState.showToast("话题标签为空")
+            return
+        }
         isTogglingFollow = true
         defer { isTogglingFollow = false }
         let next = !current.isFollowed
         topic?.isFollowed = next
         do {
-            try await API.followTopic(tag: tag, follow: next)
+            try await API.followTopic(tag: targetTag, follow: next)
             appState.showToast(next ? "已关注话题" : "已取消关注")
         } catch {
             topic?.isFollowed = !next
@@ -253,9 +269,16 @@ public struct ProductDetailView: View {
     @State private var loadingTabs: Set<String> = []
     @State private var pageByTab: [String: Int] = [:]
     @State private var hasMoreByTab: [String: Bool] = [:]
+    @State private var hasInitialized = false
     @State private var isLoadingHeader = true
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
+    @State private var hasInitialized = false
+    @State private var productVariants: [ProductConfigVariant] = []
+    @State private var productSpecs: [ProductSpecEntry] = []
+    @State private var configRawRows: [HomeFeedRow] = []
+    @State private var selectedVariantID: String = ""
+    @State private var isLoadingSpecs = false
 
     private let fallbackTabs: [ChoiceChip] = [
         ChoiceChip(id: "lastupdate_desc", title: "最新回复"),
@@ -265,11 +288,23 @@ public struct ProductDetailView: View {
 
     public init(productID: String) { self.productID = productID }
 
+    private func isConfigTab(id: String, title: String) -> Bool {
+        let lowerID = id.lowercased()
+        return id == "__specs__"
+            || title.contains("参数")
+            || title.contains("配置")
+            || lowerID.contains("config")
+            || lowerID.contains("param")
+    }
+
     private var activeChips: [ChoiceChip] {
-        if !apiTabs.isEmpty {
-            return apiTabs.map { ChoiceChip(id: $0.url, title: $0.title) }
+        var base: [ChoiceChip] = !apiTabs.isEmpty
+            ? apiTabs.map { ChoiceChip(id: $0.url, title: $0.title) }
+            : fallbackTabs
+        if !base.contains(where: { isConfigTab(id: $0.id, title: $0.title) }) {
+            base.append(ChoiceChip(id: "__specs__", title: "参数"))
         }
-        return fallbackTabs
+        return base
     }
 
     private var selectedChip: ChoiceChip {
@@ -335,6 +370,7 @@ public struct ProductDetailView: View {
                 }
             }
             .onChange(of: activeTabID) { _, newValue in
+                appState.pageTabSelections["product-\(productID)"] = newValue
                 if scrolledTabID != newValue {
                     withAnimation(.snappy(duration: 0.24)) {
                         scrolledTabID = newValue
@@ -343,6 +379,12 @@ public struct ProductDetailView: View {
                 Task { await reloadFeeds(for: newValue, force: false) }
             }
             .task(id: productID) {
+                if let saved = appState.pageTabSelections["product-\(productID)"], !saved.isEmpty {
+                    activeTabID = saved
+                    scrolledTabID = saved
+                }
+                guard !hasInitialized || product == nil else { return }
+                hasInitialized = true
                 await reloadAll()
             }
         }
@@ -352,6 +394,7 @@ public struct ProductDetailView: View {
         let rows = rowsByTab[chip.id] ?? []
         let isLoadingTab = loadingTabs.contains(chip.id)
         let hasLoaded = loadedTabs.contains(chip.id)
+        let isSpecsTab = isConfigTab(id: chip.id, title: chip.title)
 
         return ScrollView {
             Color.clear.frame(height: 0).id("product-top-\(chip.id)")
@@ -365,7 +408,9 @@ public struct ProductDetailView: View {
                         .padding(.vertical, 30)
                 }
 
-                if (!hasLoaded || isLoadingTab) && rows.isEmpty {
+                if isSpecsTab {
+                    productSpecsSection()
+                } else if (!hasLoaded || isLoadingTab) && rows.isEmpty {
                     ProgressView()
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 48)
@@ -384,6 +429,7 @@ public struct ProductDetailView: View {
             .padding(.top, 10)
             .padding(.bottom, 88)
         }
+        .scrollEdgeEffectHidden(true, for: .top)
         .onScrollGeometryChange(for: CGFloat.self) { geo in
             geo.contentOffset.y + geo.contentInsets.top
         } action: { _, offset in
@@ -454,16 +500,144 @@ public struct ProductDetailView: View {
         .padding(.horizontal, 12)
     }
 
+    @ViewBuilder
+    private func productSpecsSection() -> some View {
+        let variants = !productVariants.isEmpty ? productVariants : (product?.configVariants ?? [])
+        let activeVariant = variants.first { $0.id == selectedVariantID } ?? variants.first
+        let generalSpecs = !productSpecs.isEmpty ? productSpecs : (product?.specEntries ?? [])
+
+        if isLoadingSpecs && variants.isEmpty && generalSpecs.isEmpty && configRawRows.isEmpty {
+            ProgressView("正在加载版本配置与参数…")
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 48)
+        } else if variants.isEmpty && generalSpecs.isEmpty && configRawRows.isEmpty {
+            ContentUnavailableView("暂无公开参数与版本配置", systemImage: "cpu")
+                .frame(maxWidth: .infinity, minHeight: 200)
+        } else {
+            VStack(alignment: .leading, spacing: 12) {
+                if !variants.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("版本配置")
+                            .font(.headline)
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(variants) { variant in
+                                    let isSelected = activeVariant?.id == variant.id
+                                    Button {
+                                        withAnimation(.snappy(duration: 0.2)) {
+                                            selectedVariantID = variant.id
+                                        }
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(variant.title)
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                                            if !variant.priceText.isEmpty {
+                                                Text(variant.priceText)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .background(
+                                            isSelected ? Color.accentColor.opacity(0.16) : Color(.tertiarySystemGroupedBackground),
+                                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        )
+                                        .overlay {
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .strokeBorder(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+
+                        if let activeVariant {
+                            VStack(alignment: .leading, spacing: 6) {
+                                if !activeVariant.releaseTime.isEmpty {
+                                    specRow(label: "发布日期", value: activeVariant.releaseTime)
+                                }
+                                if !activeVariant.keywords.isEmpty {
+                                    specRow(label: "配置要点", value: activeVariant.keywords)
+                                }
+                                if !activeVariant.description.isEmpty {
+                                    specRow(label: "版本说明", value: FeedHTMLParser.plainText(activeVariant.description))
+                                }
+                                ForEach(activeVariant.specs) { item in
+                                    specRow(label: item.label, value: item.value)
+                                }
+                            }
+                            .padding(.top, 4)
+                        }
+                    }
+                    .padding(14)
+                    .c001CardStyle(cornerRadius: 18)
+                    .padding(.horizontal, 12)
+                }
+
+                if !generalSpecs.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("详细规格")
+                            .font(.headline)
+                        ForEach(generalSpecs) { entry in
+                            specRow(label: entry.label, value: entry.value)
+                        }
+                    }
+                    .padding(14)
+                    .c001CardStyle(cornerRadius: 18)
+                    .padding(.horizontal, 12)
+                }
+
+                ForEach(configRawRows) { row in
+                    HomeRowRenderer(row: row)
+                }
+            }
+        }
+    }
+
+    private func specRow(label: String, value: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(label)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 88, alignment: .leading)
+            Text(value)
+                .font(.subheadline)
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 3)
+    }
+
     private func reloadAll() async {
         isLoadingHeader = true
         let detail = try? await API.productDetail(id: productID)
         product = detail
         isLoadingHeader = false
-        if let detail, !detail.tabs.isEmpty {
-            apiTabs = detail.tabs
-            if !detail.tabs.contains(where: { $0.url == activeTabID }), let first = detail.tabs.first?.url {
-                activeTabID = first
-                scrolledTabID = first
+        if let detail {
+            if !detail.configVariants.isEmpty {
+                productVariants = detail.configVariants
+                if selectedVariantID.isEmpty, let firstVar = detail.configVariants.first?.id {
+                    selectedVariantID = firstVar
+                }
+            }
+            if !detail.specEntries.isEmpty {
+                productSpecs = detail.specEntries
+            }
+            if !detail.tabs.isEmpty {
+                apiTabs = detail.tabs
+                let saved = appState.pageTabSelections["product-\(productID)"]
+                if let saved, activeChips.contains(where: { $0.id == saved }) {
+                    activeTabID = saved
+                    scrolledTabID = saved
+                } else if !activeChips.contains(where: { $0.id == activeTabID }),
+                          let first = activeChips.first?.id {
+                    activeTabID = first
+                    scrolledTabID = first
+                }
             }
         }
         await reloadFeeds(for: activeTabID, force: true)
@@ -471,6 +645,30 @@ public struct ProductDetailView: View {
 
     private func reloadFeeds(for tabID: String, force: Bool) async {
         if !force && loadedTabs.contains(tabID) { return }
+        let chipTitle = activeChips.first(where: { $0.id == tabID })?.title ?? ""
+        if isConfigTab(id: tabID, title: chipTitle) {
+            isLoadingSpecs = true
+            let result = await API.productConfig(productID: productID, tabURL: tabID == "__specs__" ? nil : tabID)
+            if !result.variants.isEmpty {
+                productVariants = result.variants
+                if selectedVariantID.isEmpty, let firstID = result.variants.first?.id {
+                    selectedVariantID = firstID
+                }
+            }
+            if !result.specs.isEmpty {
+                var merged = productSpecs
+                for s in result.specs where !merged.contains(where: { $0.label == s.label }) {
+                    merged.append(s)
+                }
+                productSpecs = merged
+            }
+            configRawRows = result.rawRows
+            isLoadingSpecs = false
+            loadedTabs.insert(tabID)
+            hasMoreByTab[tabID] = false
+            return
+        }
+
         loadingTabs.insert(tabID)
         defer {
             loadingTabs.remove(tabID)
@@ -496,6 +694,8 @@ public struct ProductDetailView: View {
     }
 
     private func loadMore(for tabID: String) async {
+        let chipTitle = activeChips.first(where: { $0.id == tabID })?.title ?? ""
+        guard !isConfigTab(id: tabID, title: chipTitle) else { return }
         guard hasMoreByTab[tabID] != false, !loadingTabs.contains(tabID) else { return }
         let next = (pageByTab[tabID] ?? 1) + 1
         let tabURL: String? = apiTabs.isEmpty ? nil : tabID
@@ -1148,6 +1348,7 @@ public struct PageFeedView: View {
     @State private var loadingTabs: Set<String> = []
     @State private var pageByTab: [String: Int] = [:]
     @State private var hasMoreByTab: [String: Bool] = [:]
+    @State private var hasInitialized = false
 
     public init(link: String, title: String) {
         self.link = link
@@ -1201,6 +1402,9 @@ public struct PageFeedView: View {
             }
         }
         .onChange(of: selectedTabID) { _, newID in
+            if !newID.isEmpty {
+                appState.pageTabSelections["page-\(link)"] = newID
+            }
             if scrolledTabID != newID {
                 withAnimation(.snappy(duration: 0.24)) {
                     scrolledTabID = newID
@@ -1211,6 +1415,16 @@ public struct PageFeedView: View {
             }
         }
         .task(id: link) {
+            if let saved = appState.pageTabSelections["page-\(link)"], !saved.isEmpty {
+                if selectedTabID.isEmpty {
+                    selectedTabID = saved
+                }
+                if !subTabs.isEmpty && subTabs.contains(where: { $0.id == saved }) {
+                    scrolledTabID = saved
+                }
+            }
+            guard !hasInitialized || (subTabs.isEmpty && (rowsByTab[link]?.isEmpty ?? true)) else { return }
+            hasInitialized = true
             await loadInitial()
         }
     }
@@ -1259,7 +1473,12 @@ public struct PageFeedView: View {
         }
         do {
             let initial: [HomeFeedRow]
-            if link == "/main/headline" {
+            let isHistoryLink = link.contains("recentHistory") || link.contains("hitHistory")
+            if isHistoryLink && !appState.settings.enableCloudHistoryLoad {
+                initial = appState.historyAndFav.history.compactMap { entry in
+                    entry.feed.map { HomeFeedRow.feed($0) }
+                }
+            } else if link == "/main/headline" {
                 initial = try await API.headlineFeed(page: 1)
             } else {
                 initial = try await API.linkFeed(link: link, page: 1)
@@ -1268,6 +1487,7 @@ public struct PageFeedView: View {
             if !extractedTabs.isEmpty {
                 let contentOnly = filterNonTabRows(initial)
                 var resolvedTabs = extractedTabs
+                let preferredSavedID = appState.pageTabSelections["page-\(link)"]
                 if !contentOnly.isEmpty {
                     let existingIdx = resolvedTabs.firstIndex { tab in
                         normalizedComparisonKey(tab.url) == normalizedComparisonKey(link)
@@ -1275,12 +1495,19 @@ public struct PageFeedView: View {
                     if let existingIdx {
                         let firstTab = resolvedTabs[existingIdx]
                         subTabs = resolvedTabs
-                        selectedTabID = firstTab.id
-                        scrolledTabID = firstTab.id
                         rowsByTab[firstTab.id] = contentOnly
                         loadedTabs.insert(firstTab.id)
                         pageByTab[firstTab.id] = 1
                         hasMoreByTab[firstTab.id] = true
+                        let targetID = (preferredSavedID.flatMap { saved in
+                            resolvedTabs.contains(where: { $0.id == saved }) ? saved : nil
+                        }) ?? (resolvedTabs.contains(where: { $0.id == selectedTabID }) ? selectedTabID : firstTab.id)
+                        selectedTabID = targetID
+                        scrolledTabID = targetID
+                        appState.pageTabSelections["page-\(link)"] = targetID
+                        if targetID != firstTab.id, let targetTab = resolvedTabs.first(where: { $0.id == targetID }) {
+                            await loadSubTab(tabID: targetTab.id, url: targetTab.url, force: false)
+                        }
                     } else {
                         let originTab = HomeSection(
                             id: "origin-\(link)",
@@ -1291,19 +1518,30 @@ public struct PageFeedView: View {
                         )
                         resolvedTabs.insert(originTab, at: 0)
                         subTabs = resolvedTabs
-                        selectedTabID = originTab.id
-                        scrolledTabID = originTab.id
                         rowsByTab[originTab.id] = contentOnly
                         loadedTabs.insert(originTab.id)
                         pageByTab[originTab.id] = 1
                         hasMoreByTab[originTab.id] = true
+                        let targetID = (preferredSavedID.flatMap { saved in
+                            resolvedTabs.contains(where: { $0.id == saved }) ? saved : nil
+                        }) ?? (resolvedTabs.contains(where: { $0.id == selectedTabID }) ? selectedTabID : originTab.id)
+                        selectedTabID = targetID
+                        scrolledTabID = targetID
+                        appState.pageTabSelections["page-\(link)"] = targetID
+                        if targetID != originTab.id, let targetTab = resolvedTabs.first(where: { $0.id == targetID }) {
+                            await loadSubTab(tabID: targetTab.id, url: targetTab.url, force: false)
+                        }
                     }
                 } else {
                     subTabs = resolvedTabs
-                    if let first = resolvedTabs.first {
-                        selectedTabID = first.id
-                        scrolledTabID = first.id
-                        await loadSubTab(tabID: first.id, url: first.url, force: true)
+                    let targetTab = preferredSavedID.flatMap { saved in
+                        resolvedTabs.first(where: { $0.id == saved })
+                    } ?? resolvedTabs.first(where: { $0.id == selectedTabID }) ?? resolvedTabs.first
+                    if let targetTab {
+                        selectedTabID = targetTab.id
+                        scrolledTabID = targetTab.id
+                        appState.pageTabSelections["page-\(link)"] = targetTab.id
+                        await loadSubTab(tabID: targetTab.id, url: targetTab.url, force: false)
                     }
                 }
             } else {
@@ -1390,6 +1628,7 @@ public struct PageFeedView: View {
 public struct CoolPicView: View {
     public let initialTag: String
 
+    @Environment(AppState.self) private var appState
     @State private var sortType = "recommend"
     @State private var scrolledSort: String? = "recommend"
     @State private var rowsBySort: [String: [HomeFeedRow]] = [:]
@@ -1397,6 +1636,7 @@ public struct CoolPicView: View {
     @State private var loadingSorts: Set<String> = []
     @State private var pageBySort: [String: Int] = [:]
     @State private var hasMoreBySort: [String: Bool] = [:]
+    @State private var hasInitialized = false
 
     private let sortOptions: [ChoiceChip] = [
         ChoiceChip(id: "recommend", title: "推荐"),
@@ -1451,6 +1691,7 @@ public struct CoolPicView: View {
                 }
             }
             .onChange(of: sortType) { _, newValue in
+                appState.pageTabSelections["coolpic-\(initialTag)"] = newValue
                 if scrolledSort != newValue {
                     withAnimation(.snappy(duration: 0.24)) {
                         scrolledSort = newValue
@@ -1459,7 +1700,15 @@ public struct CoolPicView: View {
                 Task { await reload(sort: newValue, force: false) }
             }
             .task(id: initialTag) {
-                await reload(sort: sortType, force: true)
+                if let saved = appState.pageTabSelections["coolpic-\(initialTag)"],
+                   sortOptions.contains(where: { $0.id == saved }),
+                   saved != sortType {
+                    sortType = saved
+                    scrolledSort = saved
+                }
+                guard !hasInitialized || loadedSorts.isEmpty else { return }
+                hasInitialized = true
+                await reload(sort: sortType, force: !loadedSorts.contains(sortType))
             }
         }
     }

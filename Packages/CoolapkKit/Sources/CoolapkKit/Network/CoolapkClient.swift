@@ -64,7 +64,8 @@ public actor CoolapkClient {
     private var params: ProtocolParameters
     private var cachedToken: String?
     private var tokenDate: Date = .distantPast
-    private let tokenLifetime: TimeInterval = 20 * 60
+    private let tokenLifetime: TimeInterval = 5 * 60
+    private var inFlightGETs: [String: Task<JSON, Error>] = [:]
 
     private(set) var sessionGeneration: Int = 0
     private(set) var uid: String = ""
@@ -274,6 +275,7 @@ public actor CoolapkClient {
             request.setValue(params.szlmID, forHTTPHeaderField: "X-App-Szlm-Id")
         }
         request.setValue(params.userAgent, forHTTPHeaderField: "User-Agent")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
 
         let cookieHeader = buildCookieHeader(for: url)
@@ -386,7 +388,17 @@ public actor CoolapkClient {
 
     @discardableResult
     public func get(_ path: String, _ parameters: [String: String] = [:], base: String = CoolapkClient.apiBase) async throws -> JSON {
-        try await perform(base: base, path: path, parameters: parameters, method: "GET", body: nil, contentType: nil)
+        let sortedParams = parameters.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
+        let key = "\(sessionGeneration)|\(base)|\(path)|\(sortedParams)"
+        if let existing = inFlightGETs[key] {
+            return try await existing.value
+        }
+        let task = Task<JSON, Error> {
+            try await perform(base: base, path: path, parameters: parameters, method: "GET", body: nil, contentType: nil)
+        }
+        inFlightGETs[key] = task
+        defer { inFlightGETs.removeValue(forKey: key) }
+        return try await task.value
     }
 
     @discardableResult

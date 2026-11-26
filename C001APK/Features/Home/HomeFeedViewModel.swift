@@ -80,11 +80,16 @@ public final class HomeFeedViewModel {
             case .headline:
                 loaded = try await API.headlineFeed(page: page)
             case .question:
-                let primary = (try? await API.pageFeed(pageName: "V11_FIND_QUESTION", page: page)) ?? []
-                if !primary.isEmpty {
-                    loaded = primary
+                let wenda = (try? await API.pageFeed(pageName: "V9_HOME_TAB_WENDA", page: page)) ?? []
+                if !wenda.isEmpty {
+                    loaded = wenda
                 } else {
-                    loaded = try await API.linkFeed(link: "#/question/list", page: page)
+                    let v11 = (try? await API.pageFeed(pageName: "V11_FIND_QUESTION", page: page)) ?? []
+                    if !v11.isEmpty {
+                        loaded = v11
+                    } else {
+                        loaded = try await API.linkFeed(link: "#/feed/questionList", page: page)
+                    }
                 }
             case .goods:
                 let primary = (try? await API.pageFeed(pageName: "V11_FIND_GOODS", page: page)) ?? []
