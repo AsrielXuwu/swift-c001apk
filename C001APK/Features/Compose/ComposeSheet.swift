@@ -1,6 +1,12 @@
 import CoolapkKit
 import PhotosUI
 import SwiftUI
+import UIKit
+
+@MainActor
+private func resignComposeKeyboardImmediately() {
+    UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+}
 
 public struct ComposeFloatingOverlayHost: View {
     @Binding public var composeMode: ComposeMode?
@@ -12,24 +18,26 @@ public struct ComposeFloatingOverlayHost: View {
     public var body: some View {
         ZStack(alignment: .bottom) {
             if let mode = composeMode {
-                Color.black.opacity(0.26)
+                Color.black.opacity(0.24)
                     .ignoresSafeArea()
                     .onTapGesture {
-                        withAnimation(.snappy(duration: 0.24)) {
+                        resignComposeKeyboardImmediately()
+                        withAnimation(.easeOut(duration: 0.20)) {
                             composeMode = nil
                         }
                     }
                     .transition(.opacity)
 
                 ComposeSheet(mode: mode) {
-                    withAnimation(.snappy(duration: 0.24)) {
+                    resignComposeKeyboardImmediately()
+                    withAnimation(.easeOut(duration: 0.20)) {
                         composeMode = nil
                     }
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.snappy(duration: 0.26), value: composeMode != nil)
+        .animation(.easeOut(duration: 0.20), value: composeMode != nil)
     }
 }
 
@@ -64,6 +72,7 @@ public struct ComposeSheet: View {
     private func closeSheet() {
         isInputFocused = false
         isPickerSearchFocused = false
+        resignComposeKeyboardImmediately()
         if let onDismiss {
             onDismiss()
         } else {
@@ -124,9 +133,8 @@ public struct ComposeSheet: View {
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .padding(.horizontal, 12)
         .padding(.bottom, 8)
-        .animation(.snappy(duration: 0.25), value: activePanel)
-        .task {
-            try? await Task.sleep(nanoseconds: 60_000_000)
+        .animation(.easeOut(duration: 0.20), value: activePanel)
+        .onAppear {
             if activePanel == .compose {
                 isInputFocused = true
             }

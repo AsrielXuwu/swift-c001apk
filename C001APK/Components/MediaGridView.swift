@@ -473,12 +473,11 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
     public var body: some View {
         let baseSlot = Int(floor(phase))
         let maxBack = min(2, max(0, count - 1))
-        let slotOffsets = Array((-1...maxBack).reversed())
+        let rawSlots = count <= 1 ? [0] : Array((baseSlot - 1)...(baseSlot + maxBack))
         let activeRounded = Int(phase.rounded())
 
         ZStack {
-            ForEach(slotOffsets, id: \.self) { stepOffset in
-                let rawSlot = baseSlot + stepOffset
+            ForEach(rawSlots, id: \.self) { rawSlot in
                 let itemIndex = ((rawSlot % count) + count) % count
                 let t = CGFloat(rawSlot) - phase
                 let isFront = (rawSlot == activeRounded) && abs(t) < 0.35
@@ -506,28 +505,40 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
     }
 
     private func cardGeometry(for t: CGFloat, count: Int) -> CardGeometry {
-        // t == 0: center front card
-        // t in [-0.5, 0]: active card swinging out left & dropping down a layer past -0.48
-        // t in [-1.0, -0.5]: tucking under behind into back-left deck slot
-        // t in [0, 1]: next card moving from back-right slot into center front
-        // t in [1, 2]: deeper back layer peaking from opposite edge
+        // t == 0: active front card
+        // t in [-1, 0]: active card swinging out left, dropping a layer around -0.48, landing in back-left slot
+        // t in [-2, -1]: back-left card smoothly fading out as it recedes
+        // t in [0, 1]: back-right card rising into center front
+        // t in [1, 2]: newly queued card fading in smoothly into the back-right slot
         if t < 0 {
-            let clamped = max(-1.0, t)
-            let swingOut = sin(-clamped * .pi)
-            let tuckRatio = min(1.0, max(0.0, (-clamped - 0.5) * 2.0))
-            let rearTargetX: CGFloat = count > 2 ? -13 : 15
-            let rearTargetY: CGFloat = count > 2 ? 15 : 8
-            let rearTargetAngle: Double = count > 2 ? -3.8 : 3.8
-            let targetShrink: CGFloat = count > 2 ? 0.09 : 0.05
+            if t >= -1.0 {
+                let p = -t
+                let swingOut = sin(p * .pi)
+                let tuckRatio = min(1.0, max(0.0, (p - 0.5) * 2.0))
+                let rearTargetX: CGFloat = count > 2 ? -13 : 15
+                let rearTargetY: CGFloat = count > 2 ? 14 : 8
+                let rearTargetAngle: Double = count > 2 ? -3.8 : 3.8
+                let targetShrink: CGFloat = count > 2 ? 0.09 : 0.05
 
-            let x = (-swingOut * 138.0) + (tuckRatio * rearTargetX)
-            let y = (abs(clamped) * 6.0) + (tuckRatio * (rearTargetY - 6.0))
-            let scale = 1.0 - (targetShrink * min(1.0, abs(clamped)))
-            let angle = Double(-swingOut * 7.5) + (tuckRatio * rearTargetAngle)
-            let zIndex: Double = clamped > -0.48 ? 100.0 : 12.0
-            let fadeAtRest = (count == 2 && clamped < -0.94) ? 0.0 : 1.0
-            let opacity = (1.0 - Double(tuckRatio) * 0.10) * fadeAtRest
-            return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
+                let x = (-swingOut * 138.0) + (tuckRatio * rearTargetX)
+                let y = (p * 6.0) + (tuckRatio * (rearTargetY - 6.0))
+                let scale = 1.0 - (targetShrink * p)
+                let angle = Double(-swingOut * 7.5) + (tuckRatio * rearTargetAngle)
+                let zIndex: Double = p < 0.48 ? 100.0 : 40.0
+                let restFade = count == 2 ? max(0.0, 1.0 - max(0.0, (p - 0.72) / 0.24)) : 1.0
+                let opacity = (1.0 - Double(tuckRatio) * 0.12) * restFade
+                return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
+            } else {
+                let fade = max(0.0, 1.0 - Double((-t - 1.0) / 0.45))
+                return CardGeometry(
+                    x: -13.0,
+                    y: 14.0,
+                    scale: 0.91,
+                    angle: -3.8,
+                    opacity: count > 2 ? 0.88 * fade : 0.0,
+                    zIndex: 20.0
+                )
+            }
         } else if t <= 1.0 {
             let p = t
             let x = p * 15.0
@@ -538,13 +549,13 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
             let zIndex = 88.0 - Double(p) * 18.0
             return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
         } else {
-            let p = min(1.35, t - 1.0)
-            let x = 15.0 + p * (-28.0)
-            let y = 8.0 + p * 7.0
-            let scale = 0.95 - p * 0.04
-            let angle = 3.8 + Double(p) * (-7.6)
-            let opacity = max(0.0, 0.96 - Double(p) * 0.14 - (t > 2.0 ? Double(t - 2.0) * 1.4 : 0.0))
-            let zIndex = 58.0 - Double(p) * 20.0
+            let p = min(1.0, t - 1.0)
+            let x = 15.0 * (1.0 - p * 0.65)
+            let y = 8.0 + p * 6.0
+            let scale = 0.95 - p * 0.06
+            let angle = 3.8 * (1.0 - Double(p))
+            let opacity = count > 2 ? max(0.0, 0.96 * Double(max(0.0, 1.0 - (p / 0.85)))) : 0.0
+            let zIndex = 58.0 - Double(p) * 28.0
             return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
         }
     }

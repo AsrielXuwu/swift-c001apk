@@ -7,13 +7,13 @@ public func coolapkNormalizedURL(_ url: String) -> String {
     return url
 }
 
-public enum MediaContentType: String, Sendable {
+public enum MediaContentType: String, Sendable, Codable {
     case feed
     case reply
     case article
 }
 
-public struct FeedMedia: Hashable, Identifiable, Sendable {
+public struct FeedMedia: Hashable, Identifiable, Sendable, Codable {
     public var id: String { "\(sourceUrl)|\(videoUrl ?? "")" }
     public let sourceUrl: String
     public let previewUrl: String?
@@ -83,7 +83,7 @@ public struct FeedMedia: Hashable, Identifiable, Sendable {
     }
 }
 
-public struct FeedArticlePart: Hashable, Identifiable, Sendable {
+public struct FeedArticlePart: Hashable, Identifiable, Sendable, Codable {
     public let id: String
     public var type: String
     public var title: String
@@ -125,7 +125,7 @@ public struct FeedArticlePart: Hashable, Identifiable, Sendable {
     }
 }
 
-public struct VoteOption: Identifiable, Hashable, Sendable {
+public struct VoteOption: Identifiable, Hashable, Sendable, Codable {
     public let id: String
     public var title: String
     public var count: Int
@@ -139,7 +139,7 @@ public struct VoteOption: Identifiable, Hashable, Sendable {
     }
 }
 
-public struct VoteInfo: Hashable, Sendable {
+public struct VoteInfo: Hashable, Sendable, Codable {
     public var id: String
     public var title: String
     public var totalVotes: Int
@@ -160,7 +160,7 @@ public struct VoteInfo: Hashable, Sendable {
     }
 }
 
-public struct ForwardedContent: Hashable, Sendable {
+public struct ForwardedContent: Hashable, Sendable, Codable {
     public var id: String
     public var uid: String
     public var username: String
@@ -185,7 +185,7 @@ public struct ForwardedContent: Hashable, Sendable {
     }
 }
 
-public struct ReplyItem: Identifiable, Hashable, Sendable {
+public struct ReplyItem: Identifiable, Hashable, Sendable, Codable {
     public let id: String
     public var uid: String
     public var username: String
@@ -231,13 +231,30 @@ public struct ReplyItem: Identifiable, Hashable, Sendable {
         isTop = forcedTop || json.is_top.int > 0 || json.isTop.int > 0
         mediaItems = FeedMedia.from(json: json, contentId: resolvedID, contentType: .reply)
         pics = mediaItems.map(\.sourceUrl)
-        nested = json.replyRows.array.map { ReplyItem(json: $0) }
+        nested = json.replyRows.array
+            .filter { Self.isValidReplyJSON($0) }
+            .map { ReplyItem(json: $0) }
         ipLocation = json.ip_location.string
+    }
+
+    public static func isValidReplyJSON(_ json: JSON) -> Bool {
+        let entityType = json.entityType.string.lowercased()
+        let template = json.entityTemplate.string.lowercased()
+        if entityType == "card" || entityType.contains("ad") || entityType.contains("sponsor") {
+            return false
+        }
+        if template.contains("ad") || template.contains("sponsor") || json.is_ad.int > 0 {
+            return false
+        }
+        let hasText = !json.message.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasMedia = !json.pic.string.isEmpty || !json.picArr.array.isEmpty || !json.imageUriList.array.isEmpty || !json.image_uri_list.array.isEmpty
+        let hasUser = !json.username.string.isEmpty || !json.uid.identifier.isEmpty
+        return (hasText || hasMedia) && hasUser
     }
 }
 
-public struct FeedItem: Identifiable, Hashable, Sendable {
-    public enum Kind: String, Sendable {
+public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
+    public enum Kind: String, Sendable, Codable {
         case feed
         case feedArticle
         case product

@@ -13,6 +13,9 @@ struct C001APKApp: App {
         appearance.shadowColor = .clear
 
         let navBar = UINavigationBar.appearance()
+        navBar.isTranslucent = true
+        navBar.setBackgroundImage(UIImage(), for: .default)
+        navBar.shadowImage = UIImage()
         navBar.standardAppearance = appearance
         navBar.scrollEdgeAppearance = appearance
         navBar.compactAppearance = appearance

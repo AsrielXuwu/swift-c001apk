@@ -1247,6 +1247,7 @@ public struct PageFeedView: View {
                     await loadSubTab(tabID: tabID, url: tabURL, force: true)
                 }
             }
+            .scrollEdgeEffectHidden(true, for: .top)
         }
     }
 

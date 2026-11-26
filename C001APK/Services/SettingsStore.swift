@@ -269,7 +269,13 @@ public final class SettingsStore {
         let now = Date()
         let threshold = now.addingTimeInterval(-86400)
         szlmAcquisitionAttempts = szlmAcquisitionAttempts.filter { $0 > threshold } + [now]
-        let acquired = try await SzlmDuidClient.acquire()
+        let sdk = Int(protocolParameters.sdkInt) ?? 35
+        let acquired = try await SzlmDuidClient.acquire(
+            manufacturer: protocolParameters.deviceBrand,
+            model: protocolParameters.deviceModel,
+            androidVersion: "16",
+            sdkInt: sdk
+        )
         szlmLastAcquiredAt = Date()
         var updated = protocolParameters
         updated.szlmID = acquired

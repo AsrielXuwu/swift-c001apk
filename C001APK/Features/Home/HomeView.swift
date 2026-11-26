@@ -292,6 +292,7 @@ public struct HomeView: View {
             .refreshable {
                 await viewModel.loadInitial(tab: tab, appState: appState, force: true)
             }
+            .scrollEdgeEffectHidden(true, for: .top)
         }
     }
 }

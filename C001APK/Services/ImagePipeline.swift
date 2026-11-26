@@ -10,11 +10,24 @@ public struct LoadedImageResult: @unchecked Sendable {
     public let pixelSize: CGSize
 }
 
+private final class SyncImageMemoryStore: @unchecked Sendable {
+    let images: NSCache<NSString, UIImage>
+    let hdrFlags = NSCache<NSString, NSNumber>()
+
+    init() {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 450
+        cache.totalCostLimit = 120 * 1024 * 1024
+        self.images = cache
+    }
+}
+
 public actor ImagePipeline {
     public static let shared = ImagePipeline()
+    private static let memoryStore = SyncImageMemoryStore()
 
-    private let memoryCache: NSCache<NSString, UIImage>
-    private let hdrFlagCache = NSCache<NSString, NSNumber>()
+    private var memoryCache: NSCache<NSString, UIImage> { Self.memoryStore.images }
+    private var hdrFlagCache: NSCache<NSString, NSNumber> { Self.memoryStore.hdrFlags }
     private let session: URLSession
     private let diskDirectory: URL
     private let maxDiskBytes: Int = 500 * 1024 * 1024
@@ -27,11 +40,6 @@ public actor ImagePipeline {
     )
 
     private init() {
-        let cache = NSCache<NSString, UIImage>()
-        cache.countLimit = 450
-        cache.totalCostLimit = 120 * 1024 * 1024
-        self.memoryCache = cache
-
         let config = URLSessionConfiguration.ephemeral
         config.urlCache = nil
         config.timeoutIntervalForRequest = 20
@@ -44,6 +52,14 @@ public actor ImagePipeline {
             ?? FileManager.default.temporaryDirectory
         self.diskDirectory = caches.appendingPathComponent("CoolapkImages", isDirectory: true)
         try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
+    }
+
+    public nonisolated static func cachedImageSync(urlString: String, maxPixelSize: CGFloat? = nil) -> LoadedImageResult? {
+        guard let normalized = normalizedURLStatic(urlString) else { return nil }
+        let cacheKey = makeKeyStatic(url: normalized.absoluteString, maxPixelSize: maxPixelSize) as NSString
+        guard let cached = memoryStore.images.object(forKey: cacheKey) else { return nil }
+        let isHDR = memoryStore.hdrFlags.object(forKey: normalized.absoluteString as NSString)?.boolValue ?? false
+        return LoadedImageResult(image: cached, hasHDRGainMap: isHDR, pixelSize: cached.size)
     }
 
     public func updateUserAgent(_ value: String) {
@@ -192,7 +208,7 @@ public actor ImagePipeline {
         return LoadedImageResult(image: finalImage, hasHDRGainMap: hasGainMap, pixelSize: finalImage.size)
     }
 
-    private func normalizedURL(_ raw: String) -> URL? {
+    private nonisolated static func normalizedURLStatic(_ raw: String) -> URL? {
         var str = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !str.isEmpty else { return nil }
         if str.hasPrefix("http://") { str = "https://" + str.dropFirst("http://".count) }
@@ -200,11 +216,19 @@ public actor ImagePipeline {
         return URL(string: str)
     }
 
-    private func makeKey(url: String, maxPixelSize: CGFloat?) -> String {
+    private nonisolated static func makeKeyStatic(url: String, maxPixelSize: CGFloat?) -> String {
         if let maxPixelSize {
             return "\(url)#w=\(Int(maxPixelSize))"
         }
         return url
+    }
+
+    private func normalizedURL(_ raw: String) -> URL? {
+        Self.normalizedURLStatic(raw)
+    }
+
+    private func makeKey(url: String, maxPixelSize: CGFloat?) -> String {
+        Self.makeKeyStatic(url: url, maxPixelSize: maxPixelSize)
     }
 
     private func diskFileURL(for urlString: String) -> URL {

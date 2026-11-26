@@ -59,6 +59,28 @@ public struct UserBrief: Identifiable, Hashable, Sendable {
     public var fansNum: Int
     public var feedNum: Int
 
+    public init(
+        id: String,
+        username: String,
+        avatar: String = "",
+        level: Int = 0,
+        isFollowed: Bool = false,
+        bio: String = "",
+        verifyLabel: String = "",
+        fansNum: Int = 0,
+        feedNum: Int = 0
+    ) {
+        self.id = id
+        self.username = username
+        self.avatar = avatar
+        self.level = level
+        self.isFollowed = isFollowed
+        self.bio = bio
+        self.verifyLabel = verifyLabel
+        self.fansNum = fansNum
+        self.feedNum = feedNum
+    }
+
     public init(json: JSON) {
         id = json.uid.exists ? json.uid.identifier : json.entityId.identifier
         username = json.username.string
@@ -479,6 +501,7 @@ public enum HomeFeedRow: Identifiable, Hashable, Sendable {
     case browse(BrowseItem)
     case collection(CollectionItem)
     case event(EventItem)
+    case dyh(DyhItem)
 
     public var id: String {
         switch self {
@@ -502,6 +525,7 @@ public enum HomeFeedRow: Identifiable, Hashable, Sendable {
         case let .browse(item): return "browse-\(item.id)"
         case let .collection(item): return "collection-\(item.id)"
         case let .event(item): return "event-\(item.id)"
+        case let .dyh(item): return "dyh-\(item.id)"
         }
     }
 

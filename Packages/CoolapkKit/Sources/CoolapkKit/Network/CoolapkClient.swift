@@ -323,6 +323,7 @@ public actor CoolapkClient {
             guard initialGeneration == sessionGeneration else {
                 throw APIError.sessionChanged
             }
+            let usedProof = activeCaptchaProof()
             let (data, _) = try await makeSignedRequest(
                 base: base,
                 path: path,
@@ -344,7 +345,11 @@ public actor CoolapkClient {
             }
 
             if let challenge = CaptchaChallenge.from(json: json) {
-                clearCaptchaState()
+                // Only clear captcha proof if it actually matched the rejected request;
+                // avoids wiping a fresher proof solved concurrently by another request.
+                if let usedProof, usedProof == captchaProof {
+                    clearCaptchaState()
+                }
                 throw APIError.captchaRequired(challenge, message: json.message.string)
             }
 

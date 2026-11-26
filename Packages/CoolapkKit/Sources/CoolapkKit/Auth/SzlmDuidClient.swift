@@ -158,10 +158,23 @@ public enum SzlmDuidClient: Sendable {
         return OfficialDeviceIdentity.validate(object["cdd"] as? String)
     }
 
-    public static func acquire(seed: String? = nil) async throws -> String {
+    public static func acquire(
+        seed: String? = nil,
+        manufacturer: String = CoolapkToken.defaultDeviceBrand,
+        model: String = CoolapkToken.defaultDeviceModel,
+        androidVersion: String = "16",
+        sdkInt: Int = Int(CoolapkToken.defaultSdkInt) ?? 35
+    ) async throws -> String {
         let activeSeed = seed ?? createSeed()
         let ts = String(format: "%.3f", Date().timeIntervalSince1970)
-        let report = try buildReport(seed: activeSeed, timestamp: ts)
+        let report = try buildReport(
+            seed: activeSeed,
+            timestamp: ts,
+            manufacturer: manufacturer,
+            model: model,
+            androidVersion: androidVersion,
+            sdkInt: sdkInt
+        )
         let payload = try encodeReport(report)
 
         let config = URLSessionConfiguration.ephemeral

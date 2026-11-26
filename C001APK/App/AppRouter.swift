@@ -48,6 +48,7 @@ public extension View {
     func c001TransparentTopBar() -> some View {
         self
             .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
+            .scrollEdgeEffectHidden(true, for: .top)
             .overlay(alignment: .top) {
                 StatusBarGradientBlurOverlay()
             }
@@ -58,14 +59,14 @@ private struct StatusBarGradientBlurOverlay: View {
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
-        let topHeight = currentStatusBarHeight() + 14
+        let topHeight = currentStatusBarHeight() + 8
         Rectangle()
             .fill(.ultraThinMaterial)
             .mask(
                 LinearGradient(
                     stops: [
                         .init(color: .black, location: 0.0),
-                        .init(color: .black.opacity(0.82), location: 0.50),
+                        .init(color: .black.opacity(0.76), location: 0.48),
                         .init(color: .clear, location: 1.0)
                     ],
                     startPoint: .top,

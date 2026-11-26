@@ -91,6 +91,9 @@ public struct HomeRowRenderer: View {
 
         case let .event(item):
             EventRowView(event: item)
+
+        case let .dyh(item):
+            DyhRowView(dyh: item)
         }
     }
 
@@ -830,6 +833,74 @@ public struct EventRowView: View {
             .padding(.horizontal, 12)
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .applyZoomSource(id: "event-\(transitionSeed)", in: zoomNamespace)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+public struct DyhRowView: View {
+    public let dyh: DyhItem
+
+    @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
+
+    public init(dyh: DyhItem) {
+        self.dyh = dyh
+    }
+
+    public var body: some View {
+        let tid = "dyh-\(transitionSeed)"
+        Button {
+            appState.push(.dyh(id: dyh.id, transitionID: tid))
+        } label: {
+            HStack(spacing: 12) {
+                if !dyh.logo.isEmpty {
+                    RemoteImageView(url: dyh.logo, maxPixelSize: 220)
+                        .frame(width: 56, height: 56)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                } else {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.14))
+                        .frame(width: 56, height: 56)
+                        .overlay {
+                            Image(systemName: "newspaper")
+                                .font(.title3)
+                                .foregroundStyle(Color.accentColor)
+                        }
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(dyh.title.isEmpty ? "看看号" : dyh.title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+
+                    if !dyh.description.isEmpty {
+                        Text(FeedHTMLParser.plainText(dyh.description))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    let meta = [
+                        dyh.username.isEmpty ? "" : "@\(dyh.username)",
+                        dyh.followNum > 0 ? "\(Formatting.count(dyh.followNum)) 关注" : ""
+                    ].filter { !$0.isEmpty }.joined(separator: " · ")
+                    if !meta.isEmpty {
+                        Text(meta)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(14)
+            .c001CardStyle(cornerRadius: 20)
+            .padding(.horizontal, 12)
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .applyZoomSource(id: tid, in: zoomNamespace)
         }
         .buttonStyle(.plain)
     }

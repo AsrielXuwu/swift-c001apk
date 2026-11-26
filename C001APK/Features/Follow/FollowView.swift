@@ -173,6 +173,7 @@ public struct FollowView: View {
             .refreshable {
                 await viewModel.loadInitial(segment: seg, appState: appState, force: true)
             }
+            .scrollEdgeEffectHidden(true, for: .top)
         }
     }
 

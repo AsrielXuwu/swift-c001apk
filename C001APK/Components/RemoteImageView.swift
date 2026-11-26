@@ -8,6 +8,7 @@ public struct RemoteImageView: View {
 
     @Environment(AppState.self) private var appState
     @State private var loaded: LoadedImageResult?
+    @State private var loadedKey: String = ""
     @State private var didFail = false
 
     public init(
@@ -23,12 +24,16 @@ public struct RemoteImageView: View {
     }
 
     public var body: some View {
+        let taskKey = "\(url)|\(Int(maxPixelSize ?? 0))"
+        let activeLoaded = (loadedKey == taskKey ? loaded : nil)
+            ?? ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: maxPixelSize)
+
         Group {
-            if let loaded {
-                let base = Image(uiImage: loaded.image)
+            if let activeLoaded {
+                let base = Image(uiImage: activeLoaded.image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
-                if honorHDR && loaded.hasHDRGainMap && !appState.settings.disableHDR {
+                if honorHDR && activeLoaded.hasHDRGainMap && !appState.settings.disableHDR {
                     base.allowedDynamicRange(.high)
                 } else {
                     base.allowedDynamicRange(.standard)
@@ -43,14 +48,25 @@ public struct RemoteImageView: View {
                 Color(.secondarySystemFill)
             }
         }
-        .task(id: "\(url)|\(Int(maxPixelSize ?? 0))") {
+        .task(id: taskKey) {
             guard !url.isEmpty else {
+                loadedKey = taskKey
+                loaded = nil
                 didFail = true
                 return
             }
+            if let sync = ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: maxPixelSize) {
+                loadedKey = taskKey
+                loaded = sync
+                didFail = false
+                return
+            }
             didFail = false
-            loaded = await ImagePipeline.shared.loadImage(urlString: url, maxPixelSize: maxPixelSize)
-            if loaded == nil && !Task.isCancelled {
+            let fetched = await ImagePipeline.shared.loadImage(urlString: url, maxPixelSize: maxPixelSize)
+            guard !Task.isCancelled else { return }
+            loadedKey = taskKey
+            loaded = fetched
+            if fetched == nil {
                 didFail = true
             }
         }

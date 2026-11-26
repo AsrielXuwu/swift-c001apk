@@ -63,8 +63,23 @@ public enum API: Sendable {
     }
 
     public static func dyhSubscribe(page: Int) async throws -> [HomeFeedRow] {
-        let json = try await client.get("/v6/user/dyhSubscribe", ["page": String(page), "t": String(Int(Date().timeIntervalSince1970))])
-        return rows(from: json.data.array)
+        do {
+            let json = try await client.get("/v6/user/dyhSubscribe", ["page": String(page), "t": String(Int(Date().timeIntervalSince1970))])
+            let items = rows(from: json.data.array)
+            if !items.isEmpty || page > 1 { return items }
+        } catch {
+            // Fall back cleanly to public dyh discovery or dyh tab page when guest/expired/empty
+        }
+        if let pub = try? await client.get("/v6/dyh/list", ["page": String(page)]) {
+            let parsed = rows(from: pub.data.array)
+            if !parsed.isEmpty { return parsed }
+            let mapped = pub.data.array.compactMap { item -> HomeFeedRow? in
+                let dyh = DyhItem(json: item)
+                return dyh.id.isEmpty ? nil : .dyh(dyh)
+            }
+            if !mapped.isEmpty { return mapped }
+        }
+        return (try? await pageFeed(pageName: "V9_HOME_TAB_DYH", page: page)) ?? []
     }
 
     public static func coolPic(tag: String = "全部", type: String = "recommend", page: Int) async throws -> [HomeFeedRow] {
@@ -87,6 +102,9 @@ public enum API: Sendable {
 
     public static func linkFeed(link: String, page: Int) async throws -> [HomeFeedRow] {
         let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == "/user/dyhSubscribe" || trimmed == "/v6/user/dyhSubscribe" {
+            return try await dyhSubscribe(page: page)
+        }
         if trimmed.hasPrefix("/v6/") {
             let json = try await client.get(trimmed, ["page": String(page)])
             return rows(from: json.data.array)
@@ -306,6 +324,8 @@ public enum API: Sendable {
                 rows.append(.collection(CollectionItem(json: item)))
             case "event", "activity":
                 rows.append(.event(EventItem(json: item)))
+            case "dyh":
+                rows.append(.dyh(DyhItem(json: item)))
             case "product":
                 rows.append(.product(ProductItem(json: item)))
             case "topic":
@@ -541,13 +561,17 @@ public enum API: Sendable {
             "fromFeedAuthor": authorOnly ? "1" : "0",
         ]
         do {
-            let json = try await client.get("/v6/feed/replyList", query, base: CoolapkClient.api2Base)
-            return json.data.array.map { ReplyItem(json: $0) }
+            // Use primary apiBase first so cookies/SESSID/szlm stay consistent across endpoints.
+            let json = try await client.get("/v6/feed/replyList", query, base: CoolapkClient.apiBase)
+            return json.data.array
+                .filter { ReplyItem.isValidReplyJSON($0) }
+                .map { ReplyItem(json: $0) }
         } catch let error as APIError {
             if case .captchaRequired = error {
-                // Retry once via primary api host before surfacing captcha challenge.
-                if let fallback = try? await client.get("/v6/feed/replyList", query, base: CoolapkClient.apiBase) {
-                    return fallback.data.array.map { ReplyItem(json: $0) }
+                if let fallback = try? await client.get("/v6/feed/replyList", query, base: CoolapkClient.api2Base) {
+                    return fallback.data.array
+                        .filter { ReplyItem.isValidReplyJSON($0) }
+                        .map { ReplyItem(json: $0) }
                 }
             }
             throw error
@@ -567,7 +591,9 @@ public enum API: Sendable {
             "blockStatus": "0",
             "fromFeedAuthor": "0",
         ])
-        return json.data.array.map { ReplyItem(json: $0) }
+        return json.data.array
+            .filter { ReplyItem.isValidReplyJSON($0) }
+            .map { ReplyItem(json: $0) }
     }
 
     public static func pinReply(feedID: String, replyID: String?) async throws {

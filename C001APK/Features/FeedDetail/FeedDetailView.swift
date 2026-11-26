@@ -191,6 +191,10 @@ public struct FeedDetailView: View {
 
                     if !feed.articleParts.isEmpty {
                         articleContent(feed)
+                    } else if feed.kind == .feedArticle && viewModel.isRefreshingDetail {
+                        ProgressView("正在加载图文内容…")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
                     } else {
                         if !feed.message.isEmpty {
                             RichTextView(
@@ -301,6 +305,7 @@ public struct FeedDetailView: View {
         .refreshable {
             await viewModel.loadAll(appState: appState)
         }
+        .scrollEdgeEffectHidden(true, for: .top)
     }
 
     private func authorBar(_ feed: FeedItem) -> some View {
@@ -507,7 +512,8 @@ public struct FeedDetailView: View {
     @ViewBuilder
     private func repliesSection(_ feed: FeedItem) -> some View {
         let visibleReplies = viewModel.replies.filter { reply in
-            !appState.blacklist.isUserBlocked(reply.uid) && appState.contentFilter.match(reply: reply) == nil
+            let hasContent = !FeedHTMLParser.plainText(reply.message).isEmpty || !reply.mediaItems.isEmpty
+            return hasContent && !appState.blacklist.isUserBlocked(reply.uid) && appState.contentFilter.match(reply: reply) == nil
         }
 
         let coinOnlyReplies = appState.settings.foldCoinReplies
@@ -542,7 +548,7 @@ public struct FeedDetailView: View {
                 ForEach(Array(normalReplies.enumerated()), id: \.element.id) { index, reply in
                     replyRow(reply, feed: feed)
                         .onAppear {
-                            if index >= normalReplies.count - 4 {
+                            if normalReplies.count >= 8 && index >= normalReplies.count - 2 {
                                 Task { await viewModel.loadMoreReplies(appState: appState) }
                             }
                         }

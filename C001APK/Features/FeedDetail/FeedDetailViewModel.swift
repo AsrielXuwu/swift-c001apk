@@ -15,6 +15,7 @@ public final class FeedDetailViewModel {
     public var temporarilyRevealedFilter = false
 
     public private(set) var isLoadingFeed = false
+    public private(set) var isRefreshingDetail = false
     public private(set) var isLoadingReplies = false
     public private(set) var isLoadingMoreReplies = false
     public private(set) var hasMoreReplies = true
@@ -44,26 +45,42 @@ public final class FeedDetailViewModel {
     }
 
     public func loadAll(appState: AppState) async {
-        isLoadingFeed = (feed == nil)
+        let hadInitialFeed = (feed != nil)
+        isLoadingFeed = !hadInitialFeed
+        isRefreshingDetail = true
         isLoadingReplies = replies.isEmpty
         errorMessage = nil
         currentReplyPage = 1
         hasMoreReplies = true
 
-        async let detailFetch: FeedItem? = fetchFeedDetail(appState: appState)
-        async let repliesFetch: Void = fetchReplies(page: 1, append: false, appState: appState)
+        // When entering from a timeline card, serialize replies -> detail refresh to avoid
+        // dual simultaneous hits triggering anti-bot verification on replyList / detail endpoints.
+        if hadInitialFeed {
+            await fetchReplies(page: 1, append: false, appState: appState)
+            isLoadingReplies = false
+            if let loaded = await fetchFeedDetail(appState: appState) {
+                feed = loaded
+                appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
+                if loaded.kind == .question {
+                    answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
+                }
+            }
+            isRefreshingDetail = false
+            isLoadingFeed = false
+            return
+        }
 
-        let loaded = await detailFetch
-        if let loaded {
+        if let loaded = await fetchFeedDetail(appState: appState) {
             feed = loaded
             appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
             if loaded.kind == .question {
                 answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
             }
         }
+        isRefreshingDetail = false
         isLoadingFeed = false
 
-        _ = await repliesFetch
+        await fetchReplies(page: 1, append: false, appState: appState)
         isLoadingReplies = false
     }
 

@@ -27,6 +27,7 @@ public struct ReplyThreadSheet: View {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     sectionHeader("原评论")
                     replyCard(rootReply, isRoot: true)
+                        .padding(.horizontal, 12)
 
                     sectionHeader("全部回复")
 
@@ -50,8 +51,9 @@ public struct ReplyThreadSheet: View {
                             ) {
                                 replyCard(item, isRoot: false)
                             }
+                            .padding(.horizontal, 12)
                             .onAppear {
-                                if index >= items.count - 4 {
+                                if items.count >= 8 && index >= items.count - 2 {
                                     Task { await loadMore() }
                                 }
                             }
@@ -197,7 +199,6 @@ public struct ReplyThreadSheet: View {
         }
         .padding(14)
         .c001CardStyle(cornerRadius: 20)
-        .padding(.horizontal, 12)
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .onTapGesture {
             if !isRoot {
