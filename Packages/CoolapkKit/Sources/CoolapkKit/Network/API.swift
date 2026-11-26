@@ -244,8 +244,8 @@ public enum API: Sendable {
         var rawRows: [HomeFeedRow] = []
 
         func ingestConfigJSON(_ data: JSON) {
-            if data.isArray {
-                let arr = data.array
+            let arr = data.array
+            if !arr.isEmpty {
                 let parsedVariants = arr.enumerated().compactMap { idx, elem -> ProductConfigVariant? in
                     guard elem.isObject else { return nil }
                     let variant = ProductConfigVariant(json: elem, index: idx)
@@ -260,7 +260,11 @@ public enum API: Sendable {
                         specs.append(entry)
                     }
                     let directTitle = [elem.title.string, elem.name.string, elem.label.string].first { !$0.isEmpty } ?? ""
-                    let directVal = [elem.value.string, elem.content.string, elem.description.string].first { !$0.isEmpty } ?? ""
+                    let directVal = [
+                        elem.dictionary["value"]?.string ?? "",
+                        elem.content.string,
+                        elem.description.string
+                    ].first { !$0.isEmpty } ?? ""
                     if !directTitle.isEmpty && !directVal.isEmpty && !specs.contains(where: { $0.label == directTitle }) {
                         specs.append(ProductSpecEntry(id: "cfg-kv-\(idx)-\(directTitle)", label: directTitle, value: directVal))
                     }
@@ -292,7 +296,7 @@ public enum API: Sendable {
             } else {
                 let parsed = parsePageLink(cleaned)
                 if let items = try? await client.dataList(url: parsed.url, page: 1, extra: parsed.extra) {
-                    ingestConfigJSON(JSON(items.map(\.rawValue)))
+                    ingestConfigJSON(JSON(value: .array(items.map(\.value))))
                 }
             }
         }

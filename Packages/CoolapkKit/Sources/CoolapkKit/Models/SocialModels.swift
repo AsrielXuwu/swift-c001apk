@@ -335,19 +335,28 @@ public struct ProductConfigVariant: Identifiable, Hashable, Sendable {
                 if item.isObject {
                     let lbl = [item.title.string, item.name.string, item.key.string, item.label.string]
                         .first { !$0.isEmpty } ?? ""
-                    let val = [item.value.string, item.content.string, item.desc.string, item.text.string]
-                        .first { !$0.isEmpty } ?? ""
+                    let val = [
+                        item.dictionary["value"]?.string ?? "",
+                        item.content.string,
+                        item.desc.string,
+                        item.text.string
+                    ].first { !$0.isEmpty } ?? ""
                     appendEntry(lbl, val)
                     for child in item.entities.array {
                         let cLbl = [child.title.string, child.name.string, child.key.string].first { !$0.isEmpty } ?? ""
-                        let cVal = [child.value.string, child.content.string, child.description.string].first { !$0.isEmpty } ?? ""
+                        let cVal = [
+                            child.dictionary["value"]?.string ?? "",
+                            child.content.string,
+                            child.description.string
+                        ].first { !$0.isEmpty } ?? ""
                         appendEntry(cLbl, cVal)
                     }
                 }
             }
-            if let dict = source.dictionary {
+            let dict = source.dictionary
+            if !dict.isEmpty {
                 for (k, v) in dict.sorted(by: { $0.key < $1.key }) {
-                    let valStr = v.string.isEmpty ? (v.number?.stringValue ?? "") : v.string
+                    let valStr = v.string
                     if !valStr.isEmpty {
                         appendEntry(k, valStr)
                     } else if !v.array.isEmpty {
