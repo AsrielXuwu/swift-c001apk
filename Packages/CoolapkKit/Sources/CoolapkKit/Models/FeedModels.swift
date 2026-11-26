@@ -428,6 +428,10 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             && lhs.mediaItems.count == rhs.mediaItems.count
             && lhs.totalPicCount == rhs.totalPicCount
             && (lhs.vote == nil) == (rhs.vote == nil)
+            && lhs.priceText == rhs.priceText
+            && lhs.dealStatusText == rhs.dealStatusText
+            && lhs.extraURL == rhs.extraURL
+            && lhs.xianyuURL == rhs.xianyuURL
     }
 
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -513,10 +517,18 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         let rawContainers: [JSON] = [
             json.ershou_info,
             json.ershou_info.parsed,
+            json.ershouInfo,
+            json.ershouInfo.parsed,
             json.ershou_data,
             json.ershou_data.parsed,
             json.ershou,
             json.second_hand,
+            json.second_hand_info,
+            json.second_hand_info.parsed,
+            json.ershou_product,
+            json.ershou_product.parsed,
+            json.trade_info,
+            json.trade_info.parsed,
             json.goods_info,
             json.goods_info.parsed,
             json.media_info,
@@ -524,25 +536,56 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             json.extraData.parsed,
             json.extra_data,
             json.extra_data.parsed,
-            json.extra_info.parsed
-        ]
+            json.extra_info.parsed,
+            json.extraInfo.parsed
+        ] + json.extra_entities.array + json.extraEntities.array
         let extraObjects = rawContainers.filter { $0.isObject }
         let extraTitleFromObj = extraObjects.compactMap { obj in
-            [obj.title.string, obj.extra_title.string, obj.goods_title.string, obj.name.string].first { !$0.isEmpty }
+            [
+                obj.product_title.string,
+                obj.productTitle.string,
+                obj.title.string,
+                obj.extra_title.string,
+                obj.goods_title.string,
+                obj.name.string
+            ].first { !$0.isEmpty }
         }.first ?? ""
         let extraURLFromObj = extraObjects.compactMap { obj in
-            [obj.xianyu_url.string, obj.goofish_url.string, obj.ershou_url.string, obj.extra_url.string, obj.url.string, obj.link.string, obj.target_url.string]
-                .first { !$0.isEmpty }
+            [
+                obj.link_url.string,
+                obj.linkUrl.string,
+                obj.xianyu_url.string,
+                obj.goofish_url.string,
+                obj.ershou_url.string,
+                obj.trade_url.string,
+                obj.jump_url.string,
+                obj.buy_url.string,
+                obj.sell_url.string,
+                obj.item_url.string,
+                obj.extra_url.string,
+                obj.url.string,
+                obj.link.string,
+                obj.target_url.string
+            ].first { !$0.isEmpty }
         }.first.map(Self.unwrapCoolapkRedirectURL) ?? ""
         let extraPicFromObj = extraObjects.compactMap { obj in
             [obj.pic.string, obj.extra_pic.string, obj.cover.string, obj.logo.string].first { !$0.isEmpty }
         }.first.map(coolapkNormalizedURL) ?? ""
         let extraInfoFromObj = extraObjects.compactMap { obj in
-            [obj.info.string, obj.extra_info.string, obj.sub_title.string, obj.status_text.string].first { !$0.isEmpty }
+            [
+                obj.link_source.string,
+                obj.linkSource.string,
+                obj.platform.string,
+                obj.info.string,
+                obj.extra_info.string,
+                obj.sub_title.string,
+                obj.status_text.string
+            ].first { !$0.isEmpty }
         }.first ?? ""
 
         let effectiveExtraTitle = resolvedExtraTitle.isEmpty ? extraTitleFromObj : resolvedExtraTitle
-        let effectiveExtraURL = resolvedExtraURL.isEmpty ? extraURLFromObj : resolvedExtraURL
+        let fallbackTopURL = Self.unwrapCoolapkRedirectURL([json.link_url.string, json.media_url.string, json.target_url.string].first { !$0.isEmpty } ?? "")
+        let effectiveExtraURL = !resolvedExtraURL.isEmpty ? resolvedExtraURL : (!extraURLFromObj.isEmpty ? extraURLFromObj : fallbackTopURL)
         extraTitle = effectiveExtraTitle
         extraURL = effectiveExtraURL
         extraPic = resolvedExtraPic.isEmpty ? extraPicFromObj : resolvedExtraPic
@@ -550,24 +593,45 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
 
         let parsedPriceNum = ([
             json.ershou_price.double,
+            json.product_price.double,
             json.price.double,
             json.sell_price.double,
             json.goods_price.double,
             json.deal_price.double,
             json.trade_price.double
         ] + extraObjects.flatMap { obj in
-            [obj.ershou_price.double, obj.price.double, obj.sell_price.double, obj.goods_price.double, obj.deal_price.double]
+            [
+                obj.product_price.double,
+                obj.productPrice.double,
+                obj.ershou_price.double,
+                obj.price.double,
+                obj.show_price.double,
+                obj.item_price.double,
+                obj.sell_price.double,
+                obj.goods_price.double,
+                obj.deal_price.double
+            ]
         }).first { $0 > 0 } ?? 0
 
         let rawPriceString = ([
             json.ershou_price.string,
+            json.product_price.string,
             json.price.string,
             json.price_text.string,
             json.price_str.string,
             json.sell_price.string
         ] + extraObjects.flatMap { obj in
-            [obj.ershou_price.string, obj.price.string, obj.price_text.string, obj.price_str.string]
-        }).first { !$0.isEmpty && $0 != "0" && $0 != "0.0" } ?? ""
+            [
+                obj.product_price.string,
+                obj.productPrice.string,
+                obj.ershou_price.string,
+                obj.price.string,
+                obj.show_price.string,
+                obj.item_price.string,
+                obj.price_text.string,
+                obj.price_str.string
+            ]
+        }).first { !$0.isEmpty && $0 != "0" && $0 != "0.0" && $0 != "0.00" } ?? ""
 
         let relationURLs = json.relationRows.array.map(\.url.string).filter { !$0.isEmpty }
         let linkCandidates = ([
@@ -575,11 +639,23 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             json.goofish_url.string,
             json.ershou_url.string,
             json.trade_url.string,
+            json.link_url.string,
             effectiveExtraURL,
             json.media_url.string,
             json.target_url.string
         ] + extraObjects.flatMap { obj in
-            [obj.xianyu_url.string, obj.goofish_url.string, obj.ershou_url.string, obj.trade_url.string, obj.url.string, obj.link.string]
+            [
+                obj.link_url.string,
+                obj.linkUrl.string,
+                obj.xianyu_url.string,
+                obj.goofish_url.string,
+                obj.ershou_url.string,
+                obj.trade_url.string,
+                obj.jump_url.string,
+                obj.buy_url.string,
+                obj.url.string,
+                obj.link.string
+            ]
         } + relationURLs)
         .map(Self.unwrapCoolapkRedirectURL)
         .filter { !$0.isEmpty }
@@ -647,18 +723,87 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             originalPriceText = rawOrigStr.isEmpty ? "" : Self.formatRawPrice(rawOrigStr)
         }
 
-        cityText = ([
+        let provinceText = ([json.ershou_province.string, json.province.string]
+            + extraObjects.map(\.province.string))
+            .first { !$0.isEmpty } ?? ""
+        let rawCity = ([
             json.ershou_city.string,
             json.city.string,
             json.long_location.string
         ] + extraObjects.flatMap { [$0.city.string, $0.area.string, $0.location.string] })
             .first { !$0.isEmpty } ?? ""
-        dealStatusText = ([
+        if !provinceText.isEmpty && !rawCity.isEmpty && !rawCity.contains(provinceText) {
+            cityText = "\(provinceText) \(rawCity)"
+        } else {
+            cityText = !rawCity.isEmpty ? rawCity : provinceText
+        }
+
+        let explicitDealText = ([
             json.ershou_status_text.string,
-            json.deal_status_text.string,
+            json.deal_status_text.string
+        ] + extraObjects.flatMap { obj in
+            [
+                obj.ershou_status_text.string,
+                obj.deal_status_text.string,
+                obj.status_text.string,
+                obj.status_desc.string,
+                obj.product_status.string
+            ]
+        }).first { !$0.isEmpty } ?? ""
+
+        let statusNodes: [JSON] = [
+            json.ershou_status,
+            json.deal_status,
+            json.trade_status,
+            json.sell_status
+        ] + extraObjects.flatMap { obj in
+            [obj.ershou_status, obj.deal_status, obj.trade_status, obj.sell_status, obj.status]
+        }
+        let hasCompletedStatusNode = statusNodes.contains { node in
+            guard node.exists else { return false }
+            let lower = node.string.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if lower.contains("完成") || lower.contains("已售") || lower.contains("已出") || lower.contains("已交易")
+                || lower == "sold" || lower == "complete" || lower == "completed" || lower == "finished" || lower == "done" {
+                return true
+            }
+            if let num = Int(lower) {
+                return num < 0 || num >= 2
+            }
+            if node.isObject == false && node.string.isEmpty {
+                return node.int < 0 || node.int >= 2
+            }
+            return false
+        }
+        let hasCompletedFlag = ([
+            json.is_complete,
+            json.is_completed,
+            json.is_sold,
+            json.complete_time,
+            json.deal_time
+        ] + extraObjects.flatMap { obj in
+            [obj.is_complete, obj.is_completed, obj.is_sold, obj.is_deal, obj.complete_time, obj.deal_time, obj.sold_time]
+        }).contains { $0.bool || $0.int > 0 }
+        let completedKeywordHit = [
+            explicitDealText,
             resolvedExtraInfo,
-            extraInfoFromObj
-        ]).first { !$0.isEmpty } ?? ""
+            extraInfoFromObj,
+            effectiveExtraTitle,
+            json.feedTypeName.string,
+            json.info.string,
+            json.infoHtml.string
+        ].contains { text in
+            text.contains("交易完成") || text.contains("已交易") || text.contains("已售出")
+        }
+
+        if !explicitDealText.isEmpty {
+            dealStatusText = explicitDealText
+        } else if hasCompletedStatusNode || hasCompletedFlag || completedKeywordHit {
+            dealStatusText = "交易完成"
+        } else {
+            dealStatusText = ([resolvedExtraInfo, extraInfoFromObj]).first {
+                !$0.isEmpty && $0 != "闲鱼" && $0 != "转转"
+            } ?? ""
+        }
 
         switch feedType {
         case "feedArticle": kind = .feedArticle
@@ -872,7 +1017,18 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             || lower.contains("tmall.com")
             || lower.contains("fleamarket://")
             || lower.contains("tbopen://")
-            || lower.contains("zhuanzhuan.com")
+            || lower.contains("zhuanzhuan")
+            || lower.contains("zzopen://")
+            || lower.contains("58.com")
+            || lower.contains("aihuishou.com")
+            || lower.contains("paipai.com")
+            || lower.contains("dewu.com")
+            || lower.contains("poizon.com")
+            || lower.contains("95fenapp.com")
+            || lower.contains("weidian.com")
+            || lower.contains("youzan.com")
+            || lower.contains("1688.com")
+            || lower.contains("taobao://")
             || lower.contains("jd.com")
             || lower.contains("3.cn")
             || lower.contains("pinduoduo.com")

@@ -1019,7 +1019,7 @@ private struct MediaShareActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-private struct HorizontalDeckPanOverlay: UIViewRepresentable {
+struct HorizontalDeckPanOverlay: UIViewRepresentable {
     let isEnabled: Bool
     let activeCardSize: CGSize
     let onTap: () -> Void

@@ -19,6 +19,7 @@ public struct FeedDetailView: View {
     @State private var articleShareImageURL: URL?
     @State private var compactNavProgress: CGFloat = 0
     @State private var scrollToTopTrigger = 0
+    @State private var articleCoverRatio: CGFloat?
 
     private enum EngagementSelection: Identifiable {
         case likes(String)
@@ -295,7 +296,7 @@ public struct FeedDetailView: View {
                         }
                     }
 
-                    if feed.isSecondHand || !feed.extraURL.isEmpty {
+                    if feed.isSecondHand || !feed.extraURL.isEmpty || !feed.xianyuURL.isEmpty {
                         SecondHandOrExtraCard(feed: feed)
                     }
 
@@ -416,9 +417,16 @@ public struct FeedDetailView: View {
         if !feed.cover.isEmpty {
             let coverPrefix = "cover-\(detailSeed)"
             let coverMedia = FeedMedia(sourceUrl: feed.cover, contentId: feed.id, contentType: .article)
-            RemoteImageView(url: feed.cover, maxPixelSize: 1400)
-                .frame(maxWidth: .infinity, maxHeight: 240)
-                .clipped()
+            let resolvedCoverRatio = max(0.50, min(articleCoverRatio ?? MediaGridView.inferredAspectRatio(from: feed.cover) ?? 1.78, 2.8))
+            RemoteImageView(url: feed.cover, maxPixelSize: 1400, contentMode: .fit) { size in
+                guard size.width > 0, size.height > 0 else { return }
+                let ratio = size.width / size.height
+                if abs((articleCoverRatio ?? 0) - ratio) > 0.01 {
+                    articleCoverRatio = ratio
+                }
+            }
+                .aspectRatio(resolvedCoverRatio, contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: 360)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))

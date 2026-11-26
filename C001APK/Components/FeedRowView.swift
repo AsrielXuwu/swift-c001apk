@@ -36,7 +36,7 @@ public struct FeedRowView: View {
             if let source = feed.sourceFeed {
                 forwardedQuoteCard(source)
             }
-            if feed.isSecondHand || !feed.extraURL.isEmpty {
+            if feed.isSecondHand || !feed.extraURL.isEmpty || !feed.xianyuURL.isEmpty {
                 SecondHandOrExtraCard(feed: feed)
             }
             if !feed.relationEntities.isEmpty {
@@ -360,6 +360,11 @@ public struct SecondHandOrExtraCard: View {
     }
 
     public var body: some View {
+        let isDealCompleted = feed.dealStatusText.contains("完成")
+            || feed.dealStatusText.contains("已售")
+            || feed.dealStatusText.contains("已出")
+            || feed.dealStatusText.contains("已交易")
+
         VStack(alignment: .leading, spacing: 8) {
             if feed.isSecondHand {
                 HStack(spacing: 8) {
@@ -367,13 +372,24 @@ public struct SecondHandOrExtraCard: View {
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
-                        .background(Color.orange.opacity(0.16), in: Capsule())
-                        .foregroundStyle(Color.orange)
+                        .background((isDealCompleted ? Color.secondary : Color.orange).opacity(0.16), in: Capsule())
+                        .foregroundStyle(isDealCompleted ? Color.secondary : Color.orange)
+
+                    if !feed.dealStatusText.isEmpty {
+                        Text(feed.dealStatusText)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background((isDealCompleted ? Color.green : Color.secondary).opacity(0.16), in: Capsule())
+                            .foregroundStyle(isDealCompleted ? Color.green : Color.secondary)
+                            .lineLimit(1)
+                    }
 
                     if !feed.priceText.isEmpty {
                         Text(feed.priceText)
                             .font(.headline.weight(.bold))
-                            .foregroundStyle(Color.orange)
+                            .strikethrough(isDealCompleted)
+                            .foregroundStyle(isDealCompleted ? Color.secondary : Color.orange)
                     }
 
                     if !feed.originalPriceText.isEmpty {
@@ -390,11 +406,6 @@ public struct SecondHandOrExtraCard: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                    } else if !feed.dealStatusText.isEmpty {
-                        Text(feed.dealStatusText)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
                     }
                 }
             }
@@ -402,7 +413,15 @@ public struct SecondHandOrExtraCard: View {
             let actionURL = !feed.xianyuURL.isEmpty ? feed.xianyuURL : feed.extraURL
             if !actionURL.isEmpty {
                 let isSpecificXianyu = FeedItem.isSpecificXianyuURL(actionURL)
-                let isTrade = FeedItem.isXianyuOrTradeURL(actionURL)
+                let isTrade = feed.isSecondHand || FeedItem.isXianyuOrTradeURL(actionURL)
+                let platformLabel: String = {
+                    if isSpecificXianyu { return "闲鱼" }
+                    let info = feed.extraInfo.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !info.isEmpty, info.count <= 12, !info.contains("完成") {
+                        return info
+                    }
+                    return "平台"
+                }()
                 Button {
                     openLink(actionURL, preferSystemApp: isTrade)
                 } label: {
@@ -426,13 +445,13 @@ public struct SecondHandOrExtraCard: View {
                             Text(
                                 !feed.extraTitle.isEmpty
                                     ? feed.extraTitle
-                                    : (isSpecificXianyu ? "前往闲鱼查看宝贝详情" : (isTrade ? "前往平台查看详情" : actionURL))
+                                    : (isTrade ? "前往\(platformLabel)查看详情" : actionURL)
                             )
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
 
-                            Text(isSpecificXianyu ? "点击跳转闲鱼 · \(actionURL)" : (isTrade ? "点击跳转平台 · \(actionURL)" : actionURL))
+                            Text(isTrade ? "点击跳转\(platformLabel) · \(actionURL)" : actionURL)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)

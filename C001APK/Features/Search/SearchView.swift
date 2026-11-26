@@ -52,7 +52,11 @@ public struct SearchView: View {
                 .accessibilityLabel("搜索类型与排序")
             }
         }
-        .searchable(text: $state.searchQuery, prompt: searchPrompt)
+        .searchable(
+            text: $state.searchQuery,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: searchPrompt
+        )
         .onSubmit(of: .search) {
             Task { await viewModel.submitSearch(appState.searchQuery, category: viewModel.category, appState: appState, force: true) }
         }
@@ -435,6 +439,7 @@ public struct SearchView: View {
             .refreshable {
                 await viewModel.submitSearch(viewModel.submittedKeyword, category: cat, appState: appState, force: true)
             }
+            .scrollEdgeEffectStyle(.soft, for: .top)
         }
     }
 }

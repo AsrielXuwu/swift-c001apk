@@ -130,11 +130,14 @@ public struct TopicDetailView: View {
                             }
                         } label: {
                             Image(systemName: "arrow.up.arrow.down")
+                                .transition(.opacity.combined(with: .scale(scale: 0.85)))
                         }
                         .accessibilityLabel("排序方式")
+                        .transition(.opacity.combined(with: .scale(scale: 0.85)))
                     }
                 }
             }
+            .animation(.snappy(duration: 0.24), value: isSortMenuAvailable)
             .onChange(of: scrolledTabID) { _, newValue in
                 if let newValue, newValue != activeTabID {
                     activeTabID = newValue
@@ -158,22 +161,25 @@ public struct TopicDetailView: View {
                 guard !hasInitialized || topic == nil else { return }
                 hasInitialized = true
                 let loadedTopic = try? await API.topicDetail(tag: tag)
-                topic = loadedTopic
-                didResolveTopicMetadata = true
-
-                let tabs = activeTabs
+                let resolvedTabs = (loadedTopic?.tabs.isEmpty == false) ? loadedTopic!.tabs : fallbackTabs
                 let saved = appState.pageTabSelections["topic-\(tag)"]
-                let initialTab: HomeSection? = if let saved, let matchedSaved = tabs.first(where: { $0.id == saved }) {
+                let initialTab: HomeSection? = if let saved, let matchedSaved = resolvedTabs.first(where: { $0.id == saved }) {
                     matchedSaved
                 } else if let apiSel = loadedTopic?.selectedTab, !apiSel.isEmpty,
-                          let matchedAPI = tabs.first(where: { $0.subtitle == apiSel || $0.id == apiSel || $0.title == apiSel }) {
+                          let matchedAPI = resolvedTabs.first(where: { $0.subtitle == apiSel || $0.id == apiSel || $0.title == apiSel }) {
                     matchedAPI
                 } else {
-                    tabs.first
+                    resolvedTabs.first
+                }
+                withAnimation(.snappy(duration: 0.24)) {
+                    topic = loadedTopic
+                    didResolveTopicMetadata = true
+                    if let initialTab {
+                        activeTabID = initialTab.id
+                        scrolledTabID = initialTab.id
+                    }
                 }
                 if let initialTab {
-                    activeTabID = initialTab.id
-                    scrolledTabID = initialTab.id
                     await reloadFeeds(for: initialTab, force: !loadedTabs.contains(initialTab.id))
                 }
             }
@@ -1378,6 +1384,7 @@ public struct EventDetailView: View {
     @State private var isLoading = true
     @State private var page = 1
     @State private var hasMore = true
+    @State private var coverRatio: CGFloat?
 
     public init(eventID: String, initialEvent: EventItem? = nil) {
         self.eventID = eventID
@@ -1391,14 +1398,18 @@ public struct EventDetailView: View {
                 if let event {
                     VStack(alignment: .leading, spacing: 12) {
                         if !event.cover.isEmpty {
-                            Color.clear
-                                .frame(height: 196)
-                                .overlay {
-                                    RemoteImageView(url: event.cover, maxPixelSize: 1200)
+                            let resolvedRatio = max(0.55, min(coverRatio ?? MediaGridView.inferredAspectRatio(from: event.cover) ?? 1.85, 2.8))
+                            RemoteImageView(url: event.cover, maxPixelSize: 1200, contentMode: .fit) { size in
+                                guard size.width > 0, size.height > 0 else { return }
+                                let r = size.width / size.height
+                                if abs((coverRatio ?? 0) - r) > 0.01 {
+                                    coverRatio = r
                                 }
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                            .aspectRatio(resolvedRatio, contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: 340)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
 
                         HStack(spacing: 8) {

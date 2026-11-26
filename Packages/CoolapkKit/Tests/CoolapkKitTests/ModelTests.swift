@@ -252,4 +252,54 @@ final class ModelTests: XCTestCase {
             .page("/product/categoryList")
         )
     }
+
+    func testErshouInfoProductPriceLinkUrlAndCompletedStatus() throws {
+        let activeRaw = Data("""
+        {
+          "entityType": "feed",
+          "id": 75284719,
+          "uid": 1001,
+          "username": "数码卖家",
+          "message": "自用成色很好",
+          "ershou_info": {
+            "product_price": "1999",
+            "product_title": "闲鱼二手好物",
+            "link_source": "闲鱼",
+            "link_url": "https://h5.m.goofish.com/item?id=75284719",
+            "province": "广东",
+            "city": "深圳",
+            "ershou_status": 1
+          }
+        }
+        """.utf8)
+        let activeFeed = FeedItem(json: try JSON(data: activeRaw))
+        XCTAssertTrue(activeFeed.isSecondHand)
+        XCTAssertEqual(activeFeed.priceText, "¥1999")
+        XCTAssertEqual(activeFeed.xianyuURL, "https://h5.m.goofish.com/item?id=75284719")
+        XCTAssertEqual(activeFeed.extraTitle, "闲鱼二手好物")
+        XCTAssertEqual(activeFeed.cityText, "广东 深圳")
+        XCTAssertEqual(activeFeed.dealStatusText, "")
+
+        let completedRaw = Data("""
+        {
+          "entityType": "feed",
+          "id": 75282142,
+          "uid": 1002,
+          "username": "已成交用户",
+          "message": "感谢平台",
+          "ershou_info": {
+            "product_price": 1250,
+            "link_source": "转转",
+            "link_url": "https://m.zhuanzhuan.com/detail/123",
+            "city": "杭州",
+            "ershou_status": -1
+          }
+        }
+        """.utf8)
+        let completedFeed = FeedItem(json: try JSON(data: completedRaw))
+        XCTAssertTrue(completedFeed.isSecondHand)
+        XCTAssertEqual(completedFeed.priceText, "¥1250")
+        XCTAssertEqual(completedFeed.dealStatusText, "交易完成")
+        XCTAssertEqual(completedFeed.xianyuURL, "https://m.zhuanzhuan.com/detail/123")
+    }
 }

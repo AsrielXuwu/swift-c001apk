@@ -115,14 +115,34 @@ struct BannerCarouselView: View {
     @State private var deckPhase: CGFloat = 0
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
-    @State private var didLockVerticalScroll = false
     @State private var lastDragEndedAt: Date = .distantPast
+    @State private var availableWidth: CGFloat = 360
+    @State private var detectedRatios: [Int: CGFloat] = [:]
 
     private var currentNearestIndex: Int {
         let count = banners.count
         guard count > 0 else { return 0 }
         let rounded = Int((deckPhase + dragProgress).rounded())
         return ((rounded % count) + count) % count
+    }
+
+    private func cardSize(at index: Int, maxStageWidth: CGFloat) -> CGSize {
+        let url = banners.indices.contains(index) ? banners[index].image : ""
+        let rawRatio = detectedRatios[index]
+            ?? MediaGridView.inferredAspectRatio(from: url)
+            ?? 1.85
+        let clamped = max(0.55, min(rawRatio, 2.8))
+        let naturalH = maxStageWidth / clamped
+        let finalH = min(320, max(130, naturalH))
+        let finalW = min(maxStageWidth, max(160, finalH * clamped))
+        return CGSize(width: finalW, height: finalH)
+    }
+
+    private func updateDetectedRatio(index: Int, size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        let ratio = size.width / size.height
+        if let existing = detectedRatios[index], abs(existing - ratio) < 0.01 { return }
+        detectedRatios[index] = ratio
     }
 
     var body: some View {
@@ -132,18 +152,27 @@ struct BannerCarouselView: View {
             let count = banners.count
             let visibleLayers = min(count, 3)
             let activeIdx = currentNearestIndex
+            let leftInset: CGFloat = visibleLayers > 2 ? 24 : 12
+            let rightInset: CGFloat = visibleLayers > 1 ? 24 : 12
+            let bottomInset: CGFloat = visibleLayers > 1 ? 15 : 0
+            let stageWidth = max(180, availableWidth - leftInset - rightInset)
+            let activeCardSize = cardSize(at: activeIdx, maxStageWidth: stageWidth)
+            let maxCardHeight = (0..<count).map { cardSize(at: $0, maxStageWidth: stageWidth).height }.max() ?? 184
 
             ZStack {
                 OrbitalDeckStage(
                     phase: deckPhase + dragProgress,
                     count: count,
-                    cardHeight: 184
+                    cardHeight: maxCardHeight
                 ) { idx, isFront in
                     let banner = banners[idx]
+                    let itemSize = cardSize(at: idx, maxStageWidth: stageWidth)
                     Color(.secondarySystemGroupedBackground)
-                        .frame(height: 184)
+                        .frame(width: itemSize.width, height: itemSize.height)
                         .overlay {
-                            RemoteImageView(url: banner.image, maxPixelSize: 1080)
+                            RemoteImageView(url: banner.image, maxPixelSize: 1080, contentMode: .fill) { size in
+                                updateDetectedRatio(index: idx, size: size)
+                            }
                         }
                         .clipped()
                         .overlay(alignment: .bottomLeading) {
@@ -190,11 +219,61 @@ struct BannerCarouselView: View {
                             appState.openRawLink(banner.url, title: banner.title)
                         }
                 }
-                .padding(.leading, visibleLayers > 2 ? 24 : 12)
-                .padding(.trailing, visibleLayers > 1 ? 24 : 12)
-                .padding(.bottom, visibleLayers > 1 ? 15 : 0)
+                .padding(.leading, leftInset)
+                .padding(.trailing, rightInset)
+                .padding(.bottom, bottomInset)
 
                 if count > 1 {
+                    HorizontalDeckPanOverlay(
+                        isEnabled: count > 1,
+                        activeCardSize: activeCardSize,
+                        onTap: {
+                            guard !isHorizontalDragging,
+                                  abs(dragProgress) < 0.04,
+                                  Date().timeIntervalSince(lastDragEndedAt) > 0.30,
+                                  banners.indices.contains(activeIdx) else { return }
+                            let banner = banners[activeIdx]
+                            if !banner.url.isEmpty {
+                                appState.openRawLink(banner.url, title: banner.title)
+                            }
+                        },
+                        onDragChanged: { dx in
+                            if !isHorizontalDragging {
+                                isHorizontalDragging = true
+                            }
+                            dragProgress = max(-1.15, min(1.15, -dx / 210.0))
+                        },
+                        onDragEnded: { dx, predicted, cancelled in
+                            lastDragEndedAt = Date()
+                            isHorizontalDragging = false
+                            guard !cancelled else {
+                                withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
+                                    dragProgress = 0
+                                }
+                                return
+                            }
+                            let deltaStep: CGFloat
+                            if dx < -38 || predicted < -85 {
+                                deltaStep = 1
+                            } else if dx > 38 || predicted > 85 {
+                                deltaStep = -1
+                            } else {
+                                deltaStep = 0
+                            }
+                            let combined = deckPhase + dragProgress
+                            let base = deckPhase.rounded()
+                            deckPhase = combined
+                            dragProgress = 0
+                            withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+                                deckPhase = base + deltaStep
+                            }
+                        }
+                    )
+                    .frame(height: maxCardHeight)
+                    .padding(.leading, leftInset)
+                    .padding(.trailing, rightInset)
+                    .padding(.bottom, bottomInset)
+
                     VStack {
                         HStack {
                             Spacer()
@@ -237,66 +316,23 @@ struct BannerCarouselView: View {
                             .glassEffect(.regular.interactive(), in: .capsule)
                         }
                     }
-                    .padding(.top, 10)
-                    .padding(.bottom, (visibleLayers > 1 ? 15 : 0) + 10)
-                    .padding(.leading, visibleLayers > 2 ? 34 : 22)
-                    .padding(.trailing, (visibleLayers > 1 ? 24 : 12) + 10)
+                    .padding(10)
+                    .frame(width: activeCardSize.width, height: activeCardSize.height)
+                    .padding(.leading, leftInset)
+                    .padding(.trailing, rightInset)
+                    .padding(.bottom, bottomInset)
                 }
             }
-            .frame(height: visibleLayers > 1 ? 202 : 184)
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 16)
-                    .onChanged { value in
-                        guard count > 1, !didLockVerticalScroll else { return }
-                        let dx = value.translation.width
-                        let dy = value.translation.height
-                        if !isHorizontalDragging {
-                            if abs(dy) >= abs(dx) * 0.8 {
-                                didLockVerticalScroll = true
-                                return
-                            }
-                            if abs(dx) > max(12, abs(dy) * 1.45) {
-                                isHorizontalDragging = true
-                            }
-                        }
-                        if isHorizontalDragging {
-                            dragProgress = max(-1.15, min(1.15, -dx / 210.0))
-                        }
-                    }
-                    .onEnded { value in
-                        didLockVerticalScroll = false
-                        guard count > 1 else { return }
-                        let dx = value.translation.width
-                        let predicted = value.predictedEndTranslation.width
-                        let wasDragging = isHorizontalDragging || abs(dx) > 10
-                        if wasDragging {
-                            lastDragEndedAt = Date()
-                        }
-                        isHorizontalDragging = false
-                        guard wasDragging else {
-                            withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
-                                dragProgress = 0
-                            }
-                            return
-                        }
-                        let deltaStep: CGFloat
-                        if dx < -38 || predicted < -85 {
-                            deltaStep = 1
-                        } else if dx > 38 || predicted > 85 {
-                            deltaStep = -1
-                        } else {
-                            deltaStep = 0
-                        }
-                        let combined = deckPhase + dragProgress
-                        let base = deckPhase.rounded()
-                        deckPhase = combined
-                        dragProgress = 0
-                        withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
-                            deckPhase = base + deltaStep
-                        }
-                    }
-            )
+            .frame(maxWidth: .infinity)
+            .frame(height: visibleLayers > 1 ? maxCardHeight + bottomInset + 2 : maxCardHeight)
+            .animation(.interpolatingSpring(stiffness: 220, damping: 24), value: maxCardHeight)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width
+            } action: { _, newWidth in
+                if newWidth > 80, abs(newWidth - availableWidth) > 2 {
+                    availableWidth = newWidth
+                }
+            }
             .padding(.vertical, 2)
         }
     }
@@ -346,15 +382,35 @@ struct ImageTextSectionsView: View {
     @State private var deckPhase: CGFloat = 0
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
-    @State private var didLockVerticalScroll = false
     @State private var lastDragEndedAt: Date = .distantPast
     @State private var transitionSeed = UUID().uuidString
+    @State private var availableWidth: CGFloat = 360
+    @State private var detectedRatios: [Int: CGFloat] = [:]
 
     private var currentNearestIndex: Int {
         let count = sections.count
         guard count > 0 else { return 0 }
         let rounded = Int((deckPhase + dragProgress).rounded())
         return ((rounded % count) + count) % count
+    }
+
+    private func cardSize(at index: Int, maxStageWidth: CGFloat) -> CGSize {
+        let url = sections.indices.contains(index) ? sections[index].style : ""
+        let rawRatio = detectedRatios[index]
+            ?? MediaGridView.inferredAspectRatio(from: url)
+            ?? 1.85
+        let clamped = max(0.55, min(rawRatio, 2.8))
+        let naturalH = maxStageWidth / clamped
+        let finalH = min(320, max(130, naturalH))
+        let finalW = min(maxStageWidth, max(160, finalH * clamped))
+        return CGSize(width: finalW, height: finalH)
+    }
+
+    private func updateDetectedRatio(index: Int, size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        let ratio = size.width / size.height
+        if let existing = detectedRatios[index], abs(existing - ratio) < 0.01 { return }
+        detectedRatios[index] = ratio
     }
 
     var body: some View {
@@ -364,19 +420,28 @@ struct ImageTextSectionsView: View {
             let count = sections.count
             let visibleLayers = min(count, 3)
             let activeIdx = currentNearestIndex
+            let leftInset: CGFloat = visibleLayers > 2 ? 24 : 12
+            let rightInset: CGFloat = visibleLayers > 1 ? 24 : 12
+            let bottomInset: CGFloat = visibleLayers > 1 ? 15 : 0
+            let stageWidth = max(180, availableWidth - leftInset - rightInset)
+            let activeCardSize = cardSize(at: activeIdx, maxStageWidth: stageWidth)
+            let maxCardHeight = (0..<count).map { cardSize(at: $0, maxStageWidth: stageWidth).height }.max() ?? 176
 
             ZStack {
                 OrbitalDeckStage(
                     phase: deckPhase + dragProgress,
                     count: count,
-                    cardHeight: 176
+                    cardHeight: maxCardHeight
                 ) { idx, isFront in
                     let section = sections[idx]
                     let tid = "section-\(transitionSeed)-\(idx)"
+                    let itemSize = cardSize(at: idx, maxStageWidth: stageWidth)
                     Color(.secondarySystemGroupedBackground)
-                        .frame(height: 176)
+                        .frame(width: itemSize.width, height: itemSize.height)
                         .overlay {
-                            RemoteImageView(url: section.style, maxPixelSize: 960)
+                            RemoteImageView(url: section.style, maxPixelSize: 960, contentMode: .fill) { size in
+                                updateDetectedRatio(index: idx, size: size)
+                            }
                         }
                         .clipped()
                         .overlay(alignment: .bottomLeading) {
@@ -414,7 +479,7 @@ struct ImageTextSectionsView: View {
                             RoundedRectangle(cornerRadius: 18, style: .continuous)
                                 .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
                         }
-                        .applyZoomSource(id: tid, in: zoomNamespace)
+                        .applyZoomSource(id: tid, in: zoomNamespace, cornerRadius: 18)
                         .onTapGesture {
                             guard isFront,
                                   !isHorizontalDragging,
@@ -424,11 +489,61 @@ struct ImageTextSectionsView: View {
                             appState.openRawLink(section.url, title: section.title, transitionID: tid)
                         }
                 }
-                .padding(.leading, visibleLayers > 2 ? 24 : 12)
-                .padding(.trailing, visibleLayers > 1 ? 24 : 12)
-                .padding(.bottom, visibleLayers > 1 ? 15 : 0)
+                .padding(.leading, leftInset)
+                .padding(.trailing, rightInset)
+                .padding(.bottom, bottomInset)
 
                 if count > 1 {
+                    HorizontalDeckPanOverlay(
+                        isEnabled: count > 1,
+                        activeCardSize: activeCardSize,
+                        onTap: {
+                            guard !isHorizontalDragging,
+                                  abs(dragProgress) < 0.04,
+                                  Date().timeIntervalSince(lastDragEndedAt) > 0.30,
+                                  sections.indices.contains(activeIdx) else { return }
+                            let section = sections[activeIdx]
+                            if !section.url.isEmpty {
+                                appState.openRawLink(section.url, title: section.title, transitionID: "section-\(transitionSeed)-\(activeIdx)")
+                            }
+                        },
+                        onDragChanged: { dx in
+                            if !isHorizontalDragging {
+                                isHorizontalDragging = true
+                            }
+                            dragProgress = max(-1.15, min(1.15, -dx / 210.0))
+                        },
+                        onDragEnded: { dx, predicted, cancelled in
+                            lastDragEndedAt = Date()
+                            isHorizontalDragging = false
+                            guard !cancelled else {
+                                withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
+                                    dragProgress = 0
+                                }
+                                return
+                            }
+                            let deltaStep: CGFloat
+                            if dx < -38 || predicted < -85 {
+                                deltaStep = 1
+                            } else if dx > 38 || predicted > 85 {
+                                deltaStep = -1
+                            } else {
+                                deltaStep = 0
+                            }
+                            let combined = deckPhase + dragProgress
+                            let base = deckPhase.rounded()
+                            deckPhase = combined
+                            dragProgress = 0
+                            withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+                                deckPhase = base + deltaStep
+                            }
+                        }
+                    )
+                    .frame(height: maxCardHeight)
+                    .padding(.leading, leftInset)
+                    .padding(.trailing, rightInset)
+                    .padding(.bottom, bottomInset)
+
                     VStack {
                         HStack {
                             Spacer()
@@ -471,66 +586,23 @@ struct ImageTextSectionsView: View {
                             .glassEffect(.regular.interactive(), in: .capsule)
                         }
                     }
-                    .padding(.top, 10)
-                    .padding(.bottom, (visibleLayers > 1 ? 15 : 0) + 10)
-                    .padding(.leading, visibleLayers > 2 ? 34 : 22)
-                    .padding(.trailing, (visibleLayers > 1 ? 24 : 12) + 10)
+                    .padding(10)
+                    .frame(width: activeCardSize.width, height: activeCardSize.height)
+                    .padding(.leading, leftInset)
+                    .padding(.trailing, rightInset)
+                    .padding(.bottom, bottomInset)
                 }
             }
-            .frame(height: visibleLayers > 1 ? 194 : 176)
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 16)
-                    .onChanged { value in
-                        guard count > 1, !didLockVerticalScroll else { return }
-                        let dx = value.translation.width
-                        let dy = value.translation.height
-                        if !isHorizontalDragging {
-                            if abs(dy) >= abs(dx) * 0.8 {
-                                didLockVerticalScroll = true
-                                return
-                            }
-                            if abs(dx) > max(12, abs(dy) * 1.45) {
-                                isHorizontalDragging = true
-                            }
-                        }
-                        if isHorizontalDragging {
-                            dragProgress = max(-1.15, min(1.15, -dx / 210.0))
-                        }
-                    }
-                    .onEnded { value in
-                        didLockVerticalScroll = false
-                        guard count > 1 else { return }
-                        let dx = value.translation.width
-                        let predicted = value.predictedEndTranslation.width
-                        let wasDragging = isHorizontalDragging || abs(dx) > 10
-                        if wasDragging {
-                            lastDragEndedAt = Date()
-                        }
-                        isHorizontalDragging = false
-                        guard wasDragging else {
-                            withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
-                                dragProgress = 0
-                            }
-                            return
-                        }
-                        let deltaStep: CGFloat
-                        if dx < -38 || predicted < -85 {
-                            deltaStep = 1
-                        } else if dx > 38 || predicted > 85 {
-                            deltaStep = -1
-                        } else {
-                            deltaStep = 0
-                        }
-                        let combined = deckPhase + dragProgress
-                        let base = deckPhase.rounded()
-                        deckPhase = combined
-                        dragProgress = 0
-                        withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
-                            deckPhase = base + deltaStep
-                        }
-                    }
-            )
+            .frame(maxWidth: .infinity)
+            .frame(height: visibleLayers > 1 ? maxCardHeight + bottomInset + 2 : maxCardHeight)
+            .animation(.interpolatingSpring(stiffness: 220, damping: 24), value: maxCardHeight)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.width
+            } action: { _, newWidth in
+                if newWidth > 80, abs(newWidth - availableWidth) > 2 {
+                    availableWidth = newWidth
+                }
+            }
             .padding(.vertical, 2)
         }
     }
