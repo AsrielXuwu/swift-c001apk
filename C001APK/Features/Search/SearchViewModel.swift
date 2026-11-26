@@ -196,7 +196,7 @@ public final class SearchViewModel {
                 sort: sortOrder.rawValue,
                 page: page
             )
-            guard submittedKeyword == keyword else { return }
+            guard submittedKeyword == keyword else { return false }
             if targetCategory == .dyh {
                 let parsed = items.map { DyhItem(json: $0) }
                 if append {

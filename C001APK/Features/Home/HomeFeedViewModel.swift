@@ -138,7 +138,7 @@ public final class HomeFeedViewModel {
                 loaded = []
             }
 
-            guard expectedSession == appState.sessionVersion else { return }
+            guard expectedSession == appState.sessionVersion else { return false }
             if append {
                 let current = rowsByTab[tab] ?? []
                 var seen = Set(current.map(\.id))
