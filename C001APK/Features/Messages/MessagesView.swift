@@ -25,7 +25,7 @@ public struct MessagesView: View {
         .scrollClipDisabled()
         .ignoresSafeArea(.container, edges: .bottom)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .safeAreaInset(edge: .top, spacing: 0) {
+        .safeAreaBar(edge: .top, spacing: 0) {
             floatingMessageSegmentStrip
         }
         .navigationTitle("消息")

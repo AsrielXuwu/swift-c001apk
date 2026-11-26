@@ -320,7 +320,7 @@ public struct FeedDetailView: View {
         .refreshable {
             await viewModel.loadAll(appState: appState)
         }
-        .scrollEdgeEffectHidden(true, for: .top)
+        .scrollEdgeEffectStyle(.soft, for: .top)
     }
 
     private func authorBar(_ feed: FeedItem) -> some View {

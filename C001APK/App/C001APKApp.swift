@@ -5,23 +5,6 @@ import UIKit
 struct C001APKApp: App {
     @State private var appState = AppState()
 
-    init() {
-        let appearance = UINavigationBarAppearance()
-        appearance.configureWithTransparentBackground()
-        appearance.backgroundColor = .clear
-        appearance.backgroundEffect = nil
-        appearance.shadowColor = .clear
-
-        let navBar = UINavigationBar.appearance()
-        navBar.isTranslucent = true
-        navBar.setBackgroundImage(UIImage(), for: .default)
-        navBar.shadowImage = UIImage()
-        navBar.standardAppearance = appearance
-        navBar.scrollEdgeAppearance = appearance
-        navBar.compactAppearance = appearance
-        navBar.compactScrollEdgeAppearance = appearance
-    }
-
     var body: some Scene {
         WindowGroup {
             RootTabView()

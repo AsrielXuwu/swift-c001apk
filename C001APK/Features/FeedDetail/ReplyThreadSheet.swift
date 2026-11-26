@@ -71,7 +71,7 @@ public struct ReplyThreadSheet: View {
                 await loadInitial()
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .c001TransparentTopBar()
+            .c001NativeTopBar()
             .navigationTitle("评论详情")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

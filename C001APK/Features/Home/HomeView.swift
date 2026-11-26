@@ -35,7 +35,7 @@ public struct HomeView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .safeAreaInset(edge: .top, spacing: 0) {
+            .safeAreaBar(edge: .top, spacing: 0) {
                 VStack(spacing: 4) {
                     floatingCategoryStrip(visibleTabs: visibleTabs, activeTab: activeTab, proxy: proxy)
                     if let subCategories = viewModel.subCategoriesByTab[activeTab], !subCategories.isEmpty {
@@ -305,7 +305,7 @@ public struct HomeView: View {
             .refreshable {
                 await viewModel.loadInitial(tab: tab, appState: appState, force: true)
             }
-            .scrollEdgeEffectHidden(true, for: .top)
+            .scrollEdgeEffectStyle(.soft, for: .top)
         }
     }
 }

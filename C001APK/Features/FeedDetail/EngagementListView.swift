@@ -62,7 +62,7 @@ public struct EngagementListView: View {
             }
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .c001TransparentTopBar()
+        .c001NativeTopBar()
         .navigationTitle(mode.title)
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadInitial() }

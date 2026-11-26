@@ -14,7 +14,7 @@ public struct RootTabView: View {
             Tab("首页", systemImage: "house", value: RootTab.home) {
                 NavigationStack(path: $state.homeNavigationPath) {
                     HomeView()
-                        .c001TransparentTopBar()
+                        .c001NativeTopBar()
                         .navigationDestination(for: AppRoute.self, destination: destinationView)
                 }
             }
@@ -22,7 +22,7 @@ public struct RootTabView: View {
             Tab("关注", systemImage: "person.2", value: RootTab.follow) {
                 NavigationStack(path: $state.followNavigationPath) {
                     FollowView()
-                        .c001TransparentTopBar()
+                        .c001NativeTopBar()
                         .navigationDestination(for: AppRoute.self, destination: destinationView)
                 }
             }
@@ -30,7 +30,7 @@ public struct RootTabView: View {
             Tab("我的", systemImage: "person.crop.circle", value: RootTab.profile) {
                 NavigationStack(path: $state.profileNavigationPath) {
                     ProfileTabView()
-                        .c001TransparentTopBar()
+                        .c001NativeTopBar()
                         .navigationDestination(for: AppRoute.self, destination: destinationView)
                 }
             }
@@ -38,7 +38,7 @@ public struct RootTabView: View {
             Tab("搜索", systemImage: "magnifyingglass", value: RootTab.search, role: .search) {
                 NavigationStack(path: $state.searchNavigationPath) {
                     SearchView()
-                        .c001TransparentTopBar()
+                        .c001NativeTopBar()
                         .navigationDestination(for: AppRoute.self, destination: destinationView)
                 }
             }
@@ -120,81 +120,81 @@ public struct RootTabView: View {
         switch route {
         case let .feed(id, initial, transitionID):
             FeedDetailView(feedID: id, initialFeed: initial)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
         case let .user(uid, initialUsername, initialAvatar, transitionID):
             UserDetailView(uid: uid, initialUsername: initialUsername, initialAvatar: initialAvatar)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
         case let .topic(tag, transitionID):
             TopicDetailView(tag: tag)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
         case let .product(id, transitionID):
             ProductDetailView(productID: id)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
         case let .app(id, transitionID):
             AppDetailView(appID: id)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
         case let .collection(id, transitionID):
             CollectionDetailView(collectionID: id)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
         case let .dyh(id, transitionID):
             DyhDetailView(dyhID: id)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
         case let .event(id, initial, transitionID):
             EventDetailView(eventID: id, initialEvent: initial)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
         case let .page(link, title):
             PageFeedView(link: link, title: title)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case let .coolpic(tag):
             CoolPicView(initialTag: tag)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case .messages:
             MessagesView()
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case let .chat(ukey, uid, username, avatar):
             ChatThreadView(ukey: ukey, peerUID: uid, peerName: username, peerAvatar: avatar)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case .history:
             HistoryListView()
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case .favorites:
             FavoritesListView()
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case .localFollowList:
             LocalFollowListView()
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case .accounts:
             AccountsView()
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case .settings:
             SettingsView()
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case .contentFilterSettings:
             ContentFilterSettingsView()
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case let .blacklist(isTopic):
             BlacklistView(isTopic: isTopic)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case .deviceIdentity:
             DeviceIdentityView()
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case .protocolParams:
             ProtocolParamsView()
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case .about:
             AboutView()
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         case let .web(url):
             InAppWebView(url: url)
-                .c001TransparentTopBar()
+                .c001NativeTopBar()
         }
     }
 }

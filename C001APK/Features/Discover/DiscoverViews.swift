@@ -56,7 +56,7 @@ public struct TopicDetailView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .safeAreaInset(edge: .top, spacing: 0) {
+            .safeAreaBar(edge: .top, spacing: 0) {
                 FloatingTabStrip(
                     items: sortOptions,
                     selection: selectedChoice,
@@ -328,7 +328,7 @@ public struct ProductDetailView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .safeAreaInset(edge: .top, spacing: 0) {
+            .safeAreaBar(edge: .top, spacing: 0) {
                 FloatingTabStrip(
                     items: activeChips,
                     selection: selectedChip,
@@ -428,7 +428,7 @@ public struct ProductDetailView: View {
             .padding(.top, 10)
             .padding(.bottom, 88)
         }
-        .scrollEdgeEffectHidden(true, for: .top)
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .onScrollGeometryChange(for: CGFloat.self) { geo in
             geo.contentOffset.y + geo.contentInsets.top
         } action: { _, offset in
@@ -1378,7 +1378,7 @@ public struct PageFeedView: View {
                 }
                 .scrollTargetBehavior(.paging)
                 .scrollPosition(id: $scrolledTabID)
-                .safeAreaInset(edge: .top, spacing: 0) {
+                .safeAreaBar(edge: .top, spacing: 0) {
                     FloatingTabStrip(
                         items: subTabs,
                         selection: activeTab,
@@ -1460,7 +1460,7 @@ public struct PageFeedView: View {
                     await loadSubTab(tabID: tabID, url: tabURL, force: true)
                 }
             }
-            .scrollEdgeEffectHidden(true, for: .top)
+            .scrollEdgeEffectStyle(.soft, for: .top)
         }
     }
 
@@ -1667,7 +1667,7 @@ public struct CoolPicView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .safeAreaInset(edge: .top, spacing: 0) {
+            .safeAreaBar(edge: .top, spacing: 0) {
                 FloatingTabStrip(
                     items: sortOptions,
                     selection: selectedChoice,

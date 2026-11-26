@@ -1,7 +1,6 @@
 import CoolapkKit
 import Foundation
 import SwiftUI
-import UIKit
 
 private struct ZoomNamespaceKey: EnvironmentKey {
     static let defaultValue: Namespace.ID? = nil
@@ -54,39 +53,8 @@ public extension View {
             }
     }
 
-    func c001TransparentTopBar() -> some View {
-        self
-            .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
-            .scrollEdgeEffectHidden(true, for: .top)
-            .overlay(alignment: .top) {
-                StatusBarGradientBlurOverlay()
-            }
-    }
-}
-
-private struct StatusBarGradientBlurOverlay: View {
-    @Environment(\.displayScale) private var displayScale
-
-    var body: some View {
-        let topHeight = currentStatusBarHeight() + 18
-        VariableBlurView(
-            maxBlurRadius: 18,
-            direction: .blurredTopClearBottom,
-            startOffset: 0.35
-        )
-        .frame(height: topHeight)
-        .frame(maxWidth: .infinity)
-        .ignoresSafeArea(edges: .top)
-        .allowsHitTesting(false)
-    }
-
-    private func currentStatusBarHeight() -> CGFloat {
-        let _ = displayScale
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        let top = scenes.first?.keyWindow?.safeAreaInsets.top
-            ?? scenes.first?.windows.first?.safeAreaInsets.top
-            ?? 48
-        return max(20, top)
+    func c001NativeTopBar() -> some View {
+        self.scrollEdgeEffectStyle(.soft, for: .top)
     }
 }
 

@@ -59,7 +59,7 @@ public struct UserDetailView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .safeAreaInset(edge: .top, spacing: 0) {
+            .safeAreaBar(edge: .top, spacing: 0) {
                 FloatingTabStrip(
                     items: UserTab.allCases,
                     selection: tab,

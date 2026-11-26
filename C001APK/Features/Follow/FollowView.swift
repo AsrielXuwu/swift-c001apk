@@ -26,7 +26,7 @@ public struct FollowView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .safeAreaInset(edge: .top, spacing: 0) {
+            .safeAreaBar(edge: .top, spacing: 0) {
                 VStack(spacing: 6) {
                     floatingSegmentStrip
                     if viewModel.segment == .topics && !viewModel.followedTopics.isEmpty {
@@ -174,7 +174,7 @@ public struct FollowView: View {
             .refreshable {
                 await viewModel.loadInitial(segment: seg, appState: appState, force: true)
             }
-            .scrollEdgeEffectHidden(true, for: .top)
+            .scrollEdgeEffectStyle(.soft, for: .top)
         }
     }
 

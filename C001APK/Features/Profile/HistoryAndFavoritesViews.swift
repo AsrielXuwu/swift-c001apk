@@ -35,7 +35,7 @@ public struct HistoryListView: View {
                     .padding(.vertical, 10)
                     .padding(.bottom, 32)
                 }
-                .scrollEdgeEffectHidden(true, for: .top)
+                .scrollEdgeEffectStyle(.soft, for: .top)
             }
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
@@ -184,7 +184,7 @@ public struct FavoritesListView: View {
             .padding(.vertical, 10)
             .padding(.bottom, 32)
         }
-        .scrollEdgeEffectHidden(true, for: .top)
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle("收藏")
         .navigationBarTitleDisplayMode(.inline)
@@ -327,7 +327,7 @@ public struct LocalFollowListView: View {
                     .padding(.vertical, 10)
                     .padding(.bottom, 32)
                 }
-                .scrollEdgeEffectHidden(true, for: .top)
+                .scrollEdgeEffectStyle(.soft, for: .top)
             }
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
