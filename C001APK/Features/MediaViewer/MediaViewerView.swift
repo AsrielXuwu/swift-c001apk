@@ -1,9 +1,15 @@
 import CoolapkKit
+import CoreGraphics
 import os
 import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
+
+private struct MediaContrastState: Equatable, Sendable {
+    var topIsLight: Bool = false
+    var bottomIsLight: Bool = false
+}
 
 public struct MediaViewerView: View {
     public let presentation: MediaViewerPresentation
@@ -13,49 +19,83 @@ public struct MediaViewerView: View {
     @Environment(\.zoomNamespace) private var zoomNamespace
 
     @State private var currentIndex: Int
+    @State private var scrolledIndex: Int?
     @State private var showControls = true
     @State private var loopLivePhoto = false
+    @State private var contrastByIndex: [Int: MediaContrastState] = [:]
 
     public init(presentation: MediaViewerPresentation) {
         self.presentation = presentation
         self._currentIndex = State(initialValue: presentation.initialIndex)
+        self._scrolledIndex = State(initialValue: presentation.initialIndex)
     }
 
     private var currentItem: FeedMedia {
         presentation.items[currentIndex]
     }
 
-    public var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+    private var currentContrast: MediaContrastState {
+        contrastByIndex[currentIndex] ?? MediaContrastState()
+    }
 
-            TabView(selection: $currentIndex) {
-                ForEach(Array(presentation.items.enumerated()), id: \.offset) { index, item in
-                    MediaPageItemView(
-                        item: item,
-                        disableHDR: appState.settings.disableHDR,
-                        autoPlayLivePhoto: appState.settings.livePhotoAutoPlay,
-                        isLoopingLivePhoto: loopLivePhoto && index == currentIndex,
-                        onToggleControls: {
-                            withAnimation(.easeInOut(duration: 0.2)) { showControls.toggle() }
+    public var body: some View {
+        GeometryReader { geo in
+            let containerSize = geo.size
+            ZStack {
+                Color.black.ignoresSafeArea(.all)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 0) {
+                        ForEach(Array(presentation.items.enumerated()), id: \.offset) { index, item in
+                            MediaPageItemView(
+                                item: item,
+                                containerSize: containerSize,
+                                disableHDR: appState.settings.disableHDR,
+                                autoPlayLivePhoto: appState.settings.livePhotoAutoPlay,
+                                isLoopingLivePhoto: loopLivePhoto && index == currentIndex,
+                                onToggleControls: {
+                                    withAnimation(.easeInOut(duration: 0.2)) { showControls.toggle() }
+                                },
+                                onContrastDetected: { contrast in
+                                    if contrastByIndex[index] != contrast {
+                                        contrastByIndex[index] = contrast
+                                    }
+                                }
+                            )
+                            .frame(width: containerSize.width, height: containerSize.height)
+                            .ignoresSafeArea(.all)
+                            .id(index)
                         }
-                    )
-                    .tag(index)
+                    }
+                    .scrollTargetLayout()
+                }
+                .scrollTargetBehavior(.paging)
+                .scrollPosition(id: $scrolledIndex)
+                .ignoresSafeArea(.all)
+                .onChange(of: scrolledIndex) { _, newValue in
+                    if let newValue, (0..<presentation.items.count).contains(newValue), newValue != currentIndex {
+                        currentIndex = newValue
+                    }
+                }
+
+                if showControls {
+                    controlsOverlay(safeInsets: geo.safeAreaInsets)
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .ignoresSafeArea()
-
-            if showControls {
-                controlsOverlay
-            }
+            .frame(width: containerSize.width, height: containerSize.height)
+            .ignoresSafeArea(.all)
         }
+        .ignoresSafeArea(.all)
         .statusBarHidden(!showControls)
+        .persistentSystemOverlays(showControls ? .automatic : .hidden)
         .applyZoomTransition(sourceID: presentation.sourceID(at: currentIndex), in: zoomNamespace)
     }
 
-    private var controlsOverlay: some View {
-        VStack {
+    private func controlsOverlay(safeInsets: EdgeInsets) -> some View {
+        let topTint: Color = currentContrast.topIsLight ? .black : .white
+        let bottomTint: Color = currentContrast.bottomIsLight ? .black : .white
+
+        return VStack {
             GlassEffectContainer(spacing: 12) {
                 HStack {
                     Button {
@@ -66,7 +106,7 @@ public struct MediaViewerView: View {
                             .frame(width: 38, height: 38)
                             .glassEffect(.regular.interactive(), in: .circle)
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(topTint)
 
                     Spacer()
 
@@ -76,7 +116,7 @@ public struct MediaViewerView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
                         .glassEffect(.regular, in: .capsule)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(topTint)
 
                     Spacer()
 
@@ -90,14 +130,14 @@ public struct MediaViewerView: View {
                                 .padding(.vertical, 8)
                                 .glassEffect(.regular.interactive(), in: .capsule)
                         }
-                        .foregroundStyle(loopLivePhoto ? Color.accentColor : .white)
+                        .foregroundStyle(loopLivePhoto ? Color.accentColor : topTint)
                     } else {
                         Color.clear.frame(width: 38, height: 38)
                     }
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.top, max(12, safeInsets.top + 6))
 
             Spacer()
 
@@ -112,7 +152,7 @@ public struct MediaViewerView: View {
                             .padding(.vertical, 9)
                             .glassEffect(.regular.interactive(), in: .capsule)
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(bottomTint)
 
                     if presentation.items.count > 1 {
                         Button {
@@ -124,7 +164,7 @@ public struct MediaViewerView: View {
                                 .padding(.vertical, 9)
                                 .glassEffect(.regular.interactive(), in: .capsule)
                         }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(bottomTint)
                     }
 
                     Button {
@@ -136,11 +176,12 @@ public struct MediaViewerView: View {
                             .frame(width: 38, height: 38)
                             .glassEffect(.regular.interactive(), in: .circle)
                     }
-                    .foregroundStyle(.white)
+                    .foregroundStyle(bottomTint)
                 }
             }
-            .padding(.bottom, 24)
+            .padding(.bottom, max(24, safeInsets.bottom + 12))
         }
+        .ignoresSafeArea(.all)
         .transition(.opacity)
     }
 
@@ -207,10 +248,12 @@ public struct MediaViewerView: View {
 
 private struct MediaPageItemView: View {
     let item: FeedMedia
+    let containerSize: CGSize
     let disableHDR: Bool
     let autoPlayLivePhoto: Bool
     let isLoopingLivePhoto: Bool
     let onToggleControls: () -> Void
+    let onContrastDetected: (MediaContrastState) -> Void
 
     @State private var loadedResult: LoadedImageResult?
     @State private var livePhoto: PHLivePhoto?
@@ -225,10 +268,12 @@ private struct MediaPageItemView: View {
                     autoPlayTrigger: liveAutoPlayTrigger,
                     isLooping: isLoopingLivePhoto
                 )
+                .ignoresSafeArea(.all)
                 .onTapGesture(perform: onToggleControls)
             } else if let loadedResult {
                 let isHDR = !disableHDR && (loadedResult.hasHDRGainMap || item.isHdr)
                 ZoomableImageScrollView(image: loadedResult.image, preferHDR: isHDR, onSingleTap: onToggleControls)
+                    .ignoresSafeArea(.all)
             } else if didFail {
                 VStack(spacing: 12) {
                     Image(systemName: "photo")
@@ -243,17 +288,128 @@ private struct MediaPageItemView: View {
                     .tint(.white)
             }
         }
+        .ignoresSafeArea(.all)
         .task(id: item.id) {
             didFail = false
-            loadedResult = await ImagePipeline.shared.loadImage(urlString: item.sourceUrl, maxPixelSize: nil)
-            if loadedResult == nil {
+            let result = await ImagePipeline.shared.loadImage(urlString: item.sourceUrl, maxPixelSize: nil)
+            loadedResult = result
+            if let result {
+                if let cgImage = result.image.cgImage {
+                    let imageSize = result.image.size
+                    let size = containerSize
+                    let detected = await Task.detached(priority: .utility) {
+                        Self.detectContrast(cgImage: cgImage, imageSize: imageSize, containerSize: size)
+                    }.value
+                    onContrastDetected(detected)
+                }
+                if item.isLivePhoto, let videoURL = item.videoUrl {
+                    await loadLivePhoto(imageURL: item.sourceUrl, videoURL: videoURL)
+                }
+            } else {
                 didFail = true
-                return
-            }
-            if item.isLivePhoto, let videoURL = item.videoUrl {
-                await loadLivePhoto(imageURL: item.sourceUrl, videoURL: videoURL)
             }
         }
+    }
+
+    nonisolated private static func detectContrast(
+        cgImage: CGImage,
+        imageSize: CGSize,
+        containerSize: CGSize
+    ) -> MediaContrastState {
+        guard containerSize.width > 0, containerSize.height > 0,
+              imageSize.width > 0, imageSize.height > 0 else {
+            return MediaContrastState()
+        }
+        let scale = min(containerSize.width / imageSize.width, containerSize.height / imageSize.height)
+        let drawnW = imageSize.width * scale
+        let drawnH = imageSize.height * scale
+        let drawnRect = CGRect(
+            x: (containerSize.width - drawnW) * 0.5,
+            y: (containerSize.height - drawnH) * 0.5,
+            width: drawnW,
+            height: drawnH
+        )
+
+        let topBarRect = CGRect(x: 16, y: 12, width: containerSize.width - 32, height: 84)
+        let bottomBarRect = CGRect(
+            x: max(16, containerSize.width * 0.12),
+            y: containerSize.height - 96,
+            width: containerSize.width * 0.76,
+            height: 68
+        )
+
+        let topLight = averageLuminance(
+            cgImage: cgImage,
+            screenZone: topBarRect,
+            drawnRect: drawnRect
+        ) > 0.62
+        let bottomLight = averageLuminance(
+            cgImage: cgImage,
+            screenZone: bottomBarRect,
+            drawnRect: drawnRect
+        ) > 0.62
+
+        return MediaContrastState(topIsLight: topLight, bottomIsLight: bottomLight)
+    }
+
+    nonisolated private static func averageLuminance(
+        cgImage: CGImage,
+        screenZone: CGRect,
+        drawnRect: CGRect
+    ) -> Double {
+        let overlap = screenZone.intersection(drawnRect)
+        guard !overlap.isNull,
+              overlap.width > 4,
+              overlap.height > 4,
+              (overlap.width * overlap.height) >= (screenZone.width * screenZone.height * 0.25) else {
+            return 0.0
+        }
+
+        let normX = max(0, min(1, (overlap.minX - drawnRect.minX) / drawnRect.width))
+        let normY = max(0, min(1, (overlap.minY - drawnRect.minY) / drawnRect.height))
+        let normW = max(0.01, min(1 - normX, overlap.width / drawnRect.width))
+        let normH = max(0.01, min(1 - normY, overlap.height / drawnRect.height))
+
+        let pixelW = CGFloat(cgImage.width)
+        let pixelH = CGFloat(cgImage.height)
+        let cropRect = CGRect(
+            x: normX * pixelW,
+            y: normY * pixelH,
+            width: normW * pixelW,
+            height: normH * pixelH
+        ).integral
+
+        guard cropRect.width >= 1, cropRect.height >= 1,
+              let cropped = cgImage.cropping(to: cropRect) else {
+            return 0.0
+        }
+
+        let sampleSize = 8
+        var rgba = [UInt8](repeating: 0, count: sampleSize * sampleSize * 4)
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(
+            data: &rgba,
+            width: sampleSize,
+            height: sampleSize,
+            bitsPerComponent: 8,
+            bytesPerRow: sampleSize * 4,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            return 0.0
+        }
+        ctx.interpolationQuality = .low
+        ctx.draw(cropped, in: CGRect(x: 0, y: 0, width: sampleSize, height: sampleSize))
+
+        var sum: Double = 0
+        let count = Double(sampleSize * sampleSize)
+        for i in stride(from: 0, to: rgba.count, by: 4) {
+            let r = Double(rgba[i]) / 255.0
+            let g = Double(rgba[i + 1]) / 255.0
+            let b = Double(rgba[i + 2]) / 255.0
+            sum += 0.299 * r + 0.587 * g + 0.114 * b
+        }
+        return sum / count
     }
 
     private func loadLivePhoto(imageURL: String, videoURL: String) async {

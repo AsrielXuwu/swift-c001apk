@@ -1,5 +1,6 @@
 import CoolapkKit
 import SwiftUI
+import UIKit
 
 public struct ReplyThreadSheet: View {
     public let rootReply: ReplyItem
@@ -20,58 +21,52 @@ public struct ReplyThreadSheet: View {
 
     public var body: some View {
         NavigationStack {
-            List {
-                Section("原评论") {
-                    replyRow(rootReply, isRoot: true)
-                }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    sectionHeader("原评论")
+                    replyCard(rootReply, isRoot: true)
 
-                Section("全部回复") {
+                    sectionHeader("全部回复")
+
                     if isLoading && items.isEmpty {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                            Spacer()
-                        }
-                        .padding(.vertical, 24)
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 28)
                     } else if items.isEmpty {
                         ContentUnavailableView("暂无楼中楼回复", systemImage: "bubble.right")
-                            .frame(maxWidth: .infinity)
+                            .frame(maxWidth: .infinity, minHeight: 160)
                     } else {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                            replyRow(item, isRoot: false)
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    Button {
-                                        openReplyComposer(for: item)
-                                    } label: {
-                                        Label("回复", systemImage: "arrowshape.turn.up.left")
-                                    }
-                                    .tint(.accentColor)
-
-                                    Button {
-                                        Task { await toggleReplyLike(item) }
-                                    } label: {
-                                        Label(item.isLiked ? "取消赞" : "赞", systemImage: item.isLiked ? "hand.thumbsup.slash" : "hand.thumbsup")
-                                    }
-                                    .tint(.pink)
+                            SwipeableReplyCard(
+                                onReply: { openReplyComposer(for: item) },
+                                onLike: { Task { await toggleReplyLike(item) } },
+                                isLiked: item.isLiked,
+                                onCopy: {
+                                    UIPasteboard.general.string = FeedHTMLParser.plainText(item.message)
+                                    appState.showToast("已复制评论")
                                 }
-                                .onAppear {
-                                    if index >= items.count - 4 {
-                                        Task { await loadMore() }
-                                    }
+                            ) {
+                                replyCard(item, isRoot: false)
+                            }
+                            .onAppear {
+                                if index >= items.count - 4 {
+                                    Task { await loadMore() }
                                 }
+                            }
                         }
                         if isLoadingMore {
-                            HStack {
-                                Spacer()
-                                ProgressView()
-                                Spacer()
-                            }
-                            .padding(.vertical, 12)
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
                         }
                     }
                 }
+                .padding(.vertical, 10)
             }
-            .listStyle(.insetGrouped)
+            .refreshable {
+                await loadInitial()
+            }
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("评论详情")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -89,7 +84,20 @@ public struct ReplyThreadSheet: View {
             .task {
                 await loadInitial()
             }
+            .onChange(of: appState.feedRefreshTrigger) { _, _ in
+                Task { await loadInitial() }
+            }
         }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    private func sectionHeader(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+            .padding(.top, 4)
     }
 
     private func openReplyComposer(for target: ReplyItem) {
@@ -100,7 +108,7 @@ public struct ReplyThreadSheet: View {
         }
     }
 
-    private func replyRow(_ reply: ReplyItem, isRoot: Bool) -> some View {
+    private func replyCard(_ reply: ReplyItem, isRoot: Bool) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Button {
                 if !reply.uid.isEmpty {
@@ -181,7 +189,15 @@ public struct ReplyThreadSheet: View {
                 .padding(.top, 2)
             }
         }
-        .padding(.vertical, 4)
+        .padding(14)
+        .c001CardStyle(cornerRadius: 20)
+        .padding(.horizontal, 12)
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .onTapGesture {
+            if !isRoot {
+                openReplyComposer(for: reply)
+            }
+        }
     }
 
     private func toggleReplyLike(_ target: ReplyItem) async {

@@ -54,6 +54,9 @@ public struct RootTabView: View {
         }
         .sheet(item: $state.composeMode) { mode in
             ComposeSheet(mode: mode)
+                .presentationDetents(composeDetents(for: mode))
+                .presentationDragIndicator(.hidden)
+                .presentationBackground(.clear)
         }
         .sheet(item: $state.activeCaptchaRequest) { request in
             CaptchaWebViewSheet(challenge: request.challenge) { token in
@@ -76,6 +79,15 @@ public struct RootTabView: View {
             }
         }
         .animation(.snappy(duration: 0.22), value: appState.toastMessage)
+    }
+
+    private func composeDetents(for mode: ComposeMode) -> Set<PresentationDetent> {
+        switch mode {
+        case .newFeed:
+            return [.medium, .large]
+        case .replyToFeed, .replyToComment, .forward:
+            return [.height(270), .medium, .large]
+        }
     }
 
     private var tabSelectionBinding: Binding<RootTab> {

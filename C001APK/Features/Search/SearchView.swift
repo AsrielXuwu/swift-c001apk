@@ -94,12 +94,13 @@ public struct SearchView: View {
     }
 
     private var resultsView: some View {
-        VStack(spacing: 0) {
+        Group {
             if viewModel.isSearching && viewModel.rows.isEmpty && viewModel.dyhResults.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.rows.isEmpty && viewModel.dyhResults.isEmpty {
                 ContentUnavailableView.search(text: viewModel.submittedKeyword)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 10) {
@@ -148,11 +149,12 @@ public struct SearchView: View {
                     }
                     .padding(.vertical, 8)
                 }
-                .contentMargins(.top, 52, for: .scrollContent)
             }
         }
-        .background(Color(.systemGroupedBackground))
-        .overlay(alignment: .top) {
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .safeAreaInset(edge: .top, spacing: 0) {
             GlassEffectContainer(spacing: 4) {
                 HStack(spacing: 4) {
                     ForEach(SearchCategory.allCases) { cat in
@@ -176,7 +178,7 @@ public struct SearchView: View {
                 .glassEffect(.regular.interactive(), in: .capsule)
             }
             .padding(.horizontal, 14)
-            .padding(.top, 6)
+            .padding(.vertical, 6)
             .onChange(of: viewModel.category) { _, _ in
                 Task { await viewModel.submitSearch(appState.searchQuery, appState: appState) }
             }

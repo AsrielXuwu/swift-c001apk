@@ -43,7 +43,7 @@ public struct MessagesView: View {
             }
         }
         .task(id: "\(appState.sessionVersion)|\(viewModel.segment.rawValue)") {
-            await viewModel.loadInitial(appState: appState, force: true)
+            await viewModel.loadInitial(segment: viewModel.segment, appState: appState)
         }
     }
 
@@ -76,15 +76,9 @@ public struct MessagesView: View {
 
     @ViewBuilder
     private func segmentContent(for seg: MessagesSegment) -> some View {
-        if viewModel.segment != seg {
-            Color.clear
-        } else {
-            content
-        }
-    }
+        let isLoadingSeg = viewModel.loadingSegments.contains(seg)
+        let notifications = viewModel.notificationsBySegment[seg] ?? []
 
-    @ViewBuilder
-    private var content: some View {
         if !appState.accounts.isLoggedIn {
             ContentUnavailableView {
                 Label("登录后查看消息", systemImage: "bubble.left.and.bubble.right")
@@ -94,12 +88,13 @@ public struct MessagesView: View {
                 Button("立即登录") { appState.showLoginSheet = true }
                     .buttonStyle(.borderedProminent)
             }
-        } else if viewModel.isLoading && viewModel.threads.isEmpty && viewModel.notifications.isEmpty {
-            ProgressView()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if viewModel.segment == .chat {
-            if viewModel.threads.isEmpty {
+        } else if seg == .chat {
+            if isLoadingSeg && viewModel.threads.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if viewModel.threads.isEmpty {
                 ContentUnavailableView("暂无私信", systemImage: "envelope.open")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
                     ForEach(Array(viewModel.threads.enumerated()), id: \.element.id) { index, thread in
@@ -150,22 +145,27 @@ public struct MessagesView: View {
                         }
                         .onAppear {
                             if index >= viewModel.threads.count - 4 {
-                                Task { await viewModel.loadMore(appState: appState) }
+                                Task { await viewModel.loadMore(segment: .chat, appState: appState) }
                             }
                         }
                     }
                 }
                 .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
                 .refreshable {
-                    await viewModel.loadInitial(appState: appState, force: true)
+                    await viewModel.loadInitial(segment: .chat, appState: appState, force: true)
                 }
             }
         } else {
-            if viewModel.notifications.isEmpty {
-                ContentUnavailableView("暂无\(viewModel.segment.rawValue)", systemImage: "bell")
+            if isLoadingSeg && notifications.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if notifications.isEmpty {
+                ContentUnavailableView("暂无\(seg.rawValue)", systemImage: "bell")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    ForEach(Array(viewModel.notifications.enumerated()), id: \.element.id) { index, item in
+                    ForEach(Array(notifications.enumerated()), id: \.element.id) { index, item in
                         Button {
                             if !item.url.isEmpty {
                                 appState.openRawLink(item.url)
@@ -206,15 +206,16 @@ public struct MessagesView: View {
                         }
                         .buttonStyle(.plain)
                         .onAppear {
-                            if index >= viewModel.notifications.count - 4 {
-                                Task { await viewModel.loadMore(appState: appState) }
+                            if index >= notifications.count - 4 {
+                                Task { await viewModel.loadMore(segment: seg, appState: appState) }
                             }
                         }
                     }
                 }
                 .listStyle(.insetGrouped)
+                .scrollContentBackground(.hidden)
                 .refreshable {
-                    await viewModel.loadInitial(appState: appState, force: true)
+                    await viewModel.loadInitial(segment: seg, appState: appState, force: true)
                 }
             }
         }

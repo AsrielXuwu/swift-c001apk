@@ -259,7 +259,9 @@ public struct ChatThreadView: View {
                         } label: {
                             RemoteImageView(url: picURL, maxPixelSize: 600)
                                 .frame(maxWidth: 220, maxHeight: 220)
+                                .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                                 .applyZoomSource(id: "\(chatPicPrefix)-0", in: zoomNamespace)
                         }
                         .buttonStyle(.plain)

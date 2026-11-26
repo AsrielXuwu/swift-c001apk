@@ -68,7 +68,9 @@ public struct MediaGridView: View {
                                     maxPixelSize: 420
                                 )
                             }
+                            .clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .applyZoomSource(id: sourceID, in: zoomNamespace)
                     }
                     .buttonStyle(.plain)
@@ -120,7 +122,9 @@ public struct MediaGridView: View {
                     honorHDR: false
                 )
                 .frame(width: targetWidth, height: targetHeight)
+                .clipped()
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay {
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
@@ -273,6 +277,8 @@ private struct PhotoStackCardView<MenuContent: View>: View {
 
     @Environment(\.zoomNamespace) private var zoomNamespace
     @State private var dragOffset: CGFloat = 0
+    @State private var isHorizontalDragging = false
+    @State private var lastDragEndedAt: Date = .distantPast
 
     var body: some View {
         let count = items.count
@@ -290,30 +296,42 @@ private struct PhotoStackCardView<MenuContent: View>: View {
                     .scaleEffect(scaleFor(depth: depth))
                     .rotationEffect(.degrees(rotationFor(depth: depth, isFront: isFront)))
                     .offset(x: xOffsetFor(depth: depth, isFront: isFront), y: yOffsetFor(depth: depth))
-                    .opacity(depth == 2 ? 0.84 : (depth == 1 ? 0.94 : 1.0))
+                    .opacity(depth == 2 ? 0.90 : (depth == 1 ? 0.96 : 1.0))
                     .zIndex(Double(visibleLayers - depth))
                     .allowsHitTesting(isFront)
             }
         }
-        .frame(height: 232)
-        .padding(.trailing, visibleLayers > 1 ? 18 : 0)
-        .padding(.bottom, visibleLayers > 1 ? 10 : 0)
+        .padding(.leading, visibleLayers > 2 ? 16 : 0)
+        .padding(.trailing, visibleLayers > 1 ? 20 : 0)
+        .padding(.bottom, visibleLayers > 1 ? 18 : 0)
+        .frame(height: 244)
+        .contentShape(Rectangle())
         .simultaneousGesture(
-            DragGesture(minimumDistance: 16)
+            DragGesture(minimumDistance: 12)
                 .onChanged { value in
-                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                    dragOffset = value.translation.width
+                    let dx = value.translation.width
+                    let dy = value.translation.height
+                    if isHorizontalDragging || abs(dx) > max(12, abs(dy) * 1.15) {
+                        isHorizontalDragging = true
+                        dragOffset = dx
+                    }
                 }
                 .onEnded { value in
                     let dx = value.translation.width
-                    guard abs(dx) > abs(value.translation.height) else {
-                        withAnimation(.snappy(duration: 0.25)) { dragOffset = 0 }
+                    let predicted = value.predictedEndTranslation.width
+                    let wasDragging = isHorizontalDragging || abs(dx) > 10
+                    if wasDragging {
+                        lastDragEndedAt = Date()
+                    }
+                    isHorizontalDragging = false
+                    guard wasDragging else {
+                        withAnimation(.snappy(duration: 0.22)) { dragOffset = 0 }
                         return
                     }
                     withAnimation(.snappy(duration: 0.28)) {
-                        if dx < -54 {
+                        if dx < -42 || predicted < -90 {
                             activeIndex = (activeIndex + 1) % count
-                        } else if dx > 54 {
+                        } else if dx > 42 || predicted > 90 {
                             activeIndex = (activeIndex - 1 + count) % count
                         }
                         dragOffset = 0
@@ -322,18 +340,24 @@ private struct PhotoStackCardView<MenuContent: View>: View {
         )
     }
 
+    private func handleFrontCardTap(at index: Int) {
+        guard !isHorizontalDragging,
+              abs(dragOffset) < 4,
+              Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
+        onTapCard(index)
+    }
+
     private func stackCard(item: FeedMedia, index: Int, isFront: Bool, count: Int) -> some View {
-        Button {
-            onTapCard(index)
-        } label: {
+        ZStack(alignment: .bottomTrailing) {
             Color.clear
-                .frame(height: 222)
+                .frame(height: 218)
                 .overlay {
                     RemoteImageView(
                         url: item.thumbnailUrl,
                         maxPixelSize: 1080
                     )
                 }
+                .clipped()
                 .overlay(alignment: .topTrailing) {
                     if isFront {
                         HStack(spacing: 4) {
@@ -346,40 +370,52 @@ private struct PhotoStackCardView<MenuContent: View>: View {
                         .allowsHitTesting(false)
                     }
                 }
-                .overlay(alignment: .bottomTrailing) {
-                    if isFront && count > 1 {
-                        HStack(spacing: 6) {
-                            Image(systemName: "chevron.left")
-                                .onTapGesture {
-                                    withAnimation(.snappy(duration: 0.26)) {
-                                        activeIndex = (activeIndex - 1 + count) % count
-                                    }
-                                }
-                            Image(systemName: "chevron.right")
-                                .onTapGesture {
-                                    withAnimation(.snappy(duration: 0.26)) {
-                                        activeIndex = (activeIndex + 1) % count
-                                    }
-                                }
-                        }
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .padding(10)
-                    }
-                }
                 .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.6)
+                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .onTapGesture {
+                    guard isFront else { return }
+                    handleFrontCardTap(at: index)
                 }
-                .shadow(color: .black.opacity(isFront ? 0.12 : 0.06), radius: isFront ? 8 : 4, x: 0, y: 3)
+                .contextMenu {
+                    contextMenuBuilder(item, index)
+                }
+
+            if isFront && count > 1 {
+                HStack(spacing: 8) {
+                    Button {
+                        withAnimation(.snappy(duration: 0.26)) {
+                            activeIndex = (activeIndex - 1 + count) % count
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .frame(width: 24, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        withAnimation(.snappy(duration: 0.26)) {
+                            activeIndex = (activeIndex + 1) % count
+                        }
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .frame(width: 24, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .padding(10)
+            }
         }
-        .buttonStyle(.plain)
-        .contextMenu {
-            contextMenuBuilder(item, index)
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color(.systemBackground).opacity(isFront ? 0.92 : 0.80), lineWidth: 1.4)
         }
+        .shadow(color: .black.opacity(isFront ? 0.14 : 0.08), radius: isFront ? 9 : 5, x: 0, y: 3)
     }
 
     private func stackPill(_ text: String) -> some View {
@@ -392,30 +428,30 @@ private struct PhotoStackCardView<MenuContent: View>: View {
     }
 
     private func scaleFor(depth: Int) -> CGFloat {
-        let base: CGFloat = depth == 0 ? 1.0 : (depth == 1 ? 0.94 : 0.88)
+        let base: CGFloat = depth == 0 ? 1.0 : (depth == 1 ? 0.95 : 0.91)
         if depth > 0 {
             let progress = min(1, abs(dragOffset) / 140)
-            return base + progress * 0.04
+            return base + progress * 0.03
         }
         return base
     }
 
     private func rotationFor(depth: Int, isFront: Bool) -> Double {
         if isFront {
-            return Double(dragOffset) / 24.0
+            return Double(dragOffset) / 22.0
         }
-        return depth == 1 ? 2.6 : 5.2
+        return depth == 1 ? 4.2 : -4.2
     }
 
     private func xOffsetFor(depth: Int, isFront: Bool) -> CGFloat {
         if isFront {
             return dragOffset
         }
-        return depth == 1 ? 9 : 18
+        return depth == 1 ? 15 : -13
     }
 
     private func yOffsetFor(depth: Int) -> CGFloat {
-        depth == 0 ? 0 : (depth == 1 ? 5 : 10)
+        depth == 0 ? 0 : (depth == 1 ? 9 : 16)
     }
 }
 

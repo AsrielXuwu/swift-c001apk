@@ -58,10 +58,15 @@ public struct FollowView: View {
                 }
             }
             .task(id: "\(appState.sessionVersion)|\(viewModel.segment.rawValue)") {
-                await viewModel.loadInitial(appState: appState, force: true)
+                await viewModel.loadInitial(segment: viewModel.segment, appState: appState)
             }
             .onChange(of: appState.followDoubleTapTrigger) { _, _ in
-                withAnimation(.snappy) { proxy.scrollTo("follow-top-\(viewModel.segment.rawValue)", anchor: .top) }
+                withAnimation(.snappy) {
+                    proxy.scrollTo("follow-top-\(viewModel.segment.rawValue)", anchor: .top)
+                }
+                Task {
+                    await viewModel.loadInitial(segment: viewModel.segment, appState: appState, force: true)
+                }
             }
         }
     }
@@ -105,7 +110,7 @@ public struct FollowView: View {
                         let selected = viewModel.selectedTopicTag == topic.title
                         Button {
                             viewModel.selectedTopicTag = topic.title
-                            Task { await viewModel.loadInitial(appState: appState, force: true) }
+                            Task { await viewModel.loadInitial(segment: .topics, appState: appState, force: true) }
                         } label: {
                             Text("#\(topic.title)")
                                 .font(.caption.weight(selected ? .semibold : .medium))
@@ -129,6 +134,11 @@ public struct FollowView: View {
 
     @ViewBuilder
     private func segmentContent(for seg: FollowSegment) -> some View {
+        let segRows = viewModel.rowsBySegment[seg] ?? []
+        let segLoading = viewModel.loadingSegments.contains(seg)
+        let segLoadingMore = viewModel.loadingMoreSegments.contains(seg)
+        let segError = viewModel.errorBySegment[seg]
+
         if !appState.accounts.isLoggedIn && (seg == .users || seg == .topics) {
             ContentUnavailableView {
                 Label("需要登录酷安账号", systemImage: "person.crop.circle.badge.exclamationmark")
@@ -138,42 +148,39 @@ public struct FollowView: View {
                 Button("立即登录") { appState.showLoginSheet = true }
                     .buttonStyle(.borderedProminent)
             }
-        } else if viewModel.segment != seg {
-            Color.clear
-        } else if viewModel.isLoading && viewModel.rows.isEmpty {
+        } else if segLoading && segRows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if let error = viewModel.errorMessage, viewModel.rows.isEmpty {
+        } else if let segError, segRows.isEmpty {
             ContentUnavailableView {
                 Label("加载失败", systemImage: "wifi.exclamationmark")
             } description: {
-                Text(error)
+                Text(segError)
             } actions: {
-                Button("重试") { Task { await viewModel.loadInitial(appState: appState, force: true) } }
+                Button("重试") { Task { await viewModel.loadInitial(segment: seg, appState: appState, force: true) } }
                     .buttonStyle(.borderedProminent)
             }
-        } else if viewModel.rows.isEmpty {
+        } else if segRows.isEmpty {
             ContentUnavailableView {
-                Label("暂无关注动态", systemImage: "person.2")
+                Label("暂无\(seg.rawValue)动态", systemImage: "person.2")
             } description: {
-                Text(seg == .local || !appState.accounts.isLoggedIn
-                     ? "可在用户主页点击或长按关注按钮添加到本机关注。"
-                     : "关注更多酷友或话题即可在这里查看最新动态。")
+                Text(emptyDescription(for: seg))
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
                 Color.clear.frame(height: 0).id("follow-top-\(seg.rawValue)")
                 LazyVStack(spacing: 10) {
-                    ForEach(Array(viewModel.rows.enumerated()), id: \.element.id) { index, row in
+                    ForEach(Array(segRows.enumerated()), id: \.element.id) { index, row in
                         HomeRowRenderer(row: row)
                             .onAppear {
-                                if index >= viewModel.rows.count - 4 {
-                                    Task { await viewModel.loadMore(appState: appState) }
+                                if index >= segRows.count - 4 {
+                                    Task { await viewModel.loadMore(segment: seg, appState: appState) }
                                 }
                             }
                     }
 
-                    if viewModel.isLoadingMore {
+                    if segLoadingMore {
                         ProgressView()
                             .padding(.vertical, 16)
                     }
@@ -182,8 +189,21 @@ public struct FollowView: View {
                 .padding(.bottom, 88)
             }
             .refreshable {
-                await viewModel.loadInitial(appState: appState, force: true)
+                await viewModel.loadInitial(segment: seg, appState: appState, force: true)
             }
+        }
+    }
+
+    private func emptyDescription(for seg: FollowSegment) -> String {
+        switch seg {
+        case .local:
+            return "可在用户主页点击或长按关注按钮添加到本机关注。"
+        case .users:
+            return appState.accounts.isLoggedIn ? "暂未关注任何酷友，或所关注用户暂无最新动态。" : "登录后可查看关注的酷友动态。"
+        case .topics:
+            return "暂未关注任何话题，关注感兴趣的话题即可在这里查看。"
+        case .all:
+            return "关注更多酷友或话题即可在这里查看最新动态。"
         }
     }
 }

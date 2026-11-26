@@ -173,6 +173,9 @@ public struct FeedDetailView: View {
         .task(id: feedID) {
             await viewModel.loadAll(appState: appState)
         }
+        .onChange(of: appState.feedRefreshTrigger) { _, _ in
+            Task { await viewModel.loadAll(appState: appState) }
+        }
     }
 
     private func detailScroll(_ feed: FeedItem) -> some View {
@@ -322,7 +325,9 @@ public struct FeedDetailView: View {
             } label: {
                 RemoteImageView(url: feed.cover, maxPixelSize: 1400)
                     .frame(maxWidth: .infinity, maxHeight: 240)
+                    .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace)
             }
             .buttonStyle(.plain)
@@ -550,6 +555,10 @@ public struct FeedDetailView: View {
                     appState.showLoginSheet = true
                 }
             },
+            onLike: {
+                Task { await viewModel.toggleReplyLike(reply, appState: appState) }
+            },
+            isLiked: reply.isLiked,
             onCopy: {
                 UIPasteboard.general.string = FeedHTMLParser.plainText(reply.message)
                 appState.showToast("已复制评论")
@@ -822,92 +831,4 @@ struct ActivityShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-
-private struct SwipeableReplyCard<Content: View>: View {
-    let onReply: () -> Void
-    let onCopy: () -> Void
-    @ViewBuilder let content: () -> Content
-
-    @State private var offsetX: CGFloat = 0
-    @State private var isOpen = false
-
-    private let revealWidth: CGFloat = 104
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            if offsetX < -4 {
-                GlassEffectContainer(spacing: 8) {
-                    HStack(spacing: 8) {
-                        Button {
-                            withAnimation(.snappy(duration: 0.22)) {
-                                offsetX = 0
-                                isOpen = false
-                            }
-                            onReply()
-                        } label: {
-                            Image(systemName: "arrowshape.turn.up.left.fill")
-                                .font(.body.weight(.semibold))
-                                .frame(width: 42, height: 42)
-                                .glassEffect(.regular.interactive(), in: .circle)
-                                .foregroundStyle(Color.accentColor)
-                        }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            withAnimation(.snappy(duration: 0.22)) {
-                                offsetX = 0
-                                isOpen = false
-                            }
-                            onCopy()
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                                .font(.body.weight(.semibold))
-                                .frame(width: 42, height: 42)
-                                .glassEffect(.regular.interactive(), in: .circle)
-                                .foregroundStyle(Color.primary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.trailing, 4)
-            }
-
-            content()
-                .offset(x: offsetX)
-                .simultaneousGesture(
-                    DragGesture(minimumDistance: 22)
-                        .onChanged { value in
-                            let dx = value.translation.width
-                            let dy = value.translation.height
-                            guard abs(dx) > abs(dy) * 1.4 else { return }
-                            if isOpen {
-                                let next = -revealWidth + dx
-                                offsetX = min(0, max(-revealWidth - 18, next))
-                            } else if dx < 0 {
-                                offsetX = max(-revealWidth - 18, dx)
-                            }
-                        }
-                        .onEnded { value in
-                            let dx = value.translation.width
-                            let dy = value.translation.height
-                            guard abs(dx) > abs(dy) * 1.4 else {
-                                withAnimation(.snappy(duration: 0.22)) {
-                                    offsetX = isOpen ? -revealWidth : 0
-                                }
-                                return
-                            }
-                            withAnimation(.snappy(duration: 0.24)) {
-                                if (!isOpen && dx < -46) || (isOpen && dx < 28) {
-                                    offsetX = -revealWidth
-                                    isOpen = true
-                                } else {
-                                    offsetX = 0
-                                    isOpen = false
-                                }
-                            }
-                        }
-                )
-        }
-    }
 }

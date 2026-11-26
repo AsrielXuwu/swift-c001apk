@@ -39,7 +39,10 @@ public struct UserProfile: Identifiable, Hashable, Sendable {
         verifyLabel = json.verify_label.string
         verifyTitle = json.verify_title.string
         location = json.location.string
-        isFollowed = json.isFollowed.int > 0 || json.follow.int > 0
+        let followFlag = json.isFollowed.exists
+            ? json.isFollowed
+            : (json.is_follow.exists ? json.is_follow : (json.isFollow.exists ? json.isFollow : json.userAction.follow))
+        isFollowed = followFlag.bool || followFlag.int > 0
         gender = json.gender.int
         registerDate = json.regdate.date
     }
@@ -61,7 +64,10 @@ public struct UserBrief: Identifiable, Hashable, Sendable {
         username = json.username.string
         avatar = json.userAvatar.string.isEmpty ? json.avatar.string : json.userAvatar.string
         level = json.level.int
-        isFollowed = json.isFollowed.int > 0
+        let followFlag = json.isFollowed.exists
+            ? json.isFollowed
+            : (json.is_follow.exists ? json.is_follow : (json.isFollow.exists ? json.isFollow : json.userAction.follow))
+        isFollowed = followFlag.bool || followFlag.int > 0
         bio = json.bio.string
         verifyLabel = json.verify_label.string
         fansNum = json.fans_num.int > 0 ? json.fans_num.int : json.fans.int
@@ -236,22 +242,61 @@ public struct ProductItem: Identifiable, Hashable, Sendable {
     public var title: String
     public var subtitle: String
     public var logo: String
+    public var cover: String
     public var description: String
+    public var recommendReason: String
+    public var priceText: String
+    public var releaseTime: String
     public var score: String
     public var followNum: Int
+    public var commentNum: Int
+    public var feedNum: Int
+    public var hotNum: Int
     public var isFollowed: Bool
     public var url: String
+    public var tabs: [HomeSection]
 
     public init(json: JSON) {
         id = json.id.exists ? json.id.identifier : json.entityId.identifier
         title = json.title.string
         subtitle = json.sub_title.string.isEmpty ? json.description.string : json.sub_title.string
         logo = json.logo.string.isEmpty ? json.pic.string : json.logo.string
-        description = json.description.string
-        score = json.score.string.isEmpty ? json.avg_score.string : json.score.string
+        cover = json.cover.string.isEmpty ? (json.coverArr.array.first?.string ?? "") : json.cover.string
+        description = json.description.string.isEmpty ? json.introduce.string : json.description.string
+        recommendReason = json.recommend_reason.string
+        if json.price_min.double > 0 {
+            let minP = Int(json.price_min.double)
+            let maxP = Int(json.price_max.double)
+            priceText = maxP > minP ? "¥\(minP)-\(maxP)" : "¥\(minP) 起"
+        } else {
+            priceText = json.price_text.string
+        }
+        releaseTime = json.release_time.string
+        score = json.score.string.isEmpty
+            ? (json.avg_score.string.isEmpty ? json.star_average_score.string : json.avg_score.string)
+            : json.score.string
         followNum = json.follow_num.int
-        isFollowed = json.isFollowed.int > 0 || json.follow.int > 0
+        commentNum = json.feed_comment_num.int > 0 ? json.feed_comment_num.int : json.comment_num.int
+        feedNum = json.feed_num.int
+        hotNum = json.hot_num.int
+        let followFlag = json.isFollowed.exists
+            ? json.isFollowed
+            : (json.is_follow.exists ? json.is_follow : (json.userAction.follow.exists ? json.userAction.follow : json.follow))
+        isFollowed = followFlag.bool || followFlag.int > 0
         url = json.url.string
+        let rawTabs = json.tabList.array
+        tabs = rawTabs.enumerated().compactMap { idx, entry in
+            let tabTitle = entry.title.string
+            let tabURL = entry.url.string.isEmpty ? entry.page_name.string : entry.url.string
+            guard !tabTitle.isEmpty, !tabURL.isEmpty else { return nil }
+            return HomeSection(
+                id: "ptab-\(idx)-\(entry.entityId.identifier)-\(tabTitle)",
+                title: tabTitle,
+                subtitle: entry.sub_title.string,
+                url: tabURL,
+                style: entry.pic.string
+            )
+        }
     }
 }
 

@@ -155,6 +155,57 @@ public enum API: Sendable {
         return rows(from: items)
     }
 
+    /// Loads product discussion/review feeds reliably across Coolapk's product endpoints.
+    public static func productFeeds(
+        productID: String,
+        title: String = "",
+        tabURL: String? = nil,
+        listType: String = "lastupdate_desc",
+        page: Int
+    ) async throws -> [HomeFeedRow] {
+        if let tabURL = tabURL?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !tabURL.isEmpty,
+           !tabURL.hasPrefix("/product/"),
+           tabURL != "/product/\(productID)" {
+            let loaded = (try? await linkFeed(link: tabURL, page: page)) ?? []
+            if !loaded.isEmpty { return loaded }
+        }
+
+        // Endpoint 1: V11/V9 dataList product feed list
+        let candidateLinks = [
+            "#/feed/productFeedList?id=\(productID)&type=feed&listType=\(listType)",
+            "#/product/feedList?id=\(productID)&type=feed&listType=\(listType)"
+        ]
+        for candidate in candidateLinks {
+            let parsed = parsePageLink(candidate)
+            if let items = try? await client.dataList(url: parsed.url, page: page, extra: parsed.extra) {
+                let mapped = rows(from: items)
+                if !mapped.isEmpty { return mapped }
+            }
+        }
+
+        // Endpoint 2: Direct /v6/product/feedList
+        if let json = try? await client.get("/v6/product/feedList", [
+            "id": productID,
+            "type": "feed",
+            "listType": listType,
+            "page": String(page)
+        ]) {
+            let mapped = rows(from: json.data.array)
+            if !mapped.isEmpty { return mapped }
+        }
+
+        // Endpoint 3: Fallback to topic/device tag feed list by product title
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanTitle.isEmpty {
+            if let tagRows = try? await topicFeeds(tag: cleanTitle, page: page, listType: listType), !tagRows.isEmpty {
+                return tagRows
+            }
+        }
+
+        return []
+    }
+
     private static func parsePageLink(_ link: String) -> (url: String, extra: [String: String]) {
         var clean = link.trimmingCharacters(in: .whitespacesAndNewlines)
         if clean.hasPrefix("coolapk://") {
@@ -546,7 +597,11 @@ public enum API: Sendable {
     }
 
     public static func followUser(uid: String, follow: Bool) async throws {
-        _ = try await client.post(follow ? "/v6/user/follow" : "/v6/user/unfollow", ["uid": uid])
+        _ = try await client.post(
+            follow ? "/v6/user/follow" : "/v6/user/unfollow",
+            ["uid": uid],
+            query: ["uid": uid]
+        )
     }
 
     public static func followTopic(tag: String, follow: Bool) async throws {

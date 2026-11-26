@@ -12,6 +12,7 @@ public struct ComposeSheet: View {
     @State private var showEmojiPanel = false
     @State private var showMentionUserSheet = false
     @State private var showMentionTopicSheet = false
+    @FocusState private var isInputFocused: Bool
 
     public init(mode: ComposeMode) {
         self.mode = mode
@@ -26,98 +27,150 @@ public struct ComposeSheet: View {
         }
     }
 
+    private var placeholderText: String {
+        switch mode {
+        case .newFeed: return "分享数码新鲜事、玩法或点评…"
+        case .forward: return "写下转发感想（可选）…"
+        case let .replyToFeed(_, author): return "写下给 @\(author) 的评论…"
+        case let .replyToComment(_, name): return "回复 @\(name)…"
+        }
+    }
+
+    private var isQuickReply: Bool {
+        if case .newFeed = mode { return false }
+        return true
+    }
+
     private var allowsImages: Bool {
         if case .forward = mode { return false }
         return true
     }
 
     public var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                TextEditor(text: $viewModel.text)
+        VStack(spacing: 0) {
+            Spacer(minLength: 0)
+
+            VStack(spacing: 12) {
+                HStack {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.subheadline.weight(.semibold))
+                            .frame(width: 34, height: 34)
+                            .glassEffect(.regular.interactive(), in: .circle)
+                            .foregroundStyle(.primary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(viewModel.isSubmitting)
+
+                    Spacer()
+
+                    Text(titleText)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+
+                    Spacer()
+
+                    if viewModel.isSubmitting {
+                        ProgressView()
+                            .frame(width: 58, height: 34)
+                    } else {
+                        Button {
+                            Task {
+                                if await viewModel.submit(mode: mode, appState: appState) {
+                                    dismiss()
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.up")
+                                    .font(.caption.weight(.bold))
+                                Text("发送")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .padding(.horizontal, 12)
+                            .frame(height: 34)
+                            .background(Color.accentColor.opacity(0.18), in: Capsule())
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                            .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                TextField(placeholderText, text: $viewModel.text, axis: .vertical)
                     .font(.body)
-                    .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                    .frame(minHeight: 160)
+                    .lineLimit(isQuickReply ? 3...7 : 5...10)
+                    .focused($isInputFocused)
+                    .padding(12)
+                    .background(
+                        Color(.secondarySystemGroupedBackground).opacity(0.72),
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    )
 
                 if !viewModel.pickedImages.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
+                        HStack(spacing: 8) {
                             ForEach(viewModel.pickedImages) { item in
                                 ZStack(alignment: .topTrailing) {
                                     Image(uiImage: item.image)
                                         .resizable()
                                         .scaledToFill()
-                                        .frame(width: 80, height: 80)
+                                        .frame(width: 68, height: 68)
+                                        .clipped()
                                         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
                                     Button {
                                         viewModel.removeImage(id: item.id)
                                     } label: {
                                         Image(systemName: "xmark.circle.fill")
-                                            .foregroundStyle(.white, .black.opacity(0.6))
+                                            .foregroundStyle(.white, .black.opacity(0.65))
                                     }
-                                    .padding(4)
+                                    .padding(3)
                                 }
                             }
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
                     }
                 }
-
-                Spacer(minLength: 0)
 
                 if showEmojiPanel {
                     EmojiPickerView { name in
                         viewModel.text += name
                     }
+                    .frame(maxHeight: 180)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
 
                 toolbarStrip
             }
-            .navigationTitle(titleText)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("取消") { dismiss() }
-                        .disabled(viewModel.isSubmitting)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    if viewModel.isSubmitting {
-                        ProgressView()
-                    } else {
-                        Button("发送") {
-                            Task {
-                                if await viewModel.submit(mode: mode, appState: appState) {
-                                    dismiss()
-                                }
-                            }
-                        }
-                        .fontWeight(.semibold)
+            .padding(14)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
+        }
+        .task {
+            isInputFocused = true
+        }
+        .onChange(of: photoItems) { _, items in
+            guard !items.isEmpty else { return }
+            Task {
+                for item in items {
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        viewModel.addImageData(data)
                     }
                 }
+                photoItems.removeAll()
             }
-            .onChange(of: photoItems) { _, items in
-                guard !items.isEmpty else { return }
-                Task {
-                    for item in items {
-                        if let data = try? await item.loadTransferable(type: Data.self) {
-                            viewModel.addImageData(data)
-                        }
-                    }
-                    photoItems.removeAll()
-                }
+        }
+        .sheet(isPresented: $showMentionUserSheet) {
+            MentionUserPickerSheet { username in
+                viewModel.text += " @\(username) "
             }
-            .sheet(isPresented: $showMentionUserSheet) {
-                MentionUserPickerSheet { username in
-                    viewModel.text += " @\(username) "
-                }
-            }
-            .sheet(isPresented: $showMentionTopicSheet) {
-                MentionTopicPickerSheet { topic in
-                    viewModel.text += " #\(topic)# "
-                }
+        }
+        .sheet(isPresented: $showMentionTopicSheet) {
+            MentionTopicPickerSheet { topic in
+                viewModel.text += " #\(topic)# "
             }
         }
     }
@@ -128,21 +181,28 @@ public struct ComposeSheet: View {
                 if allowsImages {
                     PhotosPicker(selection: $photoItems, maxSelectionCount: 9, matching: .images) {
                         Image(systemName: "photo")
-                            .font(.body.weight(.semibold))
-                            .frame(width: 42, height: 42)
+                            .font(.subheadline.weight(.semibold))
+                            .frame(width: 38, height: 38)
                             .glassEffect(.regular.interactive(), in: .circle)
                             .foregroundStyle(.primary)
                     }
                 }
 
                 Button {
-                    showEmojiPanel.toggle()
+                    if !showEmojiPanel {
+                        isInputFocused = false
+                    } else {
+                        isInputFocused = true
+                    }
+                    withAnimation(.snappy(duration: 0.22)) {
+                        showEmojiPanel.toggle()
+                    }
                 } label: {
                     Image(systemName: showEmojiPanel ? "keyboard" : "face.smiling")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 42, height: 42)
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 38, height: 38)
                         .glassEffect(.regular.interactive(), in: .circle)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(showEmojiPanel ? Color.accentColor : Color.primary)
                 }
                 .buttonStyle(.plain)
 
@@ -150,8 +210,8 @@ public struct ComposeSheet: View {
                     showMentionUserSheet = true
                 } label: {
                     Image(systemName: "at")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 42, height: 42)
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 38, height: 38)
                         .glassEffect(.regular.interactive(), in: .circle)
                         .foregroundStyle(.primary)
                 }
@@ -161,8 +221,8 @@ public struct ComposeSheet: View {
                     showMentionTopicSheet = true
                 } label: {
                     Image(systemName: "number")
-                        .font(.body.weight(.semibold))
-                        .frame(width: 42, height: 42)
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 38, height: 38)
                         .glassEffect(.regular.interactive(), in: .circle)
                         .foregroundStyle(.primary)
                 }
@@ -171,8 +231,6 @@ public struct ComposeSheet: View {
                 Spacer()
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 }
 

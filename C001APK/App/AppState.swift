@@ -44,6 +44,7 @@ public final class AppState {
     public var searchQuery: String = ""
     public var homeDoubleTapTrigger: Int = 0
     public var followDoubleTapTrigger: Int = 0
+    public var feedRefreshTrigger: Int = 0
 
     public init() {
         self.showOnboarding = !settings.onboardingCompleted

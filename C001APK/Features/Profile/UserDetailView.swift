@@ -14,10 +14,13 @@ public struct UserDetailView: View {
     @State private var followers: [UserBrief] = []
     @State private var following: [UserBrief] = []
     @State private var tab: UserTab = .feeds
-    @State private var page = 1
-    @State private var hasMore = true
-    @State private var isLoading = false
+    @State private var loadedTabs: Set<UserTab> = []
+    @State private var pageByTab: [UserTab: Int] = [:]
+    @State private var hasMoreByTab: [UserTab: Bool] = [:]
+    @State private var loadingTabs: Set<UserTab> = []
+    @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
+    @State private var tabTask: Task<Void, Never>?
 
     private enum UserTab: String, CaseIterable, Identifiable {
         case feeds = "动态"
@@ -40,11 +43,6 @@ public struct UserDetailView: View {
                         .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
                         .scaleEffect(1.0 - compactNavProgress * 0.03, anchor: .top)
 
-                    floatingUserTabs
-                        .onChange(of: tab) { _, _ in
-                            Task { await reloadTab() }
-                        }
-
                     tabBody
                 }
                 .padding(.vertical, 10)
@@ -59,8 +57,17 @@ public struct UserDetailView: View {
                     }
                 }
             }
-            .background(Color(.systemGroupedBackground))
-            .navigationTitle(compactNavProgress > 0.4 ? "" : (profile?.username ?? "用户主页"))
+            .refreshable {
+                profile = try? await API.userProfile(uid: uid)
+                await reloadTab(tab, force: true)
+            }
+            .scrollClipDisabled()
+            .ignoresSafeArea(.container, edges: .bottom)
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) {
+                floatingUserTabs
+            }
+            .navigationTitle(profile?.username ?? "用户主页")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let profile, compactNavProgress > 0.08 {
@@ -68,19 +75,23 @@ public struct UserDetailView: View {
                         Button {
                             withAnimation(.snappy) { proxy.scrollTo("user-top", anchor: .top) }
                         } label: {
-                            HStack(spacing: 6) {
-                                AvatarView(url: profile.avatar, size: 24)
-                                Text(profile.username)
-                                    .font(.subheadline.weight(.semibold))
-                                    .lineLimit(1)
-                            }
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .glassEffect(.regular.interactive(), in: .capsule)
+                            AvatarView(url: profile.avatar, size: 28)
                         }
-                        .buttonStyle(.plain)
-                        .opacity(compactNavProgress)
-                        .scaleEffect(0.75 + 0.25 * compactNavProgress)
+                        .accessibilityLabel("回到顶部")
+                    }
+
+                    if uid != appState.accounts.activeUID {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button {
+                                Task { await handleFollowTap(profile: profile) }
+                            } label: {
+                                Image(systemName: isFollowingUser(profile) ? "checkmark" : "plus")
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(isFollowingUser(profile) ? Color.primary : Color.accentColor)
+                            }
+                            .disabled(isTogglingFollow)
+                            .accessibilityLabel(isFollowingUser(profile) ? "取消关注" : "关注")
+                        }
                     }
                 }
 
@@ -123,11 +134,21 @@ public struct UserDetailView: View {
                     }
                 }
             }
+            .onChange(of: tab) { _, nextTab in
+                tabTask?.cancel()
+                tabTask = Task {
+                    await reloadTab(nextTab, force: false)
+                }
+            }
             .task(id: uid) {
                 profile = try? await API.userProfile(uid: uid)
-                await reloadTab()
+                await reloadTab(tab, force: true)
             }
         }
+    }
+
+    private func isFollowingUser(_ profile: UserProfile) -> Bool {
+        appState.accounts.isLoggedIn ? profile.isFollowed : appState.localFollow.contains(uid: profile.id)
     }
 
     private var floatingUserTabs: some View {
@@ -156,7 +177,8 @@ public struct UserDetailView: View {
             .padding(5)
             .glassEffect(.regular.interactive(), in: .capsule)
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
     }
 
     @ViewBuilder
@@ -177,6 +199,7 @@ public struct UserDetailView: View {
                             .applyZoomSource(id: "user-avatar-\(transitionSeed)-0", in: zoomNamespace)
                     }
                     .buttonStyle(.plain)
+
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(profile.username)
@@ -242,8 +265,17 @@ public struct UserDetailView: View {
             labelText = isLocalFollowed ? "已本地关注" : "本地关注"
         }
 
-        return Text(labelText)
-            .font(.subheadline.weight(.semibold))
+        return Button {
+            Task { await handleFollowTap(profile: profile) }
+        } label: {
+            HStack(spacing: 5) {
+                if isTogglingFollow {
+                    ProgressView()
+                        .controlSize(.mini)
+                }
+                Text(labelText)
+                    .font(.subheadline.weight(.semibold))
+            }
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
             .background(
@@ -252,14 +284,16 @@ public struct UserDetailView: View {
             )
             .glassEffect(.regular.interactive(), in: .capsule)
             .foregroundStyle((profile.isFollowed || isLocalFollowed) ? Color.primary : Color.accentColor)
-            .onTapGesture {
-                Task { await handleFollowTap(profile: profile) }
-            }
-            .onLongPressGesture {
+        }
+        .buttonStyle(.plain)
+        .disabled(isTogglingFollow)
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.5).onEnded { _ in
                 if appState.accounts.isLoggedIn && appState.localFollow.secretFollowEnabled {
                     toggleLocalFollow(profile: profile)
                 }
             }
+        )
     }
 
     private var isCurrentTabEmpty: Bool {
@@ -274,7 +308,7 @@ public struct UserDetailView: View {
 
     @ViewBuilder
     private var tabBody: some View {
-        if isLoading && isCurrentTabEmpty {
+        if loadingTabs.contains(tab) && isCurrentTabEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, minHeight: 200)
                 .padding(.vertical, 40)
@@ -284,85 +318,125 @@ public struct UserDetailView: View {
         } else {
             switch tab {
             case .feeds:
-                feedList(rows)
+                feedList(rows, for: .feeds)
             case .likes:
-                feedList(likedRows)
+                feedList(likedRows, for: .likes)
             case .collections:
-                ForEach(userCollections) { item in
+                ForEach(Array(userCollections.enumerated()), id: \.element.id) { idx, item in
                     CollectionRowView(item: item)
+                        .onAppear {
+                            if idx >= userCollections.count - 4 { Task { await loadMore(for: .collections) } }
+                        }
                 }
             case .following:
-                ForEach(following) { user in
+                ForEach(Array(following.enumerated()), id: \.element.id) { idx, user in
                     UserRowView(user: user)
+                        .onAppear {
+                            if idx >= following.count - 4 { Task { await loadMore(for: .following) } }
+                        }
                 }
             case .fans:
-                ForEach(followers) { user in
+                ForEach(Array(followers.enumerated()), id: \.element.id) { idx, user in
                     UserRowView(user: user)
+                        .onAppear {
+                            if idx >= followers.count - 4 { Task { await loadMore(for: .fans) } }
+                        }
                 }
             }
         }
     }
 
-    private func feedList(_ items: [HomeFeedRow]) -> some View {
+    private func feedList(_ items: [HomeFeedRow], for activeTab: UserTab) -> some View {
         ForEach(Array(items.enumerated()), id: \.element.id) { idx, row in
             HomeRowRenderer(row: row)
                 .onAppear {
-                    if idx >= items.count - 4 { Task { await loadMore() } }
+                    if idx >= items.count - 4 { Task { await loadMore(for: activeTab) } }
                 }
         }
     }
 
-    private func reloadTab() async {
-        isLoading = true
-        defer { isLoading = false }
-        page = 1
-        hasMore = true
+    private func reloadTab(_ targetTab: UserTab, force: Bool) async {
+        if !force && loadedTabs.contains(targetTab) {
+            return
+        }
+        loadingTabs.insert(targetTab)
+        defer { loadingTabs.remove(targetTab) }
+        pageByTab[targetTab] = 1
+        hasMoreByTab[targetTab] = true
         do {
-            switch tab {
+            switch targetTab {
             case .feeds:
-                rows = try await API.userFeeds(uid: uid, page: 1)
-                hasMore = !rows.isEmpty
+                let fetched = try await API.userFeeds(uid: uid, page: 1)
+                guard !Task.isCancelled else { return }
+                rows = fetched
+                hasMoreByTab[.feeds] = !fetched.isEmpty
             case .likes:
-                likedRows = try await API.userLikeFeeds(uid: uid, page: 1)
-                hasMore = !likedRows.isEmpty
+                let fetched = try await API.userLikeFeeds(uid: uid, page: 1)
+                guard !Task.isCancelled else { return }
+                likedRows = fetched
+                hasMoreByTab[.likes] = !fetched.isEmpty
             case .collections:
-                userCollections = try await API.collectionList(uid: uid, page: 1)
-                hasMore = !userCollections.isEmpty
+                let fetched = try await API.collectionList(uid: uid, page: 1)
+                guard !Task.isCancelled else { return }
+                userCollections = fetched
+                hasMoreByTab[.collections] = !fetched.isEmpty
             case .following:
-                following = try await API.userList(uid: uid, followers: false, page: 1)
-                hasMore = !following.isEmpty
+                let fetched = try await API.userList(uid: uid, followers: false, page: 1)
+                guard !Task.isCancelled else { return }
+                following = fetched
+                hasMoreByTab[.following] = !fetched.isEmpty
             case .fans:
-                followers = try await API.userList(uid: uid, followers: true, page: 1)
-                hasMore = !followers.isEmpty
+                let fetched = try await API.userList(uid: uid, followers: true, page: 1)
+                guard !Task.isCancelled else { return }
+                followers = fetched
+                hasMoreByTab[.fans] = !fetched.isEmpty
             }
+            loadedTabs.insert(targetTab)
         } catch {
+            guard !Task.isCancelled else { return }
             _ = await appState.handleAPIError(error)
         }
     }
 
-    private func loadMore() async {
-        guard hasMore, !isLoading else { return }
-        let next = page + 1
+    private func loadMore(for targetTab: UserTab) async {
+        guard hasMoreByTab[targetTab] != false, !loadingTabs.contains(targetTab) else { return }
+        let next = (pageByTab[targetTab] ?? 1) + 1
         do {
-            switch tab {
+            switch targetTab {
             case .feeds:
                 let fetched = try await API.userFeeds(uid: uid, page: next)
                 var seen = Set(rows.map(\.id))
                 let unique = fetched.filter { seen.insert($0.id).inserted }
                 rows.append(contentsOf: unique)
-                hasMore = !unique.isEmpty
+                hasMoreByTab[.feeds] = !unique.isEmpty
             case .likes:
                 let fetched = try await API.userLikeFeeds(uid: uid, page: next)
                 var seen = Set(likedRows.map(\.id))
                 let unique = fetched.filter { seen.insert($0.id).inserted }
                 likedRows.append(contentsOf: unique)
-                hasMore = !unique.isEmpty
-            case .collections, .following, .fans:
-                hasMore = false
+                hasMoreByTab[.likes] = !unique.isEmpty
+            case .collections:
+                let fetched = try await API.collectionList(uid: uid, page: next)
+                var seen = Set(userCollections.map(\.id))
+                let unique = fetched.filter { seen.insert($0.id).inserted }
+                userCollections.append(contentsOf: unique)
+                hasMoreByTab[.collections] = !unique.isEmpty
+            case .following:
+                let fetched = try await API.userList(uid: uid, followers: false, page: next)
+                var seen = Set(following.map(\.id))
+                let unique = fetched.filter { seen.insert($0.id).inserted }
+                following.append(contentsOf: unique)
+                hasMoreByTab[.following] = !unique.isEmpty
+            case .fans:
+                let fetched = try await API.userList(uid: uid, followers: true, page: next)
+                var seen = Set(followers.map(\.id))
+                let unique = fetched.filter { seen.insert($0.id).inserted }
+                followers.append(contentsOf: unique)
+                hasMoreByTab[.fans] = !unique.isEmpty
             }
-            if hasMore { page = next }
+            if hasMoreByTab[targetTab] == true { pageByTab[targetTab] = next }
         } catch {
-            hasMore = false
+            hasMoreByTab[targetTab] = false
         }
     }
 
@@ -371,12 +445,35 @@ public struct UserDetailView: View {
             toggleLocalFollow(profile: profile)
             return
         }
-        let next = !profile.isFollowed
+        guard !isTogglingFollow else { return }
+        isTogglingFollow = true
+        defer { isTogglingFollow = false }
+
+        let targetUID = profile.id
+        let previous = profile.isFollowed
+        let previousFans = profile.fansNum
+        let next = !previous
+
+        self.profile?.isFollowed = next
+        self.profile?.fansNum = max(0, previousFans + (next ? 1 : -1))
+
         do {
-            try await API.followUser(uid: profile.id, follow: next)
-            self.profile?.isFollowed = next
+            try await API.followUser(uid: targetUID, follow: next)
+            appState.showToast(next ? "已关注" : "已取消关注")
         } catch {
-            _ = await appState.handleAPIError(error)
+            self.profile?.isFollowed = previous
+            self.profile?.fansNum = previousFans
+            let retried = await appState.handleAPIError(error)
+            if retried {
+                do {
+                    try await API.followUser(uid: targetUID, follow: next)
+                    self.profile?.isFollowed = next
+                    self.profile?.fansNum = max(0, previousFans + (next ? 1 : -1))
+                    appState.showToast(next ? "已关注" : "已取消关注")
+                } catch {
+                    _ = await appState.handleAPIError(error)
+                }
+            }
         }
     }
 

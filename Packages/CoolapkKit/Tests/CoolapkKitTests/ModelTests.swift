@@ -52,4 +52,30 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(item.username, "点赞者")
         XCTAssertEqual(item.action, "赞了你的动态")
     }
+
+    func testUserProfileDoesNotTreatFollowCountAsIsFollowed() throws {
+        let raw = Data("""
+        {
+          "uid": 2024,
+          "username": "测试用户",
+          "follow": 48,
+          "fans": 120,
+          "isFollowed": 0
+        }
+        """.utf8)
+        let profile = UserProfile(json: try JSON(data: raw))
+        XCTAssertEqual(profile.followNum, 48)
+        XCTAssertFalse(profile.isFollowed)
+
+        let followedRaw = Data("""
+        {
+          "uid": 2025,
+          "username": "已关注用户",
+          "follow": 12,
+          "isFollowed": 1
+        }
+        """.utf8)
+        let followedProfile = UserProfile(json: try JSON(data: followedRaw))
+        XCTAssertTrue(followedProfile.isFollowed)
+    }
 }

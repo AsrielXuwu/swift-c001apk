@@ -22,6 +22,7 @@ public struct LivePhotoRepresentable: UIViewRepresentable {
         let view = PHLivePhotoView()
         view.contentMode = .scaleAspectFit
         view.backgroundColor = .clear
+        view.clipsToBounds = false
         view.delegate = context.coordinator
         return view
     }
@@ -57,6 +58,18 @@ public struct LivePhotoRepresentable: UIViewRepresentable {
     }
 }
 
+public final class ZoomContainerScrollView: UIScrollView {
+    weak var zoomedImageView: UIImageView?
+
+    public override func layoutSubviews() {
+        super.layoutSubviews()
+        if zoomScale <= 1.001, let zoomedImageView {
+            zoomedImageView.frame = bounds
+            contentSize = bounds.size
+        }
+    }
+}
+
 public struct ZoomableImageScrollView: UIViewRepresentable {
     public let image: UIImage
     public var preferHDR: Bool = false
@@ -72,23 +85,24 @@ public struct ZoomableImageScrollView: UIViewRepresentable {
         Coordinator(onSingleTap: onSingleTap)
     }
 
-    public func makeUIView(context: Context) -> UIScrollView {
-        let scroll = UIScrollView()
+    public func makeUIView(context: Context) -> ZoomContainerScrollView {
+        let scroll = ZoomContainerScrollView()
         scroll.backgroundColor = .clear
         scroll.minimumZoomScale = 1.0
         scroll.maximumZoomScale = 6.0
         scroll.showsVerticalScrollIndicator = false
         scroll.showsHorizontalScrollIndicator = false
         scroll.bouncesZoom = true
+        scroll.isScrollEnabled = false
         scroll.contentInsetAdjustmentBehavior = .never
         scroll.delegate = context.coordinator
 
         let imageView = UIImageView(image: image)
         imageView.contentMode = .scaleAspectFit
         imageView.preferredImageDynamicRange = preferHDR ? .high : .standard
-        imageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         imageView.frame = scroll.bounds
         scroll.addSubview(imageView)
+        scroll.zoomedImageView = imageView
         context.coordinator.imageView = imageView
         context.coordinator.scrollView = scroll
 
@@ -104,19 +118,21 @@ public struct ZoomableImageScrollView: UIViewRepresentable {
         return scroll
     }
 
-    public func updateUIView(_ uiView: UIScrollView, context: Context) {
+    public func updateUIView(_ uiView: ZoomContainerScrollView, context: Context) {
         context.coordinator.onSingleTap = onSingleTap
         context.coordinator.imageView?.preferredImageDynamicRange = preferHDR ? .high : .standard
         if context.coordinator.imageView?.image !== image {
             context.coordinator.imageView?.image = image
             uiView.zoomScale = 1.0
+            uiView.isScrollEnabled = false
+            uiView.setNeedsLayout()
         }
     }
 
     @MainActor
     public final class Coordinator: NSObject, UIScrollViewDelegate {
         weak var imageView: UIImageView?
-        weak var scrollView: UIScrollView?
+        weak var scrollView: ZoomContainerScrollView?
         var onSingleTap: () -> Void
 
         init(onSingleTap: @escaping () -> Void) {
@@ -125,6 +141,10 @@ public struct ZoomableImageScrollView: UIViewRepresentable {
 
         public func viewForZooming(in scrollView: UIScrollView) -> UIView? {
             imageView
+        }
+
+        public func scrollViewDidZoom(_ scrollView: UIScrollView) {
+            scrollView.isScrollEnabled = scrollView.zoomScale > 1.01
         }
 
         @objc func handleSingleTap() {

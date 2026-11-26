@@ -106,49 +106,201 @@ public struct HomeRowRenderer: View {
 struct BannerCarouselView: View {
     let banners: [HomeBanner]
     @Environment(AppState.self) private var appState
+    @State private var activeIndex = 0
+    @State private var dragOffset: CGFloat = 0
+    @State private var isHorizontalDragging = false
+    @State private var lastDragEndedAt: Date = .distantPast
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 10) {
-                ForEach(banners) { banner in
-                    Button {
-                        if !banner.url.isEmpty { appState.openRawLink(banner.url) }
-                    } label: {
-                        Color.clear
-                            .frame(height: 176)
-                            .overlay {
-                                RemoteImageView(url: banner.image, maxPixelSize: 1080)
+        if banners.isEmpty {
+            EmptyView()
+        } else {
+            let count = banners.count
+            let safeActive = ((activeIndex % count) + count) % count
+            let visibleLayers = min(count, 3)
+
+            ZStack {
+                ForEach((0..<visibleLayers).reversed(), id: \.self) { depth in
+                    let idx = (safeActive + depth) % count
+                    let banner = banners[idx]
+                    let isFront = (depth == 0)
+
+                    bannerCard(banner: banner, index: idx, count: count, isFront: isFront)
+                        .scaleEffect(scaleFor(depth: depth))
+                        .rotationEffect(.degrees(rotationFor(depth: depth, isFront: isFront)))
+                        .offset(x: xOffsetFor(depth: depth, isFront: isFront), y: yOffsetFor(depth: depth))
+                        .opacity(depth == 2 ? 0.90 : (depth == 1 ? 0.96 : 1.0))
+                        .zIndex(Double(visibleLayers - depth))
+                        .allowsHitTesting(isFront)
+                }
+            }
+            .padding(.leading, visibleLayers > 2 ? 26 : 14)
+            .padding(.trailing, visibleLayers > 1 ? 26 : 14)
+            .padding(.bottom, visibleLayers > 1 ? 16 : 0)
+            .frame(height: visibleLayers > 1 ? 204 : 184)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { value in
+                        guard count > 1 else { return }
+                        let dx = value.translation.width
+                        let dy = value.translation.height
+                        if isHorizontalDragging || abs(dx) > max(12, abs(dy) * 1.15) {
+                            isHorizontalDragging = true
+                            dragOffset = dx
+                        }
+                    }
+                    .onEnded { value in
+                        guard count > 1 else { return }
+                        let dx = value.translation.width
+                        let predicted = value.predictedEndTranslation.width
+                        let wasDragging = isHorizontalDragging || abs(dx) > 10
+                        if wasDragging {
+                            lastDragEndedAt = Date()
+                        }
+                        isHorizontalDragging = false
+                        guard wasDragging else {
+                            withAnimation(.snappy(duration: 0.22)) { dragOffset = 0 }
+                            return
+                        }
+                        withAnimation(.snappy(duration: 0.28)) {
+                            if dx < -42 || predicted < -90 {
+                                activeIndex = (safeActive + 1) % count
+                            } else if dx > 42 || predicted > 90 {
+                                activeIndex = (safeActive - 1 + count) % count
                             }
-                            .overlay(alignment: .bottomLeading) {
+                            dragOffset = 0
+                        }
+                    }
+            )
+            .padding(.vertical, 2)
+        }
+    }
+
+    private func bannerCard(banner: HomeBanner, index: Int, count: Int, isFront: Bool) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            Color.clear
+                .frame(height: 184)
+                .overlay {
+                    RemoteImageView(url: banner.image, maxPixelSize: 1080)
+                }
+                .clipped()
+                .overlay(alignment: .bottomLeading) {
+                    if !banner.title.isEmpty || !banner.subtitle.isEmpty {
+                        ZStack(alignment: .bottomLeading) {
+                            LinearGradient(
+                                colors: [.clear, .black.opacity(0.70)],
+                                startPoint: .center,
+                                endPoint: .bottom
+                            )
+                            VStack(alignment: .leading, spacing: 2) {
                                 if !banner.title.isEmpty {
-                                    LinearGradient(
-                                        colors: [.clear, .black.opacity(0.65)],
-                                        startPoint: .center,
-                                        endPoint: .bottom
-                                    )
                                     Text(banner.title)
                                         .font(.subheadline.weight(.semibold))
                                         .foregroundStyle(.white)
+                                        .lineLimit(2)
+                                }
+                                if !banner.subtitle.isEmpty {
+                                    Text(banner.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.white.opacity(0.85))
                                         .lineLimit(1)
-                                        .padding(12)
                                 }
                             }
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
-                            }
-                            .containerRelativeFrame(.horizontal) { width, _ in
-                                banners.count > 1 ? max(220, width - 38) : max(220, width - 24)
-                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .padding(.trailing, count > 1 ? 66 : 12)
+                        }
+                        .allowsHitTesting(false)
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    if isFront && count > 1 {
+                        Text("\(index + 1)/\(count)")
+                            .font(.caption2.weight(.semibold))
+                            .monospacedDigit()
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .glassEffect(.regular, in: .capsule)
+                            .foregroundStyle(.primary)
+                            .padding(10)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .onTapGesture {
+                    guard isFront,
+                          !isHorizontalDragging,
+                          abs(dragOffset) < 4,
+                          Date().timeIntervalSince(lastDragEndedAt) > 0.30,
+                          !banner.url.isEmpty else { return }
+                    appState.openRawLink(banner.url)
+                }
+
+            if isFront && count > 1 {
+                HStack(spacing: 6) {
+                    Button {
+                        withAnimation(.snappy(duration: 0.26)) {
+                            activeIndex = (index - 1 + count) % count
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        withAnimation(.snappy(duration: 0.26)) {
+                            activeIndex = (index + 1) % count
+                        }
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .frame(width: 22, height: 22)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .padding(10)
             }
-            .scrollTargetLayout()
-            .padding(.horizontal, 12)
         }
-        .scrollTargetBehavior(.viewAligned)
+        .overlay {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color(.systemBackground).opacity(isFront ? 0.92 : 0.80), lineWidth: 1.4)
+        }
+        .shadow(color: .black.opacity(isFront ? 0.14 : 0.08), radius: isFront ? 9 : 5, x: 0, y: 3)
+    }
+
+    private func scaleFor(depth: Int) -> CGFloat {
+        let base: CGFloat = depth == 0 ? 1.0 : (depth == 1 ? 0.95 : 0.91)
+        if depth > 0 {
+            let progress = min(1, abs(dragOffset) / 140)
+            return base + progress * 0.03
+        }
+        return base
+    }
+
+    private func rotationFor(depth: Int, isFront: Bool) -> Double {
+        if isFront {
+            return Double(dragOffset) / 22.0
+        }
+        return depth == 1 ? 4.0 : -4.0
+    }
+
+    private func xOffsetFor(depth: Int, isFront: Bool) -> CGFloat {
+        if isFront {
+            return dragOffset
+        }
+        return depth == 1 ? 14 : -12
+    }
+
+    private func yOffsetFor(depth: Int) -> CGFloat {
+        depth == 0 ? 0 : (depth == 1 ? 8 : 15)
     }
 }
 
@@ -197,6 +349,7 @@ struct ImageTextSectionsView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             RemoteImageView(url: section.style, maxPixelSize: 480)
                                 .frame(width: 180, height: 100)
+                                .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             Text(section.title)
                                 .font(.subheadline.weight(.medium))
@@ -337,6 +490,7 @@ struct LivesStripView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             RemoteImageView(url: live.cover, maxPixelSize: 420)
                                 .frame(width: 200, height: 112)
+                                .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             Text(live.title)
                                 .font(.subheadline.weight(.medium))

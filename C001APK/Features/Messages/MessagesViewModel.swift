@@ -29,13 +29,13 @@ public enum MessagesSegment: String, CaseIterable, Identifiable, Sendable {
 public final class MessagesViewModel {
     public var segment: MessagesSegment = .chat
     public private(set) var threads: [MessageThread] = []
-    public private(set) var notifications: [NotificationItem] = []
-    public private(set) var isLoading = false
-    public private(set) var isLoadingMore = false
-    public private(set) var hasMore = true
-    public private(set) var errorMessage: String?
+    public private(set) var notificationsBySegment: [MessagesSegment: [NotificationItem]] = [:]
+    public private(set) var loadingSegments: Set<MessagesSegment> = []
+    public private(set) var loadingMoreSegments: Set<MessagesSegment> = []
+    public private(set) var hasMoreBySegment: [MessagesSegment: Bool] = [:]
+    public private(set) var errorBySegment: [MessagesSegment: String] = [:]
 
-    private var currentPage = 1
+    private var pageBySegment: [MessagesSegment: Int] = [:]
     private var sessionMarker = -1
 
     public init() {}
@@ -44,35 +44,44 @@ public final class MessagesViewModel {
         if sessionMarker != appState.sessionVersion {
             sessionMarker = appState.sessionVersion
             threads = []
-            notifications = []
-            currentPage = 1
-            hasMore = true
-            errorMessage = nil
+            notificationsBySegment.removeAll()
+            loadingSegments.removeAll()
+            loadingMoreSegments.removeAll()
+            hasMoreBySegment.removeAll()
+            errorBySegment.removeAll()
+            pageBySegment.removeAll()
         }
     }
 
-    public func loadInitial(appState: AppState, force: Bool = false) async {
+    public func loadInitial(segment targetSegment: MessagesSegment, appState: AppState, force: Bool = false) async {
         syncSessionIfNeeded(appState: appState)
         guard appState.accounts.isLoggedIn else {
             threads = []
-            notifications = []
+            notificationsBySegment.removeAll()
             return
         }
-        if !force && (!threads.isEmpty || !notifications.isEmpty) { return }
-        currentPage = 1
-        hasMore = true
-        errorMessage = nil
-        isLoading = true
-        defer { isLoading = false }
-        await fetch(page: 1, append: false, appState: appState)
+        if !force {
+            if targetSegment == .chat, !threads.isEmpty { return }
+            if targetSegment != .chat, let existing = notificationsBySegment[targetSegment], !existing.isEmpty { return }
+        }
+        pageBySegment[targetSegment] = 1
+        hasMoreBySegment[targetSegment] = true
+        errorBySegment[targetSegment] = nil
+        loadingSegments.insert(targetSegment)
+        defer { loadingSegments.remove(targetSegment) }
+        await fetch(segment: targetSegment, page: 1, append: false, appState: appState)
         await appState.refreshBadgeOnly()
     }
 
-    public func loadMore(appState: AppState) async {
-        guard !isLoading, !isLoadingMore, hasMore, appState.accounts.isLoggedIn else { return }
-        isLoadingMore = true
-        defer { isLoadingMore = false }
-        await fetch(page: currentPage + 1, append: true, appState: appState)
+    public func loadMore(segment targetSegment: MessagesSegment, appState: AppState) async {
+        guard !loadingSegments.contains(targetSegment),
+              !loadingMoreSegments.contains(targetSegment),
+              hasMoreBySegment[targetSegment] != false,
+              appState.accounts.isLoggedIn else { return }
+        loadingMoreSegments.insert(targetSegment)
+        defer { loadingMoreSegments.remove(targetSegment) }
+        let nextPage = (pageBySegment[targetSegment] ?? 1) + 1
+        await fetch(segment: targetSegment, page: nextPage, append: true, appState: appState)
     }
 
     public func deleteThread(_ thread: MessageThread, appState: AppState) async {
@@ -85,44 +94,45 @@ public final class MessagesViewModel {
         }
     }
 
-    private func fetch(page: Int, append: Bool, appState: AppState) async {
+    private func fetch(segment targetSegment: MessagesSegment, page: Int, append: Bool, appState: AppState) async {
         let expectedSession = appState.sessionVersion
         do {
-            if segment == .chat {
+            if targetSegment == .chat {
                 let items = try await API.messageThreads(page: page)
                 guard expectedSession == appState.sessionVersion else { return }
                 if append {
                     var seen = Set(threads.map(\.id))
                     let unique = items.filter { seen.insert($0.id).inserted }
                     threads.append(contentsOf: unique)
-                    hasMore = !unique.isEmpty
+                    hasMoreBySegment[targetSegment] = !unique.isEmpty
                 } else {
                     threads = items
-                    hasMore = !items.isEmpty
+                    hasMoreBySegment[targetSegment] = !items.isEmpty
                 }
-                currentPage = page
+                pageBySegment[targetSegment] = page
             } else {
-                let items = try await API.notifications(type: segment.notificationEndpointType, page: page)
+                let items = try await API.notifications(type: targetSegment.notificationEndpointType, page: page)
                 guard expectedSession == appState.sessionVersion else { return }
                 if append {
-                    var seen = Set(notifications.map(\.id))
+                    let current = notificationsBySegment[targetSegment] ?? []
+                    var seen = Set(current.map(\.id))
                     let unique = items.filter { seen.insert($0.id).inserted }
-                    notifications.append(contentsOf: unique)
-                    hasMore = !unique.isEmpty
+                    notificationsBySegment[targetSegment] = current + unique
+                    hasMoreBySegment[targetSegment] = !unique.isEmpty
                 } else {
-                    notifications = items
-                    hasMore = !items.isEmpty
+                    notificationsBySegment[targetSegment] = items
+                    hasMoreBySegment[targetSegment] = !items.isEmpty
                 }
-                currentPage = page
+                pageBySegment[targetSegment] = page
             }
         } catch {
             guard expectedSession == appState.sessionVersion else { return }
             let retried = await appState.handleAPIError(error)
             if retried && !append {
-                await fetch(page: page, append: false, appState: appState)
+                await fetch(segment: targetSegment, page: page, append: false, appState: appState)
                 return
             }
-            if !append { errorMessage = error.localizedDescription }
+            if !append { errorBySegment[targetSegment] = error.localizedDescription }
         }
     }
 }

@@ -64,6 +64,7 @@ public final class ComposeViewModel {
                 _ = try await API.postReply(targetID: targetID, message: trimmed, isReply: true, pictures: uploadedURLs)
                 appState.showToast("回复已发送")
             }
+            appState.feedRefreshTrigger += 1
             return true
         } catch {
             let retried = await appState.handleAPIError(error)

@@ -54,39 +54,13 @@ public struct TopicDetailView: View {
                     .padding(.horizontal, 12)
                 }
 
-                GlassEffectContainer(spacing: 4) {
-                    HStack(spacing: 4) {
-                        ForEach([
-                            ("lastupdate_desc", "最新回复"),
-                            ("dateline_desc", "最新发布"),
-                            ("popular", "热门")
-                        ], id: \.0) { value, label in
-                            let isSelected = listType == value
-                            Button {
-                                withAnimation(.snappy(duration: 0.22)) {
-                                    listType = value
-                                }
-                            } label: {
-                                Text(label)
-                                    .font(.caption.weight(isSelected ? .semibold : .medium))
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 7)
-                                    .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
-                                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(5)
-                    .glassEffect(.regular.interactive(), in: .capsule)
-                }
-                .padding(.horizontal, 14)
-                .onChange(of: listType) { _, _ in
-                    Task { await reloadFeeds() }
-                }
-
                 if isLoading && rows.isEmpty {
-                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 40)
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                } else if rows.isEmpty {
+                    ContentUnavailableView("暂无话题动态", systemImage: "number")
+                        .frame(maxWidth: .infinity, minHeight: 200)
                 } else {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
                         HomeRowRenderer(row: row)
@@ -98,7 +72,45 @@ public struct TopicDetailView: View {
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground))
+        .refreshable {
+            await reloadFeeds()
+        }
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .safeAreaInset(edge: .top, spacing: 0) {
+            GlassEffectContainer(spacing: 4) {
+                HStack(spacing: 4) {
+                    ForEach([
+                        ("lastupdate_desc", "最新回复"),
+                        ("dateline_desc", "最新发布"),
+                        ("popular", "热门")
+                    ], id: \.0) { value, label in
+                        let isSelected = listType == value
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                listType = value
+                            }
+                        } label: {
+                            Text(label)
+                                .font(.caption.weight(isSelected ? .semibold : .medium))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 7)
+                                .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
+                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(5)
+                .glassEffect(.regular.interactive(), in: .capsule)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .onChange(of: listType) { _, _ in
+                Task { await reloadFeeds() }
+            }
+        }
         .navigationTitle("#\(tag)#")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -150,9 +162,13 @@ public struct ProductDetailView: View {
 
     @Environment(AppState.self) private var appState
     @State private var product: ProductItem?
+    @State private var tabs: [HomeSection] = []
+    @State private var selectedTabURL: String?
+    @State private var sortType = "lastupdate_desc"
     @State private var rows: [HomeFeedRow] = []
     @State private var page = 1
     @State private var hasMore = true
+    @State private var isLoading = false
 
     public init(productID: String) { self.productID = productID }
 
@@ -160,57 +176,204 @@ public struct ProductDetailView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
                 if let product {
-                    HStack(spacing: 12) {
-                        RemoteImageView(url: product.logo, maxPixelSize: 180)
-                            .frame(width: 60, height: 60)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(product.title).font(.headline)
-                            Text("评分 \(product.score.isEmpty ? "-" : product.score) · \(Formatting.count(product.followNum)) 关注")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button(product.isFollowed ? "已关注" : "关注") {
-                            Task { await toggleFollow(product) }
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(product.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .foregroundStyle(product.isFollowed ? Color.primary : Color.accentColor)
-                    }
-                    .padding(14)
-                    .c001CardStyle(cornerRadius: 16)
-                    .padding(.horizontal, 12)
+                    productHeaderCard(product)
+                } else if isLoading {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 30)
                 }
 
-                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                    HomeRowRenderer(row: row)
-                        .onAppear {
-                            if idx >= rows.count - 4 { Task { await loadMore() } }
-                        }
+                if isLoading && rows.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                } else if rows.isEmpty {
+                    ContentUnavailableView("暂无该机型动态", systemImage: "iphone")
+                        .frame(maxWidth: .infinity, minHeight: 200)
+                } else {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                        HomeRowRenderer(row: row)
+                            .onAppear {
+                                if idx >= rows.count - 4 { Task { await loadMore() } }
+                            }
+                    }
                 }
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground))
+        .refreshable {
+            await reloadAll()
+        }
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .safeAreaInset(edge: .top, spacing: 0) {
+            productTabBar
+        }
         .navigationTitle(product?.title ?? "数码产品")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            product = try? await API.productDetail(id: productID)
-            let link = (product?.url.isEmpty == false ? product!.url : "#/feed/productFeedList?id=\(productID)")
-            rows = (try? await API.productFeed(pageLink: link, page: 1)) ?? []
+        .task(id: productID) {
+            await reloadAll()
+        }
+    }
+
+    @ViewBuilder
+    private var productTabBar: some View {
+        if !tabs.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                GlassEffectContainer(spacing: 4) {
+                    HStack(spacing: 4) {
+                        ForEach(tabs) { item in
+                            let isSelected = selectedTabURL == item.url
+                            Button {
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    selectedTabURL = item.url
+                                }
+                                Task { await reloadFeeds() }
+                            } label: {
+                                Text(item.title)
+                                    .font(.caption.weight(isSelected ? .semibold : .medium))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
+                                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(5)
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+            }
+        } else {
+            GlassEffectContainer(spacing: 4) {
+                HStack(spacing: 4) {
+                    ForEach([
+                        ("lastupdate_desc", "最新回复"),
+                        ("dateline_desc", "最新发布"),
+                        ("popular", "热门讨论")
+                    ], id: \.0) { value, label in
+                        let isSelected = sortType == value
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                sortType = value
+                            }
+                            Task { await reloadFeeds() }
+                        } label: {
+                            Text(label)
+                                .font(.caption.weight(isSelected ? .semibold : .medium))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 7)
+                                .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
+                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(5)
+                .glassEffect(.regular.interactive(), in: .capsule)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+        }
+    }
+
+    private func productHeaderCard(_ product: ProductItem) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                RemoteImageView(url: product.logo, maxPixelSize: 180)
+                    .frame(width: 60, height: 60)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(product.title).font(.headline)
+                    let stats = [
+                        product.score.isEmpty ? nil : "评分 \(product.score)",
+                        "\(Formatting.count(product.followNum)) 关注",
+                        product.feedNum > 0 ? "\(Formatting.count(product.feedNum)) 讨论" : nil
+                    ].compactMap { $0 }.joined(separator: " · ")
+                    Text(stats)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if !product.priceText.isEmpty || !product.releaseTime.isEmpty {
+                        let meta = [product.priceText, product.releaseTime].filter { !$0.isEmpty }.joined(separator: " · ")
+                        Text(meta)
+                            .font(.caption)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+                Spacer()
+                Button(product.isFollowed ? "已关注" : "关注") {
+                    Task { await toggleFollow(product) }
+                }
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(product.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .foregroundStyle(product.isFollowed ? Color.primary : Color.accentColor)
+            }
+
+            if !product.recommendReason.isEmpty {
+                Text(product.recommendReason)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if !product.description.isEmpty {
+                Text(FeedHTMLParser.plainText(product.description))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(4)
+            }
+        }
+        .padding(14)
+        .c001CardStyle(cornerRadius: 18)
+        .padding(.horizontal, 12)
+    }
+
+    private func reloadAll() async {
+        isLoading = true
+        defer { isLoading = false }
+        let detail = try? await API.productDetail(id: productID)
+        product = detail
+        if let detail, !detail.tabs.isEmpty {
+            tabs = detail.tabs
+            if selectedTabURL == nil || !detail.tabs.contains(where: { $0.url == selectedTabURL }) {
+                selectedTabURL = detail.tabs.first?.url
+            }
+        }
+        await reloadFeeds()
+    }
+
+    private func reloadFeeds() async {
+        isLoading = true
+        defer { isLoading = false }
+        page = 1
+        do {
+            rows = try await API.productFeeds(
+                productID: productID,
+                title: product?.title ?? "",
+                tabURL: selectedTabURL,
+                listType: sortType,
+                page: 1
+            )
             hasMore = !rows.isEmpty
+        } catch {
+            _ = await appState.handleAPIError(error)
         }
     }
 
     private func loadMore() async {
-        guard hasMore else { return }
-        let link = (product?.url.isEmpty == false ? product!.url : "#/feed/productFeedList?id=\(productID)")
+        guard hasMore, !isLoading else { return }
         let next = page + 1
-        if let fetched = try? await API.productFeed(pageLink: link, page: next) {
+        if let fetched = try? await API.productFeeds(
+            productID: productID,
+            title: product?.title ?? "",
+            tabURL: selectedTabURL,
+            listType: sortType,
+            page: next
+        ) {
             var seen = Set(rows.map(\.id))
             let unique = fetched.filter { seen.insert($0.id).inserted }
             rows.append(contentsOf: unique)
@@ -308,7 +471,15 @@ public struct AppDetailView: View {
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground))
+        .refreshable {
+            app = try? await API.appDetail(id: appID)
+            comments = (try? await API.appComments(id: appID, page: 1)) ?? []
+            hasMore = !comments.isEmpty
+            page = 1
+        }
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(app?.title ?? "应用详情")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -381,7 +552,15 @@ public struct DyhDetailView: View {
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground))
+        .refreshable {
+            dyh = try? await API.dyhDetail(id: dyhID)
+            rows = (try? await API.dyhArticles(id: dyhID, page: 1)) ?? []
+            hasMore = !rows.isEmpty
+            page = 1
+        }
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(dyh?.title ?? "看看号")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -467,7 +646,15 @@ public struct CollectionDetailView: View {
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground))
+        .refreshable {
+            collection = try? await API.collectionDetail(id: collectionID)
+            rows = (try? await API.collectionItems(id: collectionID, page: 1)) ?? []
+            hasMore = !rows.isEmpty
+            page = 1
+        }
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(collection?.title ?? "收藏夹")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -519,6 +706,7 @@ public struct EventDetailView: View {
                     if !event.cover.isEmpty {
                         RemoteImageView(url: event.cover, maxPixelSize: 1200)
                             .frame(maxWidth: .infinity, maxHeight: 220)
+                            .clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     Text(event.title).font(.title3.weight(.bold))
@@ -583,9 +771,14 @@ public struct PageFeedView: View {
                     }
                     .padding(.vertical, 12)
                 }
+                .refreshable {
+                    await loadInitial()
+                }
             }
         }
-        .background(Color(.systemGroupedBackground))
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 0) {
             if !subTabs.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -739,9 +932,14 @@ public struct CoolPicView: View {
                     }
                     .padding(.vertical, 12)
                 }
+                .refreshable {
+                    await reload()
+                }
             }
         }
-        .background(Color(.systemGroupedBackground))
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 0) {
             GlassEffectContainer(spacing: 4) {
                 HStack(spacing: 4) {
