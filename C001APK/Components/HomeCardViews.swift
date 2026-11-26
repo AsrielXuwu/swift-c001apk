@@ -393,9 +393,9 @@ public struct ProductRowView: View {
                 }
             }
             .padding(14)
-            .c001CardStyle(cornerRadius: 16)
+            .c001CardStyle(cornerRadius: 20)
             .padding(.horizontal, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .applyZoomSource(id: "product-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)
@@ -436,9 +436,9 @@ public struct TopicRowView: View {
                     .foregroundStyle(.tertiary)
             }
             .padding(14)
-            .c001CardStyle(cornerRadius: 16)
+            .c001CardStyle(cornerRadius: 20)
             .padding(.horizontal, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .applyZoomSource(id: "topic-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)
@@ -487,9 +487,9 @@ public struct UserRowView: View {
                     .foregroundStyle(.tertiary)
             }
             .padding(14)
-            .c001CardStyle(cornerRadius: 16)
+            .c001CardStyle(cornerRadius: 20)
             .padding(.horizontal, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .applyZoomSource(id: "userrow-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)
@@ -531,9 +531,9 @@ public struct AppRowView: View {
                 }
             }
             .padding(14)
-            .c001CardStyle(cornerRadius: 16)
+            .c001CardStyle(cornerRadius: 20)
             .padding(.horizontal, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .applyZoomSource(id: "app-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)
@@ -568,9 +568,9 @@ public struct BrowseRowView: View {
                 Spacer()
             }
             .padding(14)
-            .c001CardStyle(cornerRadius: 16)
+            .c001CardStyle(cornerRadius: 20)
             .padding(.horizontal, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -604,9 +604,9 @@ public struct CollectionRowView: View {
                 Spacer()
             }
             .padding(14)
-            .c001CardStyle(cornerRadius: 16)
+            .c001CardStyle(cornerRadius: 20)
             .padding(.horizontal, 12)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .applyZoomSource(id: "col-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)

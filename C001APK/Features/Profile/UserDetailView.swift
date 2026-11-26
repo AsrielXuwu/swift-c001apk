@@ -17,6 +17,7 @@ public struct UserDetailView: View {
     @State private var page = 1
     @State private var hasMore = true
     @State private var isLoading = false
+    @State private var compactNavProgress: CGFloat = 0
 
     private enum UserTab: String, CaseIterable, Identifiable {
         case feeds = "动态"
@@ -31,65 +32,101 @@ public struct UserDetailView: View {
     public init(uid: String) { self.uid = uid }
 
     public var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                headerCard
+        ScrollViewReader { proxy in
+            ScrollView {
+                Color.clear.frame(height: 0).id("user-top")
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    headerCard
+                        .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
+                        .scaleEffect(1.0 - compactNavProgress * 0.03, anchor: .top)
 
-                floatingUserTabs
-                    .onChange(of: tab) { _, _ in
-                        Task { await reloadTab() }
-                    }
+                    floatingUserTabs
+                        .onChange(of: tab) { _, _ in
+                            Task { await reloadTab() }
+                        }
 
-                tabBody
+                    tabBody
+                }
+                .padding(.vertical, 10)
             }
-            .padding(.vertical, 10)
-        }
-        .background(Color(.systemGroupedBackground))
-        .navigationTitle(profile?.username ?? "用户主页")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            if let profile, uid != appState.accounts.activeUID {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if appState.accounts.isLoggedIn {
-                        Button {
-                            appState.push(.chat(
-                                ukey: profile.id,
-                                uid: profile.id,
-                                username: profile.username,
-                                avatar: profile.avatar
-                            ))
-                        } label: {
-                            Image(systemName: "envelope")
-                        }
-                    }
-
-                    Menu {
-                        Button {
-                            toggleLocalFollow(profile: profile)
-                        } label: {
-                            Label(
-                                appState.localFollow.contains(uid: profile.id) ? "取消本机关注" : "加入本机/悄悄关注",
-                                systemImage: "eye.slash"
-                            )
-                        }
-                        Button(role: .destructive) {
-                            appState.blacklist.toggleUser(profile.id)
-                            appState.showToast(appState.blacklist.isUserBlocked(profile.id) ? "已加入黑名单" : "已移出黑名单")
-                        } label: {
-                            Label(
-                                appState.blacklist.isUserBlocked(profile.id) ? "移出黑名单" : "屏蔽此用户",
-                                systemImage: "hand.raised"
-                            )
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top
+            } action: { _, offset in
+                let progress = min(1, max(0, (offset - 44) / 76))
+                if abs(progress - compactNavProgress) > 0.02 {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        compactNavProgress = progress
                     }
                 }
             }
-        }
-        .task(id: uid) {
-            profile = try? await API.userProfile(uid: uid)
-            await reloadTab()
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle(compactNavProgress > 0.4 ? "" : (profile?.username ?? "用户主页"))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let profile, compactNavProgress > 0.08 {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            withAnimation(.snappy) { proxy.scrollTo("user-top", anchor: .top) }
+                        } label: {
+                            HStack(spacing: 6) {
+                                AvatarView(url: profile.avatar, size: 24)
+                                Text(profile.username)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                        }
+                        .buttonStyle(.plain)
+                        .opacity(compactNavProgress)
+                        .scaleEffect(0.75 + 0.25 * compactNavProgress)
+                    }
+                }
+
+                if let profile, uid != appState.accounts.activeUID {
+                    ToolbarItemGroup(placement: .topBarTrailing) {
+                        if appState.accounts.isLoggedIn {
+                            Button {
+                                appState.push(.chat(
+                                    ukey: profile.id,
+                                    uid: profile.id,
+                                    username: profile.username,
+                                    avatar: profile.avatar
+                                ))
+                            } label: {
+                                Image(systemName: "envelope")
+                            }
+                        }
+
+                        Menu {
+                            Button {
+                                toggleLocalFollow(profile: profile)
+                            } label: {
+                                Label(
+                                    appState.localFollow.contains(uid: profile.id) ? "取消本机关注" : "加入本机/悄悄关注",
+                                    systemImage: "eye.slash"
+                                )
+                            }
+                            Button(role: .destructive) {
+                                appState.blacklist.toggleUser(profile.id)
+                                appState.showToast(appState.blacklist.isUserBlocked(profile.id) ? "已加入黑名单" : "已移出黑名单")
+                            } label: {
+                                Label(
+                                    appState.blacklist.isUserBlocked(profile.id) ? "移出黑名单" : "屏蔽此用户",
+                                    systemImage: "hand.raised"
+                                )
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                        }
+                    }
+                }
+            }
+            .task(id: uid) {
+                profile = try? await API.userProfile(uid: uid)
+                await reloadTab()
+            }
         }
     }
 
@@ -187,7 +224,7 @@ public struct UserDetailView: View {
                 .foregroundStyle(.secondary)
             }
             .padding(16)
-            .c001CardStyle(cornerRadius: 18)
+            .c001CardStyle(cornerRadius: 22)
             .padding(.horizontal, 12)
         } else {
             ProgressView()
@@ -225,12 +262,25 @@ public struct UserDetailView: View {
             }
     }
 
+    private var isCurrentTabEmpty: Bool {
+        switch tab {
+        case .feeds: return rows.isEmpty
+        case .likes: return likedRows.isEmpty
+        case .collections: return userCollections.isEmpty
+        case .following: return following.isEmpty
+        case .fans: return followers.isEmpty
+        }
+    }
+
     @ViewBuilder
     private var tabBody: some View {
-        if isLoading && rows.isEmpty && likedRows.isEmpty && userCollections.isEmpty && followers.isEmpty && following.isEmpty {
+        if isLoading && isCurrentTabEmpty {
             ProgressView()
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: 200)
                 .padding(.vertical, 40)
+        } else if isCurrentTabEmpty {
+            ContentUnavailableView("暂无\(tab.rawValue)", systemImage: "tray")
+                .frame(maxWidth: .infinity, minHeight: 200)
         } else {
             switch tab {
             case .feeds:

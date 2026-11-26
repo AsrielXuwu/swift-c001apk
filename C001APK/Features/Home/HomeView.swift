@@ -4,6 +4,7 @@ import SwiftUI
 public struct HomeView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
+    @Namespace private var fallbackNamespace
     @State private var viewModel = HomeFeedViewModel()
     @State private var selectedTab: HomeTabType = .feed
     @State private var scrolledTab: HomeTabType? = .feed
@@ -35,30 +36,37 @@ public struct HomeView: View {
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .safeAreaInset(edge: .top, spacing: 0) {
-                floatingCategoryStrip(visibleTabs: visibleTabs, activeTab: activeTab, proxy: proxy)
+                VStack(spacing: 4) {
+                    floatingCategoryStrip(visibleTabs: visibleTabs, activeTab: activeTab, proxy: proxy)
+                    if let subCategories = viewModel.subCategoriesByTab[activeTab], !subCategories.isEmpty {
+                        subCategoryStrip(categories: subCategories, for: activeTab)
+                    }
+                }
             }
             .overlay(alignment: .bottomTrailing) {
                 if !appState.settings.hideHomePublishButton {
                     publishFloatingButton
                         .padding(.trailing, 16)
-                        .padding(.bottom, 16)
+                        .padding(.bottom, 12)
                 }
             }
             .navigationTitle("酷安")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItemGroup(placement: .topBarLeading) {
-                    if let active = appState.accounts.activeAccount {
-                        let avatarURL = appState.currentUserProfile?.avatar ?? active.avatar
-                        let avatarID = "home-nav-avatar-\(navAvatarSeed)"
+                if let active = appState.accounts.activeAccount {
+                    let avatarURL = appState.currentUserProfile?.avatar ?? active.avatar
+                    let avatarID = "home-nav-avatar-\(navAvatarSeed)"
+                    ToolbarItem(placement: .topBarLeading) {
                         Button {
                             appState.push(.user(uid: active.uid, transitionID: avatarID))
                         } label: {
                             AvatarView(url: avatarURL, size: 28)
-                                .applyZoomSource(id: avatarID, in: zoomNamespace)
                         }
                         .accessibilityLabel("个人主页")
-                    } else {
+                    }
+                    .matchedTransitionSource(id: avatarID, in: zoomNamespace ?? fallbackNamespace)
+                } else {
+                    ToolbarItem(placement: .topBarLeading) {
                         Button {
                             appState.showLoginSheet = true
                         } label: {
@@ -66,7 +74,9 @@ public struct HomeView: View {
                         }
                         .accessibilityLabel("登录")
                     }
+                }
 
+                ToolbarItem(placement: .topBarLeading) {
                     Button {
                         showTabEditor = true
                     } label: {
@@ -150,23 +160,55 @@ public struct HomeView: View {
                 appState.showLoginSheet = true
             }
         } label: {
-            HStack(spacing: isFabCollapsed ? 0 : 7) {
+            HStack(spacing: isFabCollapsed ? 0 : 6) {
                 Image(systemName: "square.and.pencil")
                     .font(.body.weight(.semibold))
+                    .frame(width: 22, height: 22)
                 if !isFabCollapsed {
                     Text("发布动态")
                         .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                        .fixedSize()
                 }
             }
-            .padding(.horizontal, isFabCollapsed ? 14 : 16)
-            .frame(height: 46)
+            .padding(.horizontal, isFabCollapsed ? 11 : 16)
+            .frame(minWidth: 44, height: 44)
+            .clipShape(Capsule())
             .glassEffect(.regular.interactive(), in: .capsule)
             .foregroundStyle(Color.accentColor)
         }
         .buttonStyle(.plain)
         .animation(.snappy(duration: 0.24), value: isFabCollapsed)
+    }
+
+    private func subCategoryStrip(categories: [HomeSection], for tab: HomeTabType) -> some View {
+        let currentID = viewModel.selectedSubCategoryByTab[tab]?.id
+        return ScrollView(.horizontal, showsIndicators: false) {
+            GlassEffectContainer(spacing: 6) {
+                HStack(spacing: 6) {
+                    ForEach(categories) { item in
+                        let isSelected = (currentID == item.id)
+                        Button {
+                            Task { await viewModel.selectSubCategory(item, for: tab, appState: appState) }
+                        } label: {
+                            Text(item.title)
+                                .font(.caption.weight(isSelected ? .semibold : .medium))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(
+                                    isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
+                                    in: Capsule()
+                                )
+                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(4)
+                .glassEffect(.regular.interactive(), in: .capsule)
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 6)
+        }
     }
 
     private func floatingCategoryStrip(

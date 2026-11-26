@@ -44,6 +44,7 @@ public struct MediaViewerView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
+            .ignoresSafeArea()
 
             if showControls {
                 controlsOverlay

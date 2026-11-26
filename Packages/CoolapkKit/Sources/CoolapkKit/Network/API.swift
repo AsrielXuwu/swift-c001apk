@@ -86,18 +86,99 @@ public enum API: Sendable {
     }
 
     public static func linkFeed(link: String, page: Int) async throws -> [HomeFeedRow] {
-        let target = pageTarget(from: link)
-        if target.hasPrefix("/page?") {
-            let items = try await client.get(target, ["page": String(page)]).data.array
-            return rows(from: items)
+        let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("/v6/") {
+            let json = try await client.get(trimmed, ["page": String(page)])
+            return rows(from: json.data.array)
         }
-        let items = try await client.dataList(url: target, page: page)
+        let parsed = parsePageLink(trimmed)
+        let items = try await client.dataList(url: parsed.url, page: page, extra: parsed.extra)
         return rows(from: items)
     }
 
+    public static func topicVerticalTabs() async throws -> [HomeSection] {
+        let items = try await client.dataList(url: "V11_VERTICAL_TOPIC", page: 1, extra: ["title": "话题"])
+        var sections: [HomeSection] = []
+        for (idx, item) in items.enumerated() {
+            for (offset, entity) in item.entities.array.enumerated() {
+                let title = entity.title.string
+                let url = entity.url.string
+                if !title.isEmpty && !url.isEmpty {
+                    sections.append(HomeSection(
+                        id: "vtopic-\(idx)-\(offset)-\(entity.entityId.identifier)",
+                        title: title,
+                        subtitle: entity.sub_title.string,
+                        url: url,
+                        style: entity.pic.string
+                    ))
+                }
+            }
+        }
+        return sections
+    }
+
+    public static func productCategoryTabs() async throws -> [HomeSection] {
+        let json = try await client.get("/v6/product/categoryList")
+        var sections: [HomeSection] = []
+        for (idx, item) in json.data.array.enumerated() {
+            let title = item.title.string
+            let url = item.url.string
+            if !title.isEmpty && !url.isEmpty {
+                sections.append(HomeSection(
+                    id: "pcat-\(idx)-\(item.entityId.identifier)-\(title)",
+                    title: title,
+                    subtitle: item.sub_title.string,
+                    url: url,
+                    style: item.logo.string.isEmpty ? item.pic.string : item.logo.string
+                ))
+            }
+            for (offset, entity) in item.entities.array.enumerated() {
+                let eTitle = entity.title.string
+                let eURL = entity.url.string
+                if !eTitle.isEmpty && !eURL.isEmpty {
+                    sections.append(HomeSection(
+                        id: "pcat-\(idx)-\(offset)-\(entity.entityId.identifier)-\(eTitle)",
+                        title: eTitle,
+                        subtitle: entity.sub_title.string,
+                        url: eURL,
+                        style: entity.logo.string.isEmpty ? entity.pic.string : entity.logo.string
+                    ))
+                }
+            }
+        }
+        return sections
+    }
+
     public static func productFeed(pageLink: String, page: Int) async throws -> [HomeFeedRow] {
-        let items = try await client.dataList(url: pageTarget(from: pageLink), page: page)
+        let parsed = parsePageLink(pageLink)
+        let items = try await client.dataList(url: parsed.url, page: page, extra: parsed.extra)
         return rows(from: items)
+    }
+
+    private static func parsePageLink(_ link: String) -> (url: String, extra: [String: String]) {
+        var clean = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.hasPrefix("coolapk://") {
+            clean = String(clean.dropFirst("coolapk://".count))
+            if !clean.hasPrefix("/") { clean = "/" + clean }
+        }
+        if clean.hasPrefix("/page?") || clean.hasPrefix("page?"),
+           let components = URLComponents(string: clean.hasPrefix("/") ? clean : "/\(clean)"),
+           let queryItems = components.queryItems {
+            var targetURL = ""
+            var extra: [String: String] = [:]
+            for item in queryItems {
+                guard let value = item.value, !value.isEmpty else { continue }
+                if item.name == "url" {
+                    targetURL = value
+                } else {
+                    extra[item.name] = value
+                }
+            }
+            if !targetURL.isEmpty {
+                return (targetURL.replacingOccurrences(of: "#", with: ""), extra)
+            }
+        }
+        return (pageTarget(from: clean), [:])
     }
 
     public static func pageTarget(from link: String) -> String {
@@ -123,6 +204,7 @@ public enum API: Sendable {
 
     private static let linkBarTemplates: Set<String> = [
         "selectorLinkCard", "sortSelectCard", "capsuleListCard", "colorfulScrollCard",
+        "iconTabLinkGridCard", "tabGroupCard",
     ]
 
     public static func rows(from items: [JSON]) -> [HomeFeedRow] {
@@ -164,8 +246,9 @@ public enum API: Sendable {
 
             flushAll()
             switch item.entityType.string {
-            case "feed", "feed_reply", "reply", "forwardFeed":
-                rows.append(.feed(FeedItem(json: item)))
+            case "feed", "feed_reply", "reply", "forwardFeed", "feedLike", "like":
+                let payload = item.feedInfo.exists ? item.feedInfo : item
+                rows.append(.feed(FeedItem(json: payload)))
             case "history", "recentHistory":
                 rows.append(.browse(BrowseItem(json: item)))
             case "collection":
@@ -181,6 +264,21 @@ public enum API: Sendable {
             case "card":
                 rows.append(contentsOf: cardRows(item, template: template, index: index))
             default:
+                if item.feedInfo.exists {
+                    rows.append(.feed(FeedItem(json: item.feedInfo)))
+                } else if !item.message.string.isEmpty && !item.uid.identifier.isEmpty {
+                    rows.append(.feed(FeedItem(json: item)))
+                } else if !item.title.string.isEmpty && !item.url.string.isEmpty {
+                    rows.append(.linkBar("misc-\(index)", [
+                        HomeSection(
+                            id: "misc-\(index)-\(item.entityId.identifier)",
+                            title: item.title.string,
+                            subtitle: item.sub_title.string,
+                            url: item.url.string,
+                            style: item.logo.string.isEmpty ? item.pic.string : item.logo.string
+                        )
+                    ]))
+                }
                 continue
             }
         }
@@ -333,9 +431,23 @@ public enum API: Sendable {
 
     // MARK: - Feed Detail & Replies
 
-    public static func feedDetail(id: String) async throws -> FeedItem {
-        let json = try await client.get("/v6/feed/detail", ["id": id])
-        return FeedItem(json: json.data)
+    public static func feedDetail(id: String, allowPublicFallback: Bool = true) async throws -> FeedItem {
+        do {
+            let json = try await client.get("/v6/feed/detail", ["id": id])
+            return FeedItem(json: json.data)
+        } catch let error as APIError {
+            if allowPublicFallback {
+                switch error {
+                case .captchaRequired, .unauthorized:
+                    if let pub = try? await client.publicFeedJSON(id: id) {
+                        return FeedItem(json: pub.data)
+                    }
+                default:
+                    break
+                }
+            }
+            throw error
+        }
     }
 
     public static func replies(
@@ -344,7 +456,7 @@ public enum API: Sendable {
         listType: String = "lastupdate_desc",
         authorOnly: Bool = false
     ) async throws -> [ReplyItem] {
-        let json = try await client.get("/v6/feed/replyList", [
+        let query: [String: String] = [
             "id": feedID,
             "listType": listType,
             "page": String(page),
@@ -352,8 +464,19 @@ public enum API: Sendable {
             "feedType": "feed",
             "blockStatus": "0",
             "fromFeedAuthor": authorOnly ? "1" : "0",
-        ], base: CoolapkClient.api2Base)
-        return json.data.array.map { ReplyItem(json: $0) }
+        ]
+        do {
+            let json = try await client.get("/v6/feed/replyList", query, base: CoolapkClient.api2Base)
+            return json.data.array.map { ReplyItem(json: $0) }
+        } catch let error as APIError {
+            if case .captchaRequired = error {
+                // Retry once via primary api host before surfacing captcha challenge.
+                if let fallback = try? await client.get("/v6/feed/replyList", query, base: CoolapkClient.apiBase) {
+                    return fallback.data.array.map { ReplyItem(json: $0) }
+                }
+            }
+            throw error
+        }
     }
 
     public static func hotReplies(feedID: String, page: Int = 1) async throws -> [ReplyItem] {

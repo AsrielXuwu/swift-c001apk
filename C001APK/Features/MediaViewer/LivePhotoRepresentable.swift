@@ -80,6 +80,7 @@ public struct ZoomableImageScrollView: UIViewRepresentable {
         scroll.showsVerticalScrollIndicator = false
         scroll.showsHorizontalScrollIndicator = false
         scroll.bouncesZoom = true
+        scroll.contentInsetAdjustmentBehavior = .never
         scroll.delegate = context.coordinator
 
         let imageView = UIImageView(image: image)

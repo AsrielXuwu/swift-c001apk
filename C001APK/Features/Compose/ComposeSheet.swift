@@ -74,7 +74,6 @@ public struct ComposeSheet: View {
                     }
                 }
 
-                Divider()
                 toolbarStrip
             }
             .navigationTitle(titleText)
@@ -124,36 +123,53 @@ public struct ComposeSheet: View {
     }
 
     private var toolbarStrip: some View {
-        HStack(spacing: 18) {
-            if allowsImages {
-                PhotosPicker(selection: $photoItems, maxSelectionCount: 9, matching: .images) {
-                    Image(systemName: "photo")
-                        .font(.title3)
+        GlassEffectContainer(spacing: 10) {
+            HStack(spacing: 10) {
+                if allowsImages {
+                    PhotosPicker(selection: $photoItems, maxSelectionCount: 9, matching: .images) {
+                        Image(systemName: "photo")
+                            .font(.body.weight(.semibold))
+                            .frame(width: 42, height: 42)
+                            .glassEffect(.regular.interactive(), in: .circle)
+                            .foregroundStyle(.primary)
+                    }
                 }
-            }
 
-            Button {
-                showEmojiPanel.toggle()
-            } label: {
-                Image(systemName: showEmojiPanel ? "keyboard" : "face.smiling")
-                    .font(.title3)
-            }
+                Button {
+                    showEmojiPanel.toggle()
+                } label: {
+                    Image(systemName: showEmojiPanel ? "keyboard" : "face.smiling")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 42, height: 42)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
 
-            Button {
-                showMentionUserSheet = true
-            } label: {
-                Image(systemName: "at")
-                    .font(.title3)
-            }
+                Button {
+                    showMentionUserSheet = true
+                } label: {
+                    Image(systemName: "at")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 42, height: 42)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
 
-            Button {
-                showMentionTopicSheet = true
-            } label: {
-                Image(systemName: "number")
-                    .font(.title3)
-            }
+                Button {
+                    showMentionTopicSheet = true
+                } label: {
+                    Image(systemName: "number")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 42, height: 42)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
 
-            Spacer()
+                Spacer()
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

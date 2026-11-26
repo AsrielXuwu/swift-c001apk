@@ -67,6 +67,11 @@ public final class FeedDetailViewModel {
         do {
             return try await API.feedDetail(id: feedID)
         } catch {
+            // If we already have the feed card summary from timeline, do not block
+            // the user with an extra captcha popup just for refreshing detail metadata.
+            if feed != nil, case APIError.captchaRequired = error {
+                return nil
+            }
             let retried = await appState.handleAPIError(error)
             if retried {
                 return try? await API.feedDetail(id: feedID)

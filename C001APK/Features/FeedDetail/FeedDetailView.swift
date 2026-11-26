@@ -270,7 +270,7 @@ public struct FeedDetailView: View {
                     metadataSummary(feed)
                 }
                 .padding(16)
-                .c001CardStyle(cornerRadius: 18)
+                .c001CardStyle(cornerRadius: 22)
                 .padding(.horizontal, 12)
                 .frame(maxWidth: 760, alignment: .leading)
                 .frame(maxWidth: .infinity)
@@ -542,121 +542,168 @@ public struct FeedDetailView: View {
 
     private func replyRow(_ reply: ReplyItem, feed: FeedItem) -> some View {
         let replyAvatarID = "reply-avatar-\(detailSeed)-\(reply.id)"
-        return HStack(alignment: .top, spacing: 10) {
-            Button {
-                if !reply.uid.isEmpty {
-                    appState.push(.user(uid: reply.uid, transitionID: replyAvatarID))
+        return SwipeableReplyCard(
+            onReply: {
+                if appState.accounts.isLoggedIn {
+                    appState.composeMode = .replyToComment(targetID: reply.id, replyToName: reply.username)
+                } else {
+                    appState.showLoginSheet = true
                 }
-            } label: {
-                AvatarView(url: reply.avatar, size: 34)
-                    .applyZoomSource(id: replyAvatarID, in: zoomNamespace)
-            }
-            .buttonStyle(.plain)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 6) {
-                    Text(reply.username)
-                        .font(.subheadline.weight(.semibold))
-                    if reply.uid == feed.uid || reply.isAuthor {
-                        badgeLabel("楼主", color: Color.accentColor)
-                    }
-                    if reply.isTop {
-                        badgeLabel("置顶", color: .orange)
-                    }
-                    Spacer()
-                    Button {
-                        Task { await viewModel.toggleReplyLike(reply, appState: appState) }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: reply.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                            if reply.likeNum > 0 { Text("\(reply.likeNum)").monospacedDigit() }
-                        }
-                        .font(.caption.weight(.medium))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .foregroundStyle(reply.isLiked ? Color.pink : Color.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                RichTextView(
-                    html: reply.message,
-                    fontSize: 15 * appState.settings.fontScale,
-                    showEmoji: appState.settings.showEmoji
-                ) { link in
-                    appState.openRawLink(link)
-                }
-
-                if !reply.mediaItems.isEmpty {
-                    MediaGridView(items: reply.mediaItems)
-                }
-
-                if !reply.nested.isEmpty || reply.replyNum > 0 {
-                    Button {
-                        selectedReplyForThread = reply
-                    } label: {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(reply.nested.prefix(3)) { sub in
-                                Text("\(sub.username)：\(FeedHTMLParser.plainText(sub.message))")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                            if reply.replyNum > reply.nested.count || reply.replyNum > 0 {
-                                Text("查看全部 \(reply.replyNum) 条回复 ›")
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                        }
-                        .padding(8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                let meta = [Formatting.relativeTime(reply.dateline, fallback: reply.datelineText), reply.ipLocation]
-                    .filter { !$0.isEmpty }
-                    .joined(separator: " · ")
-                Text(meta)
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .padding(14)
-        .c001CardStyle(cornerRadius: 16)
-        .padding(.horizontal, 12)
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .onTapGesture {
-            if appState.accounts.isLoggedIn {
-                appState.composeMode = .replyToComment(targetID: reply.id, replyToName: reply.username)
-            } else {
-                appState.showLoginSheet = true
-            }
-        }
-        .contextMenu {
-            Button {
+            },
+            onCopy: {
                 UIPasteboard.general.string = FeedHTMLParser.plainText(reply.message)
                 appState.showToast("已复制评论")
-            } label: {
-                Label("复制评论", systemImage: "doc.on.doc")
             }
-            if feed.uid == appState.accounts.activeUID {
+        ) {
+            HStack(alignment: .top, spacing: 10) {
                 Button {
-                    Task { await viewModel.togglePinReply(reply, appState: appState) }
+                    if !reply.uid.isEmpty {
+                        appState.push(.user(uid: reply.uid, transitionID: replyAvatarID))
+                    }
                 } label: {
-                    Label(reply.isTop ? "取消置顶" : "置顶评论", systemImage: reply.isTop ? "pin.slash" : "pin")
+                    AvatarView(url: reply.avatar, size: 36)
+                        .applyZoomSource(id: replyAvatarID, in: zoomNamespace)
+                }
+                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack(spacing: 6) {
+                        Text(reply.username)
+                            .font(.subheadline.weight(.semibold))
+                        if reply.uid == feed.uid || reply.isAuthor {
+                            badgeLabel("楼主", color: Color.accentColor)
+                        }
+                        if reply.isTop {
+                            badgeLabel("置顶", color: .orange)
+                        }
+                        Spacer()
+                        GlassEffectContainer(spacing: 6) {
+                            HStack(spacing: 6) {
+                                Button {
+                                    if appState.accounts.isLoggedIn {
+                                        appState.composeMode = .replyToComment(targetID: reply.id, replyToName: reply.username)
+                                    } else {
+                                        appState.showLoginSheet = true
+                                    }
+                                } label: {
+                                    Image(systemName: "bubble.right")
+                                        .font(.caption.weight(.medium))
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .glassEffect(.regular.interactive(), in: .capsule)
+                                        .foregroundStyle(Color.secondary)
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    Task { await viewModel.toggleReplyLike(reply, appState: appState) }
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: reply.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                                        if reply.likeNum > 0 { Text("\(reply.likeNum)").monospacedDigit() }
+                                    }
+                                    .font(.caption.weight(.medium))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .glassEffect(.regular.interactive(), in: .capsule)
+                                    .foregroundStyle(reply.isLiked ? Color.pink : Color.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    RichTextView(
+                        html: reply.message,
+                        fontSize: 15 * appState.settings.fontScale,
+                        showEmoji: appState.settings.showEmoji,
+                        isSelectableText: false,
+                        onCardTap: {
+                            if appState.accounts.isLoggedIn {
+                                appState.composeMode = .replyToComment(targetID: reply.id, replyToName: reply.username)
+                            } else {
+                                appState.showLoginSheet = true
+                            }
+                        }
+                    ) { link in
+                        appState.openRawLink(link)
+                    }
+
+                    if !reply.mediaItems.isEmpty {
+                        MediaGridView(items: reply.mediaItems)
+                    }
+
+                    if !reply.nested.isEmpty || reply.replyNum > 0 {
+                        Button {
+                            selectedReplyForThread = reply
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(reply.nested.prefix(3)) { sub in
+                                    Text("\(sub.username)：\(FeedHTMLParser.plainText(sub.message))")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                if reply.replyNum > reply.nested.count || reply.replyNum > 0 {
+                                    HStack(spacing: 4) {
+                                        Text("查看全部 \(reply.replyNum) 条回复")
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption2)
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(Color.accentColor)
+                                }
+                            }
+                            .padding(11)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    let meta = [Formatting.relativeTime(reply.dateline, fallback: reply.datelineText), reply.ipLocation]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " · ")
+                    Text(meta)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
-            if reply.uid == appState.accounts.activeUID {
-                Button(role: .destructive) {
-                    Task { await viewModel.deleteReply(reply, appState: appState) }
+            .padding(14)
+            .c001CardStyle(cornerRadius: 20)
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .onTapGesture {
+                if appState.accounts.isLoggedIn {
+                    appState.composeMode = .replyToComment(targetID: reply.id, replyToName: reply.username)
+                } else {
+                    appState.showLoginSheet = true
+                }
+            }
+            .contextMenu {
+                Button {
+                    UIPasteboard.general.string = FeedHTMLParser.plainText(reply.message)
+                    appState.showToast("已复制评论")
                 } label: {
-                    Label("删除评论", systemImage: "trash")
+                    Label("复制评论", systemImage: "doc.on.doc")
+                }
+                if feed.uid == appState.accounts.activeUID {
+                    Button {
+                        Task { await viewModel.togglePinReply(reply, appState: appState) }
+                    } label: {
+                        Label(reply.isTop ? "取消置顶" : "置顶评论", systemImage: reply.isTop ? "pin.slash" : "pin")
+                    }
+                }
+                if reply.uid == appState.accounts.activeUID {
+                    Button(role: .destructive) {
+                        Task { await viewModel.deleteReply(reply, appState: appState) }
+                    } label: {
+                        Label("删除评论", systemImage: "trash")
+                    }
                 }
             }
         }
+        .padding(.horizontal, 12)
     }
 
     private func badgeLabel(_ text: String, color: Color) -> some View {
@@ -774,4 +821,92 @@ struct ActivityShareSheet: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+private struct SwipeableReplyCard<Content: View>: View {
+    let onReply: () -> Void
+    let onCopy: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    @State private var offsetX: CGFloat = 0
+    @State private var isOpen = false
+
+    private let revealWidth: CGFloat = 104
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            if offsetX < -4 {
+                GlassEffectContainer(spacing: 8) {
+                    HStack(spacing: 8) {
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                offsetX = 0
+                                isOpen = false
+                            }
+                            onReply()
+                        } label: {
+                            Image(systemName: "arrowshape.turn.up.left.fill")
+                                .font(.body.weight(.semibold))
+                                .frame(width: 42, height: 42)
+                                .glassEffect(.regular.interactive(), in: .circle)
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                offsetX = 0
+                                isOpen = false
+                            }
+                            onCopy()
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .font(.body.weight(.semibold))
+                                .frame(width: 42, height: 42)
+                                .glassEffect(.regular.interactive(), in: .circle)
+                                .foregroundStyle(Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.trailing, 4)
+            }
+
+            content()
+                .offset(x: offsetX)
+                .simultaneousGesture(
+                    DragGesture(minimumDistance: 22)
+                        .onChanged { value in
+                            let dx = value.translation.width
+                            let dy = value.translation.height
+                            guard abs(dx) > abs(dy) * 1.4 else { return }
+                            if isOpen {
+                                let next = -revealWidth + dx
+                                offsetX = min(0, max(-revealWidth - 18, next))
+                            } else if dx < 0 {
+                                offsetX = max(-revealWidth - 18, dx)
+                            }
+                        }
+                        .onEnded { value in
+                            let dx = value.translation.width
+                            let dy = value.translation.height
+                            guard abs(dx) > abs(dy) * 1.4 else {
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    offsetX = isOpen ? -revealWidth : 0
+                                }
+                                return
+                            }
+                            withAnimation(.snappy(duration: 0.24)) {
+                                if (!isOpen && dx < -46) || (isOpen && dx < 28) {
+                                    offsetX = -revealWidth
+                                    isOpen = true
+                                } else {
+                                    offsetX = 0
+                                    isOpen = false
+                                }
+                            }
+                        }
+                )
+        }
+    }
 }

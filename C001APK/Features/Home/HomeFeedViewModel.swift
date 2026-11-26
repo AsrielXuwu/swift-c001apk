@@ -6,6 +6,8 @@ import Observation
 @Observable
 public final class HomeFeedViewModel {
     public private(set) var rowsByTab: [HomeTabType: [HomeFeedRow]] = [:]
+    public private(set) var subCategoriesByTab: [HomeTabType: [HomeSection]] = [:]
+    public private(set) var selectedSubCategoryByTab: [HomeTabType: HomeSection] = [:]
     public private(set) var loadingTabs: Set<HomeTabType> = []
     public private(set) var loadingMoreTabs: Set<HomeTabType> = []
     public private(set) var hasMoreByTab: [HomeTabType: Bool] = [:]
@@ -20,12 +22,20 @@ public final class HomeFeedViewModel {
         if sessionMarker != appState.sessionVersion {
             sessionMarker = appState.sessionVersion
             rowsByTab.removeAll()
+            subCategoriesByTab.removeAll()
+            selectedSubCategoryByTab.removeAll()
             loadingTabs.removeAll()
             loadingMoreTabs.removeAll()
             hasMoreByTab.removeAll()
             errorByTab.removeAll()
             pageByTab.removeAll()
         }
+    }
+
+    public func selectSubCategory(_ section: HomeSection, for tab: HomeTabType, appState: AppState) async {
+        selectedSubCategoryByTab[tab] = section
+        rowsByTab[tab] = []
+        await loadInitial(tab: tab, appState: appState, force: true)
     }
 
     public func loadInitial(tab: HomeTabType, appState: AppState, force: Bool = false) async {
@@ -64,12 +74,34 @@ public final class HomeFeedViewModel {
             case .hot:
                 loaded = try await API.pageFeed(pageName: "V9_HOME_TAB_RANKING", page: page)
             case .topic:
-                loaded = try await API.pageFeed(pageName: "V11_VERTICAL_TOPIC", page: page)
+                if subCategoriesByTab[.topic]?.isEmpty != false {
+                    let categories = try await API.topicVerticalTabs()
+                    subCategoriesByTab[.topic] = categories
+                    if selectedSubCategoryByTab[.topic] == nil {
+                        selectedSubCategoryByTab[.topic] = categories.count > 1 ? categories[1] : categories.first
+                    }
+                }
+                if let sub = selectedSubCategoryByTab[.topic], !sub.url.isEmpty {
+                    loaded = try await API.linkFeed(link: sub.url, page: page)
+                } else {
+                    loaded = try await API.pageFeed(pageName: "V11_VERTICAL_TOPIC", page: page)
+                }
             case .product:
-                let json = try await CoolapkClient.shared.get("/v6/product/categoryList", ["page": String(page)])
-                loaded = API.rows(from: json.data.array)
+                if subCategoriesByTab[.product]?.isEmpty != false {
+                    let categories = try await API.productCategoryTabs()
+                    subCategoriesByTab[.product] = categories
+                    if selectedSubCategoryByTab[.product] == nil {
+                        selectedSubCategoryByTab[.product] = categories.first
+                    }
+                }
+                if let sub = selectedSubCategoryByTab[.product], !sub.url.isEmpty {
+                    loaded = try await API.linkFeed(link: sub.url, page: page)
+                } else {
+                    let json = try await CoolapkClient.shared.get("/v6/product/categoryList", ["page": String(page)])
+                    loaded = API.rows(from: json.data.array)
+                }
             case .coolpic:
-                loaded = try await API.coolPic(page: page)
+                loaded = try await API.pageFeed(pageName: "V11_FIND_COOLPIC", page: page)
             case .app:
                 loaded = try await API.appIndex(type: 1, page: page)
             case .follow:

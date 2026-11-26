@@ -76,7 +76,11 @@ public actor CoolapkClient {
 
     private var captchaProof: String?
     private var captchaProofExpiresAt: Date?
-    private var captchaGeneration: Int = -1
+    private var captchaProofScope: String = ""
+
+    private static let captchaProofDefaultsKey = "c001apk.captchaProof.v1"
+    private static let captchaExpiryDefaultsKey = "c001apk.captchaExpiry.v1"
+    private static let captchaScopeDefaultsKey = "c001apk.captchaScope.v1"
 
     public var isLoggedIn: Bool { !token.isEmpty && !uid.isEmpty }
 
@@ -88,6 +92,15 @@ public actor CoolapkClient {
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         session = URLSession(configuration: configuration)
         self.params = parameters
+
+        let defaults = UserDefaults.standard
+        if let savedProof = defaults.string(forKey: Self.captchaProofDefaultsKey),
+           let savedExpiry = defaults.object(forKey: Self.captchaExpiryDefaultsKey) as? TimeInterval,
+           savedExpiry > Date().timeIntervalSince1970 {
+            self.captchaProof = savedProof
+            self.captchaProofExpiresAt = Date(timeIntervalSince1970: savedExpiry)
+            self.captchaProofScope = defaults.string(forKey: Self.captchaScopeDefaultsKey) ?? ""
+        }
     }
 
     // MARK: - Protocol & Session
@@ -106,13 +119,18 @@ public actor CoolapkClient {
     }
 
     public func updateLogin(uid: String, username: String, token: String, sessid: String = "") {
+        let uidChanged = self.uid != uid
         sessionGeneration += 1
         self.uid = uid
         self.username = username
         self.token = token
-        self.sessid = sessid
-        clearCaptchaState()
-        apiSessionCookies.removeAll()
+        if !sessid.isEmpty {
+            self.sessid = sessid
+        }
+        if uidChanged {
+            clearCaptchaState()
+            apiSessionCookies.removeAll()
+        }
     }
 
     public func clearLogin() {
@@ -129,21 +147,36 @@ public actor CoolapkClient {
         (sessionGeneration, uid, username, token, sessid)
     }
 
+    private func currentCaptchaScope() -> String {
+        "\(uid)|\(params.deviceCode)"
+    }
+
     public func setCaptchaProof(_ proof: String) {
-        captchaProof = proof.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? proof
-        captchaProofExpiresAt = Date().addingTimeInterval(24 * 3600)
-        captchaGeneration = sessionGeneration
+        let encoded = proof.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? proof
+        let expiry = Date().addingTimeInterval(24 * 3600)
+        let scope = currentCaptchaScope()
+        captchaProof = encoded
+        captchaProofExpiresAt = expiry
+        captchaProofScope = scope
+        let defaults = UserDefaults.standard
+        defaults.set(encoded, forKey: Self.captchaProofDefaultsKey)
+        defaults.set(expiry.timeIntervalSince1970, forKey: Self.captchaExpiryDefaultsKey)
+        defaults.set(scope, forKey: Self.captchaScopeDefaultsKey)
     }
 
     public func clearCaptchaState() {
         captchaProof = nil
         captchaProofExpiresAt = nil
-        captchaGeneration = -1
+        captchaProofScope = ""
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: Self.captchaProofDefaultsKey)
+        defaults.removeObject(forKey: Self.captchaExpiryDefaultsKey)
+        defaults.removeObject(forKey: Self.captchaScopeDefaultsKey)
     }
 
     private func activeCaptchaProof() -> String? {
         guard let proof = captchaProof,
-              captchaGeneration == sessionGeneration,
+              captchaProofScope == currentCaptchaScope(),
               let expires = captchaProofExpiresAt,
               expires > Date() else {
             return nil
@@ -417,6 +450,40 @@ public actor CoolapkClient {
         params["page"] = String(page)
         let json = try await get("/v6/page/dataList", params)
         return json.data.array
+    }
+
+    /// Official public feed representation fallback (`https://www.coolapk.com/feed/<id>`) without cookies.
+    public func publicFeedJSON(id: String) async throws -> JSON {
+        let appToken = await currentAppToken()
+        guard let url = URL(string: "https://www.coolapk.com/feed/\(id)") else {
+            throw APIError.network("无效的公开动态地址")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+        request.setValue(CoolapkToken.packageName, forHTTPHeaderField: "X-App-Id")
+        request.setValue(params.appVersion, forHTTPHeaderField: "X-App-Version")
+        request.setValue(params.appCode, forHTTPHeaderField: "X-App-Code")
+        request.setValue(params.appCode, forHTTPHeaderField: "X-App-Supported")
+        request.setValue(params.apiVersion, forHTTPHeaderField: "X-Api-Version")
+        request.setValue(appToken, forHTTPHeaderField: "X-App-Token")
+        request.setValue(params.deviceCode, forHTTPHeaderField: "X-App-Device")
+        request.setValue(params.sdkInt, forHTTPHeaderField: "X-Sdk-Int")
+        request.setValue("zh-CN", forHTTPHeaderField: "X-Sdk-Locale")
+        request.setValue("universal", forHTTPHeaderField: "X-App-Mode")
+        request.setValue("coolapk", forHTTPHeaderField: "X-App-Channel")
+        request.setValue("0", forHTTPHeaderField: "X-Dark-Mode")
+        if !params.szlmID.isEmpty {
+            request.setValue(params.szlmID, forHTTPHeaderField: "X-App-Szlm-Id")
+        }
+        request.setValue(params.userAgent, forHTTPHeaderField: "User-Agent")
+
+        let (data, _) = try await session.data(for: request)
+        let json = try JSON(data: data)
+        guard json.data.exists else {
+            throw APIError.decoding
+        }
+        return json
     }
 
     // MARK: - Message Image Redirect

@@ -50,9 +50,20 @@ public struct CaptchaWebViewSheet: View {
                 }
             }
             .alert("反复出现人机验证？", isPresented: $showHelp) {
+                Button("自动获取数盟标识") {
+                    Task {
+                        do {
+                            _ = try await appState.settings.acquireSzlmID()
+                            appState.showToast("已获取并应用数盟设备标识，请重新刷新验证")
+                            reloadTrigger += 1
+                        } catch {
+                            appState.showToast(error.localizedDescription)
+                        }
+                    }
+                }
                 Button("知道了", role: .cancel) {}
             } message: {
-                Text("可在“我的 → 设置 → 协议与设备 → 设备标识”里主动获取数盟 ID，或从官方酷安同一页面点击“复制 OAID”5次后粘贴完整内容手动导入。")
+                Text("系统会在本地保存 24 小时验证凭证；若频繁弹出验证，建议点下方按钮获取数盟 DUID，或在“设置 → 协议与设备 → 设备标识”手动导入。")
             }
         }
     }

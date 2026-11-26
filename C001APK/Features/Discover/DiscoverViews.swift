@@ -552,6 +552,8 @@ public struct PageFeedView: View {
 
     @Environment(AppState.self) private var appState
     @State private var rows: [HomeFeedRow] = []
+    @State private var subTabs: [HomeSection] = []
+    @State private var selectedSubURL: String?
     @State private var page = 1
     @State private var hasMore = true
     @State private var isLoading = false
@@ -562,55 +564,146 @@ public struct PageFeedView: View {
     }
 
     public var body: some View {
-        ScrollView {
+        Group {
             if isLoading && rows.isEmpty {
-                ProgressView().padding(.vertical, 60)
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if rows.isEmpty && subTabs.isEmpty {
+                ContentUnavailableView("暂无内容", systemImage: "tray")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                LazyVStack(spacing: 10) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                        HomeRowRenderer(row: row)
-                            .onAppear {
-                                if idx >= rows.count - 4 { Task { await loadMore() } }
-                            }
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= rows.count - 4 { Task { await loadMore() } }
+                                }
+                        }
                     }
+                    .padding(.vertical, 12)
                 }
-                .padding(.vertical, 10)
             }
         }
         .background(Color(.systemGroupedBackground))
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if !subTabs.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    GlassEffectContainer(spacing: 6) {
+                        HStack(spacing: 6) {
+                            ForEach(subTabs) { item in
+                                let isSelected = selectedSubURL == item.url
+                                Button {
+                                    selectedSubURL = item.url
+                                    Task { await loadSubTab(url: item.url) }
+                                } label: {
+                                    Text(item.title)
+                                        .font(.caption.weight(isSelected ? .semibold : .medium))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 6)
+                                        .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
+                                        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(5)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                }
+            }
+        }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            isLoading = true
-            defer { isLoading = false }
-            do {
-                if link == "/main/headline" {
-                    rows = try await API.headlineFeed(page: 1)
-                } else {
-                    rows = try await API.linkFeed(link: link, page: 1)
-                }
-                hasMore = !rows.isEmpty
-            } catch {
-                _ = await appState.handleAPIError(error)
+            await loadInitial()
+        }
+    }
+
+    private func loadInitial() async {
+        isLoading = true
+        defer { isLoading = false }
+        page = 1
+        do {
+            let initial: [HomeFeedRow]
+            if link == "/main/headline" {
+                initial = try await API.headlineFeed(page: 1)
+            } else {
+                initial = try await API.linkFeed(link: link, page: 1)
             }
+            let extractedTabs = extractSubTabs(from: initial)
+            if !extractedTabs.isEmpty {
+                subTabs = extractedTabs
+                let contentOnly = filterNonTabRows(initial)
+                if contentOnly.isEmpty, let firstURL = extractedTabs.first?.url {
+                    selectedSubURL = firstURL
+                    rows = (try? await API.linkFeed(link: firstURL, page: 1)) ?? []
+                } else {
+                    rows = contentOnly
+                }
+            } else {
+                rows = initial
+            }
+            hasMore = !rows.isEmpty
+        } catch {
+            _ = await appState.handleAPIError(error)
+        }
+    }
+
+    private func loadSubTab(url: String) async {
+        isLoading = true
+        defer { isLoading = false }
+        page = 1
+        rows = []
+        do {
+            let fetched = try await API.linkFeed(link: url, page: 1)
+            rows = filterNonTabRows(fetched)
+            hasMore = !rows.isEmpty
+        } catch {
+            _ = await appState.handleAPIError(error)
         }
     }
 
     private func loadMore() async {
         guard hasMore, !isLoading else { return }
         let next = page + 1
+        let activeLink = selectedSubURL ?? link
         let fetched: [HomeFeedRow]?
-        if link == "/main/headline" {
+        if activeLink == "/main/headline" {
             fetched = try? await API.headlineFeed(page: next)
         } else {
-            fetched = try? await API.linkFeed(link: link, page: next)
+            fetched = try? await API.linkFeed(link: activeLink, page: next)
         }
         if let fetched {
+            let filtered = subTabs.isEmpty ? fetched : filterNonTabRows(fetched)
             var seen = Set(rows.map(\.id))
-            let unique = fetched.filter { seen.insert($0.id).inserted }
+            let unique = filtered.filter { seen.insert($0.id).inserted }
             rows.append(contentsOf: unique)
             hasMore = !unique.isEmpty
             if hasMore { page = next }
+        }
+    }
+
+    private func extractSubTabs(from items: [HomeFeedRow]) -> [HomeSection] {
+        for item in items {
+            switch item {
+            case let .linkBar(_, sections), let .columnTabs(_, sections):
+                if !sections.isEmpty { return sections }
+            default:
+                continue
+            }
+        }
+        return []
+    }
+
+    private func filterNonTabRows(_ items: [HomeFeedRow]) -> [HomeFeedRow] {
+        items.filter { row in
+            switch row {
+            case .linkBar, .columnTabs: return false
+            default: return true
+            }
         }
     }
 }
@@ -622,22 +715,33 @@ public struct CoolPicView: View {
     @State private var sortType = "recommend"
     @State private var page = 1
     @State private var hasMore = true
+    @State private var isLoading = false
 
     public init(initialTag: String = "全部") { self.initialTag = initialTag }
 
     public var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                    HomeRowRenderer(row: row)
-                        .onAppear {
-                            if idx >= rows.count - 4 { Task { await loadMore() } }
+        Group {
+            if isLoading && rows.isEmpty {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if rows.isEmpty {
+                ContentUnavailableView("暂无酷图内容", systemImage: "photo.on.rectangle.angled")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= rows.count - 4 { Task { await loadMore() } }
+                                }
                         }
+                    }
+                    .padding(.vertical, 12)
                 }
             }
-            .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(Color(.systemGroupedBackground))
         .safeAreaInset(edge: .top, spacing: 0) {
             GlassEffectContainer(spacing: 4) {
                 HStack(spacing: 4) {
@@ -677,15 +781,31 @@ public struct CoolPicView: View {
     }
 
     private func reload() async {
+        isLoading = true
+        defer { isLoading = false }
         page = 1
+        if initialTag == "全部" && sortType == "recommend" {
+            let pageRows = (try? await API.pageFeed(pageName: "V11_FIND_COOLPIC", page: 1)) ?? []
+            if !pageRows.isEmpty {
+                rows = pageRows
+                hasMore = true
+                return
+            }
+        }
         rows = (try? await API.coolPic(tag: initialTag, type: sortType, page: 1)) ?? []
         hasMore = !rows.isEmpty
     }
 
     private func loadMore() async {
-        guard hasMore else { return }
+        guard hasMore, !isLoading else { return }
         let next = page + 1
-        if let fetched = try? await API.coolPic(tag: initialTag, type: sortType, page: next) {
+        let fetched: [HomeFeedRow]?
+        if initialTag == "全部" && sortType == "recommend" {
+            fetched = try? await API.pageFeed(pageName: "V11_FIND_COOLPIC", page: next)
+        } else {
+            fetched = try? await API.coolPic(tag: initialTag, type: sortType, page: next)
+        }
+        if let fetched {
             var seen = Set(rows.map(\.id))
             let unique = fetched.filter { seen.insert($0.id).inserted }
             rows.append(contentsOf: unique)

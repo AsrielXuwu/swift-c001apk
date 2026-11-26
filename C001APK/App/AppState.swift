@@ -39,7 +39,7 @@ public final class AppState {
     public var composeMode: ComposeMode?
     public var mediaViewer: MediaViewerPresentation?
     public var activeCaptchaRequest: CaptchaSessionRequest?
-    private var captchaContinuation: CheckedContinuation<String?, Never>?
+    private var captchaContinuations: [CheckedContinuation<String?, Never>] = []
 
     public var searchQuery: String = ""
     public var homeDoubleTapTrigger: Int = 0
@@ -188,13 +188,11 @@ public final class AppState {
     }
 
     public func requestCaptchaVerification(challenge: CaptchaChallenge) async -> String? {
-        if let existing = captchaContinuation {
-            existing.resume(returning: nil)
-            captchaContinuation = nil
-        }
-        return await withCheckedContinuation { continuation in
-            self.captchaContinuation = continuation
-            self.activeCaptchaRequest = CaptchaSessionRequest(challenge: challenge)
+        await withCheckedContinuation { continuation in
+            captchaContinuations.append(continuation)
+            if activeCaptchaRequest == nil {
+                activeCaptchaRequest = CaptchaSessionRequest(challenge: challenge)
+            }
         }
     }
 
@@ -202,8 +200,11 @@ public final class AppState {
         let challenge = activeCaptchaRequest?.challenge
         activeCaptchaRequest = nil
         let proof = validateToken.flatMap { challenge?.proof(from: $0) }
-        captchaContinuation?.resume(returning: proof)
-        captchaContinuation = nil
+        let pending = captchaContinuations
+        captchaContinuations.removeAll()
+        for continuation in pending {
+            continuation.resume(returning: proof)
+        }
     }
 
     // MARK: - Toast

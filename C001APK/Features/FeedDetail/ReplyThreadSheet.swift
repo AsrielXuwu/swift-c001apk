@@ -20,33 +20,58 @@ public struct ReplyThreadSheet: View {
 
     public var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+            List {
+                Section("原评论") {
                     replyRow(rootReply, isRoot: true)
-                    Divider()
+                }
 
+                Section("全部回复") {
                     if isLoading && items.isEmpty {
-                        ProgressView()
+                        HStack {
+                            Spacer()
+                            ProgressView()
+                            Spacer()
+                        }
+                        .padding(.vertical, 24)
+                    } else if items.isEmpty {
+                        ContentUnavailableView("暂无楼中楼回复", systemImage: "bubble.right")
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 32)
                     } else {
                         ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                             replyRow(item, isRoot: false)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                    Button {
+                                        openReplyComposer(for: item)
+                                    } label: {
+                                        Label("回复", systemImage: "arrowshape.turn.up.left")
+                                    }
+                                    .tint(.accentColor)
+
+                                    Button {
+                                        Task { await toggleReplyLike(item) }
+                                    } label: {
+                                        Label(item.isLiked ? "取消赞" : "赞", systemImage: item.isLiked ? "hand.thumbsup.slash" : "hand.thumbsup")
+                                    }
+                                    .tint(.pink)
+                                }
                                 .onAppear {
                                     if index >= items.count - 4 {
                                         Task { await loadMore() }
                                     }
                                 }
-                            Divider().padding(.leading, 56)
                         }
                         if isLoadingMore {
-                            ProgressView()
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 16)
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                Spacer()
+                            }
+                            .padding(.vertical, 12)
                         }
                     }
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("评论详情")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -55,11 +80,7 @@ public struct ReplyThreadSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        if appState.accounts.isLoggedIn {
-                            appState.composeMode = .replyToComment(targetID: rootReply.id, replyToName: rootReply.username)
-                        } else {
-                            appState.showLoginSheet = true
-                        }
+                        openReplyComposer(for: rootReply)
                     } label: {
                         Label("回复", systemImage: "square.and.pencil")
                     }
@@ -71,6 +92,14 @@ public struct ReplyThreadSheet: View {
         }
     }
 
+    private func openReplyComposer(for target: ReplyItem) {
+        if appState.accounts.isLoggedIn {
+            appState.composeMode = .replyToComment(targetID: target.id, replyToName: target.username)
+        } else {
+            appState.showLoginSheet = true
+        }
+    }
+
     private func replyRow(_ reply: ReplyItem, isRoot: Bool) -> some View {
         HStack(alignment: .top, spacing: 10) {
             Button {
@@ -79,7 +108,7 @@ public struct ReplyThreadSheet: View {
                     appState.push(.user(uid: reply.uid))
                 }
             } label: {
-                AvatarView(url: reply.avatar, size: isRoot ? 38 : 32)
+                AvatarView(url: reply.avatar, size: isRoot ? 38 : 34)
             }
             .buttonStyle(.plain)
 
@@ -90,8 +119,8 @@ public struct ReplyThreadSheet: View {
                     if reply.uid == feedAuthorUID || reply.isAuthor {
                         Text("楼主")
                             .font(.caption2.weight(.medium))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
                             .background(Color.accentColor.opacity(0.14), in: Capsule())
                             .foregroundStyle(Color.accentColor)
                     }
@@ -116,11 +145,60 @@ public struct ReplyThreadSheet: View {
                         appState.openMedia(reply.mediaItems, at: idx)
                     }
                 }
+
+                GlassEffectContainer(spacing: 6) {
+                    HStack(spacing: 8) {
+                        Button {
+                            Task { await toggleReplyLike(reply) }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: reply.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                                if reply.likeNum > 0 { Text("\(reply.likeNum)").monospacedDigit() }
+                            }
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                            .foregroundStyle(reply.isLiked ? Color.pink : Color.secondary)
+                        }
+                        .buttonStyle(.plain)
+
+                        Button {
+                            openReplyComposer(for: reply)
+                        } label: {
+                            Label("回复", systemImage: "bubble.right")
+                                .font(.caption.weight(.medium))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .glassEffect(.regular.interactive(), in: .capsule)
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+
+                        Spacer()
+                    }
+                }
+                .padding(.top, 2)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(isRoot ? Color(.secondarySystemBackground).opacity(0.5) : Color.clear)
+        .padding(.vertical, 4)
+    }
+
+    private func toggleReplyLike(_ target: ReplyItem) async {
+        guard appState.accounts.isLoggedIn else {
+            appState.showLoginSheet = true
+            return
+        }
+        let nextLiked = !target.isLiked
+        do {
+            try await API.likeReply(id: target.id, liked: nextLiked)
+            if let idx = items.firstIndex(where: { $0.id == target.id }) {
+                items[idx].isLiked = nextLiked
+                items[idx].likeNum = max(0, items[idx].likeNum + (nextLiked ? 1 : -1))
+            }
+        } catch {
+            _ = await appState.handleAPIError(error)
+        }
     }
 
     private func loadInitial() async {

@@ -1,5 +1,7 @@
 import CoolapkKit
+import Photos
 import SwiftUI
+import UIKit
 
 public struct MediaGridView: View {
     public let items: [FeedMedia]
@@ -8,7 +10,8 @@ public struct MediaGridView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
     @State private var transitionSeed = UUID().uuidString
-    @State private var activeCardIndex: Int? = 0
+    @State private var activeStackIndex: Int = 0
+    @State private var shareFileURL: URL?
 
     public init(items: [FeedMedia], onTapItem: ((Int) -> Void)? = nil) {
         self.items = items
@@ -16,69 +19,33 @@ public struct MediaGridView: View {
     }
 
     public var body: some View {
-        if items.isEmpty {
-            EmptyView()
-        } else if items.count == 1 {
-            singleImage(items[0], index: 0)
-        } else if appState.settings.mediaDisplayStyle == .stackedCards {
-            stackedCardsView(items)
-        } else {
-            gridView(items)
-        }
-    }
-
-    private func stackedCardsView(_ items: [FeedMedia]) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 10) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                    let sourceID = onTapItem == nil ? "media-\(transitionSeed)-\(index)" : nil
-                    Button {
-                        triggerTap(at: index)
-                    } label: {
-                        Color.clear
-                            .frame(height: 224)
-                            .overlay {
-                                RemoteImageView(
-                                    url: item.thumbnailUrl,
-                                    maxPixelSize: 1080
-                                )
-                            }
-                            .overlay(alignment: .topTrailing) {
-                                HStack(spacing: 4) {
-                                    if item.isLivePhoto { badgePill("LIVE") }
-                                    if item.isHdr && !appState.settings.disableHDR { badgePill("HDR") }
-                                    if item.isGif { badgePill("GIF") }
-                                    badgePill("\(index + 1)/\(items.count)")
-                                }
-                                .padding(8)
-                                .allowsHitTesting(false)
-                            }
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
-                            }
-                            .containerRelativeFrame(.horizontal) { width, _ in
-                                max(200, width - 22)
-                            }
-                            .applyZoomSource(id: sourceID, in: zoomNamespace)
-                            .scrollTransition(.interactive, axis: .horizontal) { content, phase in
-                                content
-                                    .scaleEffect(phase.isIdentity ? 1.0 : 0.93)
-                                    .rotationEffect(.degrees(phase.value * -2.2))
-                                    .opacity(phase.isIdentity ? 1.0 : 0.82)
-                            }
+        Group {
+            if items.isEmpty {
+                EmptyView()
+            } else if items.count == 1 {
+                singleImage(items[0], index: 0)
+            } else if appState.settings.mediaDisplayStyle == .stackedCards {
+                PhotoStackCardView(
+                    items: items,
+                    activeIndex: $activeStackIndex,
+                    transitionSeed: transitionSeed,
+                    enableZoomSource: onTapItem == nil,
+                    disableHDR: appState.settings.disableHDR,
+                    onTapCard: { idx in triggerTap(at: idx) },
+                    contextMenuBuilder: { item, idx in
+                        mediaContextMenu(item: item, index: idx)
                     }
-                    .buttonStyle(.plain)
-                    .id(index)
-                }
+                )
+            } else {
+                gridView(items)
             }
-            .scrollTargetLayout()
-            .padding(.trailing, 18)
         }
-        .scrollTargetBehavior(.viewAligned)
-        .scrollPosition(id: $activeCardIndex)
-        .scrollClipDisabled()
+        .sheet(item: Binding(
+            get: { shareFileURL.map { MediaShareFileItem(url: $0) } },
+            set: { if $0 == nil { shareFileURL = nil } }
+        )) { shareItem in
+            MediaShareActivityView(items: [shareItem.url])
+        }
     }
 
     private func gridView(_ items: [FeedMedia]) -> some View {
@@ -101,15 +68,18 @@ public struct MediaGridView: View {
                                     maxPixelSize: 420
                                 )
                             }
-                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .applyZoomSource(id: sourceID, in: zoomNamespace)
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        mediaContextMenu(item: item, index: index)
+                    }
 
                     badgeStack(for: item)
 
                     if index == 8 && items.count > 9 {
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
                             .fill(.black.opacity(0.45))
                             .overlay {
                                 Text("+\(items.count - 9)")
@@ -150,9 +120,9 @@ public struct MediaGridView: View {
                     honorHDR: false
                 )
                 .frame(width: targetWidth, height: targetHeight)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
                         .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
                 }
                 .applyZoomSource(id: sourceID, in: zoomNamespace)
@@ -161,6 +131,93 @@ public struct MediaGridView: View {
             }
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            mediaContextMenu(item: item, index: index)
+        }
+    }
+
+    @ViewBuilder
+    private func mediaContextMenu(item: FeedMedia, index: Int) -> some View {
+        Button {
+            triggerTap(at: index)
+        } label: {
+            Label("查看大图", systemImage: "arrow.up.left.and.arrow.down.right")
+        }
+
+        Button {
+            Task { await saveImageToPhotos(item) }
+        } label: {
+            Label("保存到相册", systemImage: "square.and.arrow.down")
+        }
+
+        Button {
+            Task { await copyImageToPasteboard(item) }
+        } label: {
+            Label("复制图片", systemImage: "doc.on.doc")
+        }
+
+        Button {
+            UIPasteboard.general.string = item.sourceUrl
+            appState.showToast("已复制图片链接")
+        } label: {
+            Label("复制图片链接", systemImage: "link")
+        }
+
+        Button {
+            Task {
+                if let temp = await ImagePipeline.shared.downloadToTemporaryFile(
+                    urlString: item.sourceUrl,
+                    defaultExtension: item.isGif ? "gif" : "jpg"
+                ) {
+                    shareFileURL = temp
+                } else {
+                    appState.showToast("准备分享文件失败")
+                }
+            }
+        } label: {
+            Label("分享图片", systemImage: "square.and.arrow.up")
+        }
+    }
+
+    private func saveImageToPhotos(_ item: FeedMedia) async {
+        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+        guard status == .authorized || status == .limited else {
+            appState.showToast("请在系统设置中允许访问相册")
+            return
+        }
+        guard let tempURL = await ImagePipeline.shared.downloadToTemporaryFile(
+            urlString: item.sourceUrl,
+            defaultExtension: item.isGif ? "gif" : "jpg"
+        ) else {
+            appState.showToast("图片下载失败")
+            return
+        }
+        let videoTemp: URL? = if let videoUrl = item.videoUrl, !videoUrl.isEmpty {
+            await ImagePipeline.shared.downloadToTemporaryFile(urlString: videoUrl, defaultExtension: "mov")
+        } else {
+            nil
+        }
+        do {
+            try await PHPhotoLibrary.shared().performChanges {
+                let req = PHAssetCreationRequest.forAsset()
+                req.addResource(with: .photo, fileURL: tempURL, options: nil)
+                if let videoTemp {
+                    req.addResource(with: .pairedVideo, fileURL: videoTemp, options: nil)
+                }
+            }
+            appState.showToast(videoTemp != nil ? "已保存实况照片到相册" : "已保存到相册")
+        } catch {
+            appState.showToast("保存失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func copyImageToPasteboard(_ item: FeedMedia) async {
+        if let loaded = await ImagePipeline.shared.loadImage(urlString: item.sourceUrl, maxPixelSize: nil) {
+            UIPasteboard.general.image = loaded.image
+            appState.showToast("已复制图片")
+        } else {
+            appState.showToast("图片读取失败")
+        }
     }
 
     @ViewBuilder
@@ -191,7 +248,6 @@ public struct MediaGridView: View {
     }
 
     private static func inferredAspectRatio(from urlString: String) -> CGFloat? {
-        // Matches Coolapk dimension suffixes like _1080x1920.jpg or @1080x1920
         let pattern = #"[_@](\d{2,5})x(\d{2,5})(?:\D|$)"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: urlString, range: NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)),
@@ -204,4 +260,176 @@ public struct MediaGridView: View {
         }
         return CGFloat(w / h)
     }
+}
+
+private struct PhotoStackCardView<MenuContent: View>: View {
+    let items: [FeedMedia]
+    @Binding var activeIndex: Int
+    let transitionSeed: String
+    let enableZoomSource: Bool
+    let disableHDR: Bool
+    let onTapCard: (Int) -> Void
+    @ViewBuilder let contextMenuBuilder: (FeedMedia, Int) -> MenuContent
+
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var dragOffset: CGFloat = 0
+
+    var body: some View {
+        let count = items.count
+        let visibleLayers = min(count, 3)
+
+        ZStack {
+            ForEach((0..<visibleLayers).reversed(), id: \.self) { depth in
+                let itemIndex = (activeIndex + depth) % count
+                let item = items[itemIndex]
+                let isFront = (depth == 0)
+                let sourceID = (isFront && enableZoomSource) ? "media-\(transitionSeed)-\(itemIndex)" : nil
+
+                stackCard(item: item, index: itemIndex, isFront: isFront, count: count)
+                    .applyZoomSource(id: sourceID, in: zoomNamespace)
+                    .scaleEffect(scaleFor(depth: depth))
+                    .rotationEffect(.degrees(rotationFor(depth: depth, isFront: isFront)))
+                    .offset(x: xOffsetFor(depth: depth, isFront: isFront), y: yOffsetFor(depth: depth))
+                    .opacity(depth == 2 ? 0.84 : (depth == 1 ? 0.94 : 1.0))
+                    .zIndex(Double(visibleLayers - depth))
+                    .allowsHitTesting(isFront)
+            }
+        }
+        .frame(height: 232)
+        .padding(.trailing, visibleLayers > 1 ? 18 : 0)
+        .padding(.bottom, visibleLayers > 1 ? 10 : 0)
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 16)
+                .onChanged { value in
+                    guard abs(value.translation.width) > abs(value.translation.height) else { return }
+                    dragOffset = value.translation.width
+                }
+                .onEnded { value in
+                    let dx = value.translation.width
+                    guard abs(dx) > abs(value.translation.height) else {
+                        withAnimation(.snappy(duration: 0.25)) { dragOffset = 0 }
+                        return
+                    }
+                    withAnimation(.snappy(duration: 0.28)) {
+                        if dx < -54 {
+                            activeIndex = (activeIndex + 1) % count
+                        } else if dx > 54 {
+                            activeIndex = (activeIndex - 1 + count) % count
+                        }
+                        dragOffset = 0
+                    }
+                }
+        )
+    }
+
+    private func stackCard(item: FeedMedia, index: Int, isFront: Bool, count: Int) -> some View {
+        Button {
+            onTapCard(index)
+        } label: {
+            Color.clear
+                .frame(height: 222)
+                .overlay {
+                    RemoteImageView(
+                        url: item.thumbnailUrl,
+                        maxPixelSize: 1080
+                    )
+                }
+                .overlay(alignment: .topTrailing) {
+                    if isFront {
+                        HStack(spacing: 4) {
+                            if item.isLivePhoto { stackPill("LIVE") }
+                            if item.isHdr && !disableHDR { stackPill("HDR") }
+                            if item.isGif { stackPill("GIF") }
+                            stackPill("\(index + 1)/\(count)")
+                        }
+                        .padding(10)
+                        .allowsHitTesting(false)
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if isFront && count > 1 {
+                        HStack(spacing: 6) {
+                            Image(systemName: "chevron.left")
+                                .onTapGesture {
+                                    withAnimation(.snappy(duration: 0.26)) {
+                                        activeIndex = (activeIndex - 1 + count) % count
+                                    }
+                                }
+                            Image(systemName: "chevron.right")
+                                .onTapGesture {
+                                    withAnimation(.snappy(duration: 0.26)) {
+                                        activeIndex = (activeIndex + 1) % count
+                                    }
+                                }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .padding(10)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.6)
+                }
+                .shadow(color: .black.opacity(isFront ? 0.12 : 0.06), radius: isFront ? 8 : 4, x: 0, y: 3)
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            contextMenuBuilder(item, index)
+        }
+    }
+
+    private func stackPill(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .glassEffect(.regular, in: .capsule)
+            .foregroundStyle(.primary)
+    }
+
+    private func scaleFor(depth: Int) -> CGFloat {
+        let base: CGFloat = depth == 0 ? 1.0 : (depth == 1 ? 0.94 : 0.88)
+        if depth > 0 {
+            let progress = min(1, abs(dragOffset) / 140)
+            return base + progress * 0.04
+        }
+        return base
+    }
+
+    private func rotationFor(depth: Int, isFront: Bool) -> Double {
+        if isFront {
+            return Double(dragOffset) / 24.0
+        }
+        return depth == 1 ? 2.6 : 5.2
+    }
+
+    private func xOffsetFor(depth: Int, isFront: Bool) -> CGFloat {
+        if isFront {
+            return dragOffset
+        }
+        return depth == 1 ? 9 : 18
+    }
+
+    private func yOffsetFor(depth: Int) -> CGFloat {
+        depth == 0 ? 0 : (depth == 1 ? 5 : 10)
+    }
+}
+
+private struct MediaShareFileItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct MediaShareActivityView: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }

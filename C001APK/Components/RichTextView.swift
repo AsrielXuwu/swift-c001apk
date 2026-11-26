@@ -7,6 +7,8 @@ public struct RichTextView: UIViewRepresentable {
     public var textColor: UIColor = .label
     public var maxLines: Int = 0
     public var showEmoji: Bool = true
+    public var isSelectableText: Bool = true
+    public var onCardTap: (() -> Void)?
     public var onLinkTap: ((String) -> Void)?
 
     public init(
@@ -15,6 +17,8 @@ public struct RichTextView: UIViewRepresentable {
         textColor: UIColor = .label,
         maxLines: Int = 0,
         showEmoji: Bool = true,
+        isSelectableText: Bool = true,
+        onCardTap: (() -> Void)? = nil,
         onLinkTap: ((String) -> Void)? = nil
     ) {
         self.html = html
@@ -22,17 +26,19 @@ public struct RichTextView: UIViewRepresentable {
         self.textColor = textColor
         self.maxLines = maxLines
         self.showEmoji = showEmoji
+        self.isSelectableText = isSelectableText
+        self.onCardTap = onCardTap
         self.onLinkTap = onLinkTap
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(onLinkTap: onLinkTap)
+        Coordinator(onLinkTap: onLinkTap, onCardTap: onCardTap)
     }
 
     public func makeUIView(context: Context) -> UITextView {
         let view = UITextView()
         view.isEditable = false
-        view.isSelectable = true
+        view.isSelectable = isSelectableText
         view.isScrollEnabled = false
         view.backgroundColor = .clear
         view.textContainerInset = .zero
@@ -40,11 +46,18 @@ public struct RichTextView: UIViewRepresentable {
         view.textContainer.lineBreakMode = .byTruncatingTail
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.delegate = context.coordinator
+        if !isSelectableText {
+            let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+            view.addGestureRecognizer(tap)
+            context.coordinator.tapRecognizer = tap
+        }
         return view
     }
 
     public func updateUIView(_ uiView: UITextView, context: Context) {
+        uiView.isSelectable = isSelectableText
         context.coordinator.onLinkTap = onLinkTap
+        context.coordinator.onCardTap = onCardTap
         uiView.textContainer.maximumNumberOfLines = maxLines
         uiView.attributedText = RichTextRenderer.attributedString(
             html: html,
@@ -64,9 +77,44 @@ public struct RichTextView: UIViewRepresentable {
     @MainActor
     public final class Coordinator: NSObject, UITextViewDelegate {
         var onLinkTap: ((String) -> Void)?
+        var onCardTap: (() -> Void)?
+        weak var tapRecognizer: UITapGestureRecognizer?
 
-        init(onLinkTap: ((String) -> Void)?) {
+        init(onLinkTap: ((String) -> Void)?, onCardTap: (() -> Void)?) {
             self.onLinkTap = onLinkTap
+            self.onCardTap = onCardTap
+        }
+
+        @objc func handleTap(_ gesture: UITapGestureRecognizer) {
+            guard let textView = gesture.view as? UITextView else {
+                onCardTap?()
+                return
+            }
+            let location = gesture.location(in: textView)
+            if let url = linkAt(point: location, in: textView) {
+                onLinkTap?(url.absoluteString)
+            } else {
+                onCardTap?()
+            }
+        }
+
+        private func linkAt(point: CGPoint, in textView: UITextView) -> URL? {
+            guard textView.attributedText.length > 0 else { return nil }
+            let adjusted = CGPoint(
+                x: point.x - textView.textContainerInset.left,
+                y: point.y - textView.textContainerInset.top
+            )
+            if let position = textView.closestPosition(to: adjusted) {
+                let offset = textView.offset(from: textView.beginningOfDocument, to: position)
+                let candidates = [offset, max(0, offset - 1)]
+                for idx in candidates where idx >= 0 && idx < textView.attributedText.length {
+                    if let link = textView.attributedText.attribute(.link, at: idx, effectiveRange: nil) {
+                        if let url = link as? URL { return url }
+                        if let str = link as? String, let url = URL(string: str) { return url }
+                    }
+                }
+            }
+            return nil
         }
 
         public func textView(

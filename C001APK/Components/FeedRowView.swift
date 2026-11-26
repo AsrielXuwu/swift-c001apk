@@ -45,21 +45,26 @@ public struct FeedRowView: View {
             actionFooter
         }
         .padding(14)
-        .c001CardStyle(cornerRadius: 16)
+        .c001CardStyle(cornerRadius: 22)
         .padding(.horizontal, 12)
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .applyZoomSource(id: "feed-\(transitionSeed)", in: zoomNamespace)
         .onTapGesture {
-            if let onSelectFeed {
-                onSelectFeed()
-            } else {
-                appState.push(.feed(id: feed.id, initial: feed))
-            }
+            openFeedDetail()
         }
         .onChange(of: feed.isLiked) { _, newValue in
             isLiked = newValue
         }
         .onChange(of: feed.likeNum) { _, newValue in
             likeCount = newValue
+        }
+    }
+
+    private func openFeedDetail() {
+        if let onSelectFeed {
+            onSelectFeed()
+        } else {
+            appState.push(.feed(id: feed.id, initial: feed, transitionID: "feed-\(transitionSeed)"))
         }
     }
 
@@ -72,7 +77,7 @@ public struct FeedRowView: View {
                     appState.push(.user(uid: feed.uid, transitionID: "avatar-\(transitionSeed)"))
                 }
             } label: {
-                AvatarView(url: feed.avatar, size: 36)
+                AvatarView(url: feed.avatar, size: 38)
                     .applyZoomSource(id: "avatar-\(transitionSeed)", in: zoomNamespace)
             }
             .buttonStyle(.plain)
@@ -172,7 +177,9 @@ public struct FeedRowView: View {
                 html: feed.message,
                 fontSize: baseFontSize,
                 maxLines: 6,
-                showEmoji: appState.settings.showEmoji
+                showEmoji: appState.settings.showEmoji,
+                isSelectableText: false,
+                onCardTap: { openFeedDetail() }
             ) { link in
                 appState.openRawLink(link)
             }
@@ -192,7 +199,13 @@ public struct FeedRowView: View {
                     fontSize: 14 * appState.settings.fontScale,
                     textColor: .secondaryLabel,
                     maxLines: 4,
-                    showEmoji: appState.settings.showEmoji
+                    showEmoji: appState.settings.showEmoji,
+                    isSelectableText: false,
+                    onCardTap: {
+                        if !source.id.isEmpty {
+                            appState.push(.feed(id: source.id, transitionID: "quote-\(transitionSeed)"))
+                        }
+                    }
                 ) { link in
                     appState.openRawLink(link)
                 }
@@ -201,9 +214,9 @@ public struct FeedRowView: View {
                 MediaGridView(items: source.mediaItems)
             }
         }
-        .padding(10)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .applyZoomSource(id: "quote-\(transitionSeed)", in: zoomNamespace)
         .onTapGesture {
             if !source.id.isEmpty {
@@ -282,11 +295,7 @@ public struct FeedRowView: View {
                 .sensoryFeedback(.impact(flexibility: .soft), trigger: isLiked)
 
                 Button {
-                    if let onSelectFeed {
-                        onSelectFeed()
-                    } else {
-                        appState.push(.feed(id: feed.id, initial: feed))
-                    }
+                    openFeedDetail()
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "bubble.right")
