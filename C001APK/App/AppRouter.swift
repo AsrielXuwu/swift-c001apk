@@ -110,7 +110,7 @@ public enum AppRoute: Hashable, Sendable {
         }
     }
 
-    public static func from(feedLink: FeedLink, transitionID: String? = nil) -> AppRoute {
+    public static func from(feedLink: FeedLink, preferredTitle: String? = nil, transitionID: String? = nil) -> AppRoute {
         switch feedLink {
         case let .topic(tag): return .topic(tag: tag, transitionID: transitionID)
         case let .user(uid): return .user(uid: uid, transitionID: transitionID)
@@ -122,7 +122,12 @@ public enum AppRoute: Hashable, Sendable {
         case let .event(id): return .event(id: id, transitionID: transitionID)
         case let .question(id): return .feed(id: id, transitionID: transitionID)
         case let .vote(id): return .feed(id: id, transitionID: transitionID)
-        case let .page(link): return .page(link: link, title: "精选")
+        case let .page(link):
+            let explicit = preferredTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let resolvedTitle = !explicit.isEmpty
+                ? explicit
+                : (FeedLink.inferredPageTitle(from: link) ?? "列表")
+            return .page(link: link, title: resolvedTitle)
         case let .web(url): return .web(url: url)
         }
     }

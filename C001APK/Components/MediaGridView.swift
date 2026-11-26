@@ -325,6 +325,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
     public var cardHeight: CGFloat = 218
     public var cornerRadius: CGFloat = 18
     public var adaptiveContentMode: Bool = false
+    public var adaptivePerItemAspect: Bool = true
     public let onTapCard: (Int) -> Void
     @ViewBuilder public let contextMenuBuilder: (FeedMedia, Int) -> MenuContent
 
@@ -333,7 +334,10 @@ public struct PhotoStackCardView<MenuContent: View>: View {
     @Environment(\.replyCardCoordinateSpace) private var replyCardCoordinateSpace
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
+    @State private var didLockVerticalScroll = false
     @State private var lastDragEndedAt: Date = .distantPast
+    @State private var availableWidth: CGFloat = 320
+    @State private var detectedRatios: [Int: CGFloat] = [:]
 
     public init(
         items: [FeedMedia],
@@ -344,6 +348,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         cardHeight: CGFloat = 218,
         cornerRadius: CGFloat = 18,
         adaptiveContentMode: Bool = false,
+        adaptivePerItemAspect: Bool = true,
         onTapCard: @escaping (Int) -> Void,
         @ViewBuilder contextMenuBuilder: @escaping (FeedMedia, Int) -> MenuContent
     ) {
@@ -355,6 +360,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         self.cardHeight = cardHeight
         self.cornerRadius = cornerRadius
         self.adaptiveContentMode = adaptiveContentMode
+        self.adaptivePerItemAspect = adaptivePerItemAspect
         self.onTapCard = onTapCard
         self.contextMenuBuilder = contextMenuBuilder
     }
@@ -366,39 +372,79 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         return ((rounded % count) + count) % count
     }
 
+    private func ratioForItem(at index: Int) -> CGFloat? {
+        guard items.indices.contains(index) else { return nil }
+        if let detected = detectedRatios[index] { return detected }
+        let item = items[index]
+        return MediaGridView.inferredAspectRatio(from: item.sourceUrl)
+            ?? MediaGridView.inferredAspectRatio(from: item.thumbnailUrl)
+    }
+
+    private func cardFrame(at index: Int, maxStageWidth: CGFloat) -> CGSize {
+        guard adaptivePerItemAspect else {
+            return CGSize(width: maxStageWidth, height: cardHeight)
+        }
+        let rawRatio = ratioForItem(at: index) ?? 1.28
+        let maxH: CGFloat = 336
+        let clamped = max(0.50, min(rawRatio, 2.25))
+        let naturalH = maxStageWidth / clamped
+        let finalH = min(maxH, max(140, naturalH))
+        let finalW = min(maxStageWidth, max(140, finalH * clamped))
+        return CGSize(width: finalW, height: finalH)
+    }
+
     public var body: some View {
         let count = items.count
         let visibleLayers = min(count, 3)
         let activeIdx = currentNearestIndex
         let activeItem = items[activeIdx]
+        let leftInset: CGFloat = visibleLayers > 2 ? 16 : 0
+        let rightInset: CGFloat = visibleLayers > 1 ? 20 : 0
+        let bottomInset: CGFloat = visibleLayers > 1 ? 16 : 0
+        let innerStageWidth = max(160, availableWidth - leftInset - rightInset)
+        let activeCardSize = cardFrame(at: activeIdx, maxStageWidth: innerStageWidth)
+        let activeRatio = ratioForItem(at: activeIdx)
 
         ZStack {
             OrbitalDeckStage(
                 phase: deckPhase + dragProgress,
                 count: count,
-                cardHeight: cardHeight
+                cardHeight: activeCardSize.height
             ) { itemIndex, isFront in
                 let item = items[itemIndex]
                 let sourceID = (isFront && enableZoomSource) ? "media-\(transitionSeed)-\(itemIndex)" : nil
-                let ratio = MediaGridView.inferredAspectRatio(from: item.thumbnailUrl)
+                let ratio = ratioForItem(at: itemIndex)
+                let itemSize = cardFrame(at: itemIndex, maxStageWidth: innerStageWidth)
                 let shouldLetterboxWide = adaptiveContentMode && (ratio ?? 1.0) > 1.38
 
                 Color(.secondarySystemGroupedBackground)
-                    .frame(height: cardHeight)
+                    .frame(width: itemSize.width, height: itemSize.height)
                     .overlay {
                         if shouldLetterboxWide {
                             ZStack {
-                                RemoteImageView(url: item.thumbnailUrl, maxPixelSize: 320, contentMode: .fill)
-                                    .blur(radius: 20)
-                                    .opacity(0.45)
-                                RemoteImageView(url: item.sourceUrl, maxPixelSize: 1200, contentMode: .fit)
+                                RemoteImageView(
+                                    url: item.thumbnailUrl,
+                                    maxPixelSize: 320,
+                                    contentMode: .fill
+                                )
+                                .blur(radius: 20)
+                                .opacity(0.45)
+                                RemoteImageView(
+                                    url: item.sourceUrl,
+                                    maxPixelSize: 1200,
+                                    contentMode: .fit
+                                ) { size in
+                                    updateDetectedRatio(index: itemIndex, size: size)
+                                }
                             }
                         } else {
                             RemoteImageView(
                                 url: adaptiveContentMode ? item.sourceUrl : item.thumbnailUrl,
                                 maxPixelSize: adaptiveContentMode ? 1200 : 1080,
                                 contentMode: .fill
-                            )
+                            ) { size in
+                                updateDetectedRatio(index: itemIndex, size: size)
+                            }
                         }
                     }
                     .clipped()
@@ -417,11 +463,11 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                         onTapCard(itemIndex)
                     }
             }
-            .padding(.leading, visibleLayers > 2 ? 16 : 0)
-            .padding(.trailing, visibleLayers > 1 ? 20 : 0)
-            .padding(.bottom, visibleLayers > 1 ? 16 : 0)
+            .padding(.leading, leftInset)
+            .padding(.trailing, rightInset)
+            .padding(.bottom, bottomInset)
 
-            // Stationary floating controls outside moving/rotating deck so badges never deform.
+            // Stationary floating controls anchored cleanly to the active front card size.
             VStack {
                 let showStackLive = activeItem.isLivePhoto
                     || ImagePipeline.cachedLiveFlagSync(urlString: activeItem.sourceUrl)
@@ -429,6 +475,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                 let showStackHDR = activeItem.isHdr
                     || ImagePipeline.cachedHDRFlagSync(urlString: activeItem.sourceUrl)
                     || ImagePipeline.cachedHDRFlagSync(urlString: activeItem.thumbnailUrl)
+                let showStackLong = (activeRatio ?? 1.0) < 0.44
                 HStack {
                     Spacer()
                     HStack(spacing: 4) {
@@ -445,6 +492,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                         }
                         if showStackHDR { stackPill("HDR") }
                         if activeItem.isGif { stackPill("GIF") }
+                        if showStackLong { stackPill("长图") }
                         stackPill("\(activeIdx + 1)/\(count)")
                     }
                 }
@@ -481,12 +529,22 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                     }
                 }
             }
-            .padding(.top, 10)
-            .padding(.bottom, (visibleLayers > 1 ? 16 : 0) + 10)
-            .padding(.leading, visibleLayers > 2 ? 26 : 10)
-            .padding(.trailing, (visibleLayers > 1 ? 20 : 0) + 10)
+            .padding(10)
+            .frame(width: activeCardSize.width, height: activeCardSize.height)
+            .padding(.leading, leftInset)
+            .padding(.trailing, rightInset)
+            .padding(.bottom, bottomInset)
         }
-        .frame(height: visibleLayers > 1 ? cardHeight + 18 : cardHeight)
+        .frame(maxWidth: .infinity)
+        .frame(height: visibleLayers > 1 ? activeCardSize.height + bottomInset + 2 : activeCardSize.height)
+        .animation(.interpolatingSpring(stiffness: 220, damping: 24), value: activeCardSize)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.size.width
+        } action: { _, newWidth in
+            if newWidth > 80, abs(newWidth - availableWidth) > 2 {
+                availableWidth = newWidth
+            }
+        }
         .background {
             if let replyCardCoordinateSpace, count > 1 {
                 Color.clear
@@ -508,22 +566,32 @@ public struct PhotoStackCardView<MenuContent: View>: View {
             MediaContextMenuPreview(item: activeItem, disableHDR: disableHDR)
         }
         .simultaneousGesture(
-            DragGesture(minimumDistance: 6)
+            DragGesture(minimumDistance: 16)
                 .onChanged { value in
-                    guard count > 1 else { return }
+                    guard count > 1, !didLockVerticalScroll else { return }
                     let dx = value.translation.width
                     let dy = value.translation.height
-                    if isHorizontalDragging || abs(dx) > max(6, abs(dy) * 1.1) {
-                        isHorizontalDragging = true
-                        replySwipeLock?.setDraggingMedia(true)
+                    if !isHorizontalDragging {
+                        if abs(dy) >= abs(dx) * 0.8 {
+                            didLockVerticalScroll = true
+                            replySwipeLock?.setDraggingMedia(false)
+                            return
+                        }
+                        if abs(dx) > max(12, abs(dy) * 1.45) {
+                            isHorizontalDragging = true
+                            replySwipeLock?.setDraggingMedia(true)
+                        }
+                    }
+                    if isHorizontalDragging {
                         dragProgress = max(-1.15, min(1.15, -dx / 210.0))
                     }
                 }
                 .onEnded { value in
+                    didLockVerticalScroll = false
                     guard count > 1 else { return }
                     let dx = value.translation.width
                     let predicted = value.predictedEndTranslation.width
-                    let wasDragging = isHorizontalDragging || abs(dx) > 6
+                    let wasDragging = isHorizontalDragging
                     if wasDragging {
                         lastDragEndedAt = Date()
                     }
@@ -552,6 +620,13 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                     }
                 }
         )
+    }
+
+    private func updateDetectedRatio(index: Int, size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        let ratio = size.width / size.height
+        if let existing = detectedRatios[index], abs(existing - ratio) < 0.01 { return }
+        detectedRatios[index] = ratio
     }
 
     private func stepDeck(by delta: CGFloat) {
@@ -773,24 +848,49 @@ public struct MediaContextMenuPreview: View {
     }
 
     public var body: some View {
-        let ratio = MediaGridView.inferredAspectRatio(from: item.thumbnailUrl) ?? 1.25
-        let clamped = max(0.5, min(ratio, 2.0))
-        let width: CGFloat = 320
-        let height: CGFloat = min(380, max(180, width / clamped))
+        let inferredRatio = MediaGridView.inferredAspectRatio(from: item.sourceUrl)
+            ?? MediaGridView.inferredAspectRatio(from: item.thumbnailUrl)
+            ?? 1.25
+        let actualRatio: CGFloat = {
+            if let img = displayResult?.image, img.size.height > 0 {
+                return img.size.width / img.size.height
+            }
+            return inferredRatio
+        }()
+        let clampedRatio = max(0.38, min(actualRatio, 2.6))
+        let maxW: CGFloat = 340
+        let maxH: CGFloat = 460
+        let (width, height): (CGFloat, CGFloat) = {
+            if clampedRatio >= (maxW / maxH) {
+                let w = maxW
+                let h = max(110, w / clampedRatio)
+                return (w, h)
+            } else {
+                let h = maxH
+                let w = max(150, h * clampedRatio)
+                return (w, h)
+            }
+        }()
         let isHDR = item.isHdr || (displayResult?.hasHDRGainMap ?? false)
         let showHDR = !disableHDR && isHDR
         let isLive = (liveVideoURL != nil) || item.isLivePhoto || ImagePipeline.cachedLiveFlagSync(urlString: item.sourceUrl)
 
         ZStack(alignment: .topTrailing) {
             ZStack {
-                Color(.secondarySystemGroupedBackground)
+                if displayResult == nil && !(gifData != nil && item.isGif) {
+                    Color(.secondarySystemGroupedBackground)
+                } else {
+                    Color.clear
+                }
 
                 if let gifData, item.isGif {
-                    AnimatedGIFView(data: gifData, contentMode: .scaleAspectFit)
+                    AnimatedGIFView(data: gifData, contentMode: .scaleAspectFill)
                 } else if let displayResult {
                     let imageView = Image(uiImage: displayResult.image)
                         .resizable()
-                        .aspectRatio(contentMode: .fit)
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: width, height: height)
+                        .clipped()
                     Group {
                         if showHDR {
                             imageView.allowedDynamicRange(.high)
@@ -805,6 +905,7 @@ public struct MediaContextMenuPreview: View {
                             playTrigger: playTrigger,
                             isLooping: false,
                             isMuted: true,
+                            videoGravity: .resizeAspectFill,
                             onReadyToDisplay: {
                                 withAnimation(.easeIn(duration: 0.16)) {
                                     videoReady = true
@@ -817,6 +918,8 @@ public struct MediaContextMenuPreview: View {
                                 }
                             }
                         )
+                        .frame(width: width, height: height)
+                        .clipped()
                         .opacity(videoReady ? 1 : 0)
                         .allowsHitTesting(false)
                     }

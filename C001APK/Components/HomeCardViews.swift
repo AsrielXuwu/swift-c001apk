@@ -115,6 +115,7 @@ struct BannerCarouselView: View {
     @State private var deckPhase: CGFloat = 0
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
+    @State private var didLockVerticalScroll = false
     @State private var lastDragEndedAt: Date = .distantPast
 
     private var currentNearestIndex: Int {
@@ -186,7 +187,7 @@ struct BannerCarouselView: View {
                                   abs(dragProgress) < 0.04,
                                   Date().timeIntervalSince(lastDragEndedAt) > 0.30,
                                   !banner.url.isEmpty else { return }
-                            appState.openRawLink(banner.url)
+                            appState.openRawLink(banner.url, title: banner.title)
                         }
                 }
                 .padding(.leading, visibleLayers > 2 ? 24 : 12)
@@ -245,17 +246,26 @@ struct BannerCarouselView: View {
             .frame(height: visibleLayers > 1 ? 202 : 184)
             .contentShape(Rectangle())
             .simultaneousGesture(
-                DragGesture(minimumDistance: 12)
+                DragGesture(minimumDistance: 16)
                     .onChanged { value in
-                        guard count > 1 else { return }
+                        guard count > 1, !didLockVerticalScroll else { return }
                         let dx = value.translation.width
                         let dy = value.translation.height
-                        if isHorizontalDragging || abs(dx) > max(12, abs(dy) * 1.15) {
-                            isHorizontalDragging = true
+                        if !isHorizontalDragging {
+                            if abs(dy) >= abs(dx) * 0.8 {
+                                didLockVerticalScroll = true
+                                return
+                            }
+                            if abs(dx) > max(12, abs(dy) * 1.45) {
+                                isHorizontalDragging = true
+                            }
+                        }
+                        if isHorizontalDragging {
                             dragProgress = max(-1.15, min(1.15, -dx / 210.0))
                         }
                     }
                     .onEnded { value in
+                        didLockVerticalScroll = false
                         guard count > 1 else { return }
                         let dx = value.translation.width
                         let predicted = value.predictedEndTranslation.width
@@ -307,7 +317,7 @@ struct IconLinksScrollView: View {
             LazyHStack(spacing: 16) {
                 ForEach(links) { link in
                     Button {
-                        if !link.url.isEmpty { appState.openRawLink(link.url) }
+                        if !link.url.isEmpty { appState.openRawLink(link.url, title: link.title) }
                     } label: {
                         VStack(spacing: 6) {
                             RemoteImageView(url: link.image, maxPixelSize: 132)
@@ -336,6 +346,7 @@ struct ImageTextSectionsView: View {
     @State private var deckPhase: CGFloat = 0
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
+    @State private var didLockVerticalScroll = false
     @State private var lastDragEndedAt: Date = .distantPast
     @State private var transitionSeed = UUID().uuidString
 
@@ -410,7 +421,7 @@ struct ImageTextSectionsView: View {
                                   abs(dragProgress) < 0.04,
                                   Date().timeIntervalSince(lastDragEndedAt) > 0.30,
                                   !section.url.isEmpty else { return }
-                            appState.openRawLink(section.url, transitionID: tid)
+                            appState.openRawLink(section.url, title: section.title, transitionID: tid)
                         }
                 }
                 .padding(.leading, visibleLayers > 2 ? 24 : 12)
@@ -469,17 +480,26 @@ struct ImageTextSectionsView: View {
             .frame(height: visibleLayers > 1 ? 194 : 176)
             .contentShape(Rectangle())
             .simultaneousGesture(
-                DragGesture(minimumDistance: 12)
+                DragGesture(minimumDistance: 16)
                     .onChanged { value in
-                        guard count > 1 else { return }
+                        guard count > 1, !didLockVerticalScroll else { return }
                         let dx = value.translation.width
                         let dy = value.translation.height
-                        if isHorizontalDragging || abs(dx) > max(12, abs(dy) * 1.15) {
-                            isHorizontalDragging = true
+                        if !isHorizontalDragging {
+                            if abs(dy) >= abs(dx) * 0.8 {
+                                didLockVerticalScroll = true
+                                return
+                            }
+                            if abs(dx) > max(12, abs(dy) * 1.45) {
+                                isHorizontalDragging = true
+                            }
+                        }
+                        if isHorizontalDragging {
                             dragProgress = max(-1.15, min(1.15, -dx / 210.0))
                         }
                     }
                     .onEnded { value in
+                        didLockVerticalScroll = false
                         guard count > 1 else { return }
                         let dx = value.translation.width
                         let predicted = value.predictedEndTranslation.width
@@ -542,7 +562,7 @@ struct SectionHeaderRow: View {
             Spacer()
             if !url.isEmpty {
                 Button("更多") {
-                    appState.openRawLink(url)
+                    appState.openRawLink(url, title: title)
                 }
                 .font(.caption.weight(.medium))
                 .padding(.horizontal, 10)
@@ -566,7 +586,7 @@ struct LinkBarRowView: View {
                 HStack(spacing: 8) {
                     ForEach(sections) { item in
                         Button {
-                            if !item.url.isEmpty { appState.openRawLink(item.url) }
+                            if !item.url.isEmpty { appState.openRawLink(item.url, title: item.title) }
                         } label: {
                             Text(item.title)
                                 .font(.subheadline)
@@ -862,7 +882,7 @@ public struct BrowseRowView: View {
 
     public var body: some View {
         Button {
-            if !item.url.isEmpty { appState.openRawLink(item.url) }
+            if !item.url.isEmpty { appState.openRawLink(item.url, title: item.title) }
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: item.logo, maxPixelSize: 132)
@@ -940,7 +960,7 @@ public struct EventRowView: View {
             if !event.id.isEmpty, event.url.contains("/event/") || !event.url.hasPrefix("http") {
                 appState.push(.event(id: event.id, initial: event, transitionID: "event-\(transitionSeed)"))
             } else if !event.url.isEmpty {
-                appState.openRawLink(event.url, transitionID: "event-\(transitionSeed)")
+                appState.openRawLink(event.url, title: event.title, transitionID: "event-\(transitionSeed)")
             } else if !event.id.isEmpty {
                 appState.push(.event(id: event.id, initial: event, transitionID: "event-\(transitionSeed)"))
             }

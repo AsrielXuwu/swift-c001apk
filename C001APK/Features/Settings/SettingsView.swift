@@ -90,6 +90,11 @@ public struct SettingsView: View {
                         Text(mode.label).tag(mode)
                     }
                 }
+                Picker("关注写入位置", selection: $settings.defaultFollowTarget) {
+                    ForEach(FollowStorageMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
                 Toggle("读取云端收藏夹列表", isOn: $settings.enableCloudFavoritesLoad)
                 Toggle("读取云端关注列表与关注流", isOn: $settings.enableCloudFollowLoad)
                 Toggle("读取云端浏览历史", isOn: $settings.enableCloudHistoryLoad)
@@ -97,12 +102,12 @@ public struct SettingsView: View {
                     Toggle("悄悄关注", isOn: $localFollow.secretFollowEnabled)
                 }
                 NavigationLink(value: AppRoute.localFollowList) {
-                    Text(appState.accounts.isLoggedIn ? "管理悄悄关注名单" : "管理本机关注名单")
+                    Text("管理关注列表（本机与云端）")
                 }
             } header: {
                 Text("收藏、关注与防风控")
             } footer: {
-                Text("默认仅读取并保存至本机收藏与关注，开启后可同步或读取酷安云端收藏夹、关注与历史，关闭云端读取可最大程度减少接口风控。")
+                Text("收藏与关注默认仅写入本机（防风控推荐）；登录账号后可在上方切换同步至云端，游客模式仅写入本机。关闭云端读取可最大程度减少风控。")
             }
 
             Section("内容屏蔽") {

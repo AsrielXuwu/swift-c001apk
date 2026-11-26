@@ -24,6 +24,9 @@ public enum FeedLink: Hashable, Sendable {
         } else if normalized.hasPrefix("coolapk://") {
             normalized = "/" + String(normalized.dropFirst("coolapk://".count))
         }
+        if normalized.hasPrefix("/#/") {
+            normalized = String(normalized.dropFirst())
+        }
         if let url = URL(string: normalized), let host = url.host?.lowercased() {
             if host.contains("coolapk.com") || host.contains("coolapk1s.com") {
                 normalized = url.path + (url.query.map { "?\($0)" } ?? "")
@@ -65,11 +68,35 @@ public enum FeedLink: Hashable, Sendable {
         if let vid = extractSegment(from: normalized, prefix: "/vote/") {
             return .vote(vid)
         }
+        if normalized.hasPrefix("/") || normalized.hasPrefix("#") {
+            return .page(normalized)
+        }
         if let url = URL(string: trimmed) {
             let scheme = (url.scheme ?? "").lowercased()
             if ["http", "https", "fleamarket", "tbopen", "taobao", "alipays"].contains(scheme) {
                 return .web(url)
             }
+        }
+        return nil
+    }
+
+    public static func inferredPageTitle(from link: String) -> String? {
+        var clean = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.hasPrefix("#") { clean = String(clean.dropFirst()) }
+        if !clean.hasPrefix("/") { clean = "/" + clean }
+        guard let comps = URLComponents(string: "https://www.coolapk.com" + clean),
+              let items = comps.queryItems else {
+            return nil
+        }
+        for key in ["title", "pageTitle", "subTitle"] {
+            if let val = items.first(where: { $0.name == key })?.value?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !val.isEmpty {
+                return val.removingPercentEncoding ?? val
+            }
+        }
+        if let innerURL = items.first(where: { $0.name == "url" })?.value,
+           let nested = inferredPageTitle(from: innerURL) {
+            return nested
         }
         return nil
     }

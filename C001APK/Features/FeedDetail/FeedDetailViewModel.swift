@@ -43,6 +43,7 @@ public final class FeedDetailViewModel {
     public init(feedID: String, initialFeed: FeedItem? = nil) {
         self.feedID = feedID
         self.feed = initialFeed
+        self.isRefreshingDetail = (initialFeed?.needsDetailRefresh == true)
     }
 
     public func loadAll(appState: AppState, forceRefreshDetail: Bool = false) async {
@@ -180,7 +181,8 @@ public final class FeedDetailViewModel {
 
     public func toggleAuthorFollow(appState: AppState) async {
         guard var current = feed, !current.uid.isEmpty else { return }
-        if !appState.accounts.isLoggedIn {
+        let shouldWriteCloud = appState.accounts.isLoggedIn && appState.settings.defaultFollowTarget == .cloud
+        if !shouldWriteCloud {
             if appState.localFollow.contains(uid: current.uid) {
                 appState.localFollow.unfollow(uid: current.uid)
                 appState.showToast("已取消本机关注")
@@ -199,6 +201,10 @@ public final class FeedDetailViewModel {
         feed = current
         do {
             try await API.followUser(uid: current.uid, follow: target)
+            if !target && appState.localFollow.contains(uid: current.uid) {
+                appState.localFollow.unfollow(uid: current.uid)
+            }
+            appState.showToast(target ? "已同步关注至云端" : "已取消关注")
         } catch {
             current.isAuthorFollowed = !target
             feed = current

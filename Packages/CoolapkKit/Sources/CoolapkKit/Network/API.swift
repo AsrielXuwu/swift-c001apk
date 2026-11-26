@@ -360,7 +360,7 @@ public enum API: Sendable {
 
     private static let linkBarTemplates: Set<String> = [
         "selectorLinkCard", "sortSelectCard", "capsuleListCard", "colorfulScrollCard",
-        "iconTabLinkGridCard", "tabGroupCard",
+        "iconTabLinkGridCard", "tabGroupCard", "textLinkListCard", "linkCard",
     ]
 
     public static func rows(from items: [JSON]) -> [HomeFeedRow] {
@@ -518,11 +518,16 @@ public enum API: Sendable {
         if linkBarTemplates.contains(template) {
             let links = entities.enumerated()
                 .map { offset, entity in
-                    HomeSection(
+                    let rawURL = entity.url.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let fallbackPage = entity.page_name.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let resolvedURL = !rawURL.isEmpty
+                        ? rawURL
+                        : (fallbackPage.isEmpty ? "" : "#/page?url=\(fallbackPage)&title=\(entity.title.string)")
+                    return HomeSection(
                         id: "lbar-\(index)-\(offset)-\(entity.entityId.identifier)",
                         title: entity.title.string,
                         subtitle: entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string,
-                        url: entity.url.string,
+                        url: resolvedURL,
                         style: entity.pic.string
                     )
                 }
@@ -604,11 +609,16 @@ public enum API: Sendable {
     }
 
     private static func iconLink(from entity: JSON, keyPrefix: String = "icon") -> HomeIconLink {
-        HomeIconLink(
+        let rawURL = entity.url.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallbackPage = entity.page_name.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedURL = !rawURL.isEmpty
+            ? rawURL
+            : (fallbackPage.isEmpty ? "" : "#/page?url=\(fallbackPage)&title=\(entity.title.string)")
+        return HomeIconLink(
             id: "\(keyPrefix)-\(entity.entityId.identifier)-\(entity.title.string)",
             title: entity.title.string,
             image: entity.logo.string.isEmpty ? entity.pic.string : entity.logo.string,
-            url: entity.url.string,
+            url: resolvedURL,
             subtitle: entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string
         )
     }

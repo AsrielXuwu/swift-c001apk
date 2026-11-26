@@ -87,6 +87,20 @@ public enum FavoriteStorageMode: Int, CaseIterable, Codable, Identifiable, Senda
     }
 }
 
+public enum FollowStorageMode: Int, CaseIterable, Codable, Identifiable, Sendable {
+    case local = 0
+    case cloud = 1
+
+    public var id: Int { rawValue }
+
+    public var label: String {
+        switch self {
+        case .local: return "本机关注（防风控推荐）"
+        case .cloud: return "同步至云端关注"
+        }
+    }
+}
+
 public struct BrandPreset: Identifiable, Sendable {
     public let id: Int
     public let name: String
@@ -159,6 +173,9 @@ public final class SettingsStore {
     }
     public var defaultFavoriteTarget: FavoriteStorageMode {
         didSet { defaults.set(defaultFavoriteTarget.rawValue, forKey: "settings.defaultFavoriteTarget") }
+    }
+    public var defaultFollowTarget: FollowStorageMode {
+        didSet { defaults.set(defaultFollowTarget.rawValue, forKey: "settings.defaultFollowTarget") }
     }
     public var enableCloudFavoritesLoad: Bool {
         didSet { defaults.set(enableCloudFavoritesLoad, forKey: "settings.enableCloudFavoritesLoad") }
@@ -239,6 +256,7 @@ public final class SettingsStore {
         self.openInBrowser = defaults.bool(forKey: "settings.openInBrowser")
         self.autoCheckUpdate = defaults.object(forKey: "settings.autoCheckUpdate") as? Bool ?? true
         self.defaultFavoriteTarget = FavoriteStorageMode(rawValue: defaults.integer(forKey: "settings.defaultFavoriteTarget")) ?? .local
+        self.defaultFollowTarget = FollowStorageMode(rawValue: defaults.integer(forKey: "settings.defaultFollowTarget")) ?? .local
         self.enableCloudFavoritesLoad = defaults.object(forKey: "settings.enableCloudFavoritesLoad") as? Bool ?? true
         self.enableCloudFollowLoad = defaults.object(forKey: "settings.enableCloudFollowLoad") as? Bool ?? true
         self.enableCloudHistoryLoad = defaults.object(forKey: "settings.enableCloudHistoryLoad") as? Bool ?? true

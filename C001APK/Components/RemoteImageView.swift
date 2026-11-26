@@ -5,6 +5,7 @@ public struct RemoteImageView: View {
     public var maxPixelSize: CGFloat?
     public var contentMode: ContentMode = .fill
     public var honorHDR: Bool = false
+    public var onImageLoaded: ((CGSize) -> Void)? = nil
 
     @Environment(AppState.self) private var appState
     @State private var loaded: LoadedImageResult?
@@ -15,12 +16,14 @@ public struct RemoteImageView: View {
         url: String,
         maxPixelSize: CGFloat? = nil,
         contentMode: ContentMode = .fill,
-        honorHDR: Bool = false
+        honorHDR: Bool = false,
+        onImageLoaded: ((CGSize) -> Void)? = nil
     ) {
         self.url = url
         self.maxPixelSize = maxPixelSize
         self.contentMode = contentMode
         self.honorHDR = honorHDR
+        self.onImageLoaded = onImageLoaded
     }
 
     public var body: some View {
@@ -60,6 +63,7 @@ public struct RemoteImageView: View {
                 loadedKey = taskKey
                 loaded = sync
                 didFail = false
+                onImageLoaded?(sync.image.size)
                 return
             }
             didFail = false
@@ -67,7 +71,9 @@ public struct RemoteImageView: View {
             guard !Task.isCancelled else { return }
             loadedKey = taskKey
             loaded = fetched
-            if fetched == nil {
+            if let fetched {
+                onImageLoaded?(fetched.image.size)
+            } else {
                 didFail = true
             }
         }

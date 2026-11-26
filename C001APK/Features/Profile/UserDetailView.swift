@@ -214,7 +214,9 @@ public struct UserDetailView: View {
     }
 
     private func isFollowingUser(_ profile: UserProfile) -> Bool {
-        appState.accounts.isLoggedIn ? profile.isFollowed : appState.localFollow.contains(uid: profile.id)
+        let isLocal = appState.localFollow.contains(uid: profile.id)
+        let isCloud = appState.accounts.isLoggedIn && appState.settings.enableCloudFollowLoad && profile.isFollowed
+        return isLocal || isCloud
     }
 
     @ViewBuilder
@@ -307,11 +309,16 @@ public struct UserDetailView: View {
 
     private func followButton(profile: UserProfile) -> some View {
         let isLocalFollowed = appState.localFollow.contains(uid: profile.id)
+        let isCloudFollowed = appState.accounts.isLoggedIn && appState.settings.enableCloudFollowLoad && profile.isFollowed
         let labelText: String
-        if appState.accounts.isLoggedIn {
-            labelText = profile.isFollowed ? "已关注" : (isLocalFollowed ? "悄悄关注中" : "关注")
+        if isCloudFollowed && isLocalFollowed {
+            labelText = "已关注"
+        } else if isCloudFollowed {
+            labelText = "已关注（云端）"
+        } else if isLocalFollowed {
+            labelText = "已关注（本机）"
         } else {
-            labelText = isLocalFollowed ? "已本地关注" : "本地关注"
+            labelText = "关注"
         }
 
         return Button {
@@ -328,11 +335,11 @@ public struct UserDetailView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
             .background(
-                (profile.isFollowed || isLocalFollowed) ? Color.clear : Color.accentColor.opacity(0.20),
+                (isCloudFollowed || isLocalFollowed) ? Color.clear : Color.accentColor.opacity(0.20),
                 in: Capsule()
             )
             .glassEffect(.regular.interactive(), in: .capsule)
-            .foregroundStyle((profile.isFollowed || isLocalFollowed) ? Color.primary : Color.accentColor)
+            .foregroundStyle((isCloudFollowed || isLocalFollowed) ? Color.primary : Color.accentColor)
         }
         .buttonStyle(.plain)
         .disabled(isTogglingFollow)
@@ -511,7 +518,8 @@ public struct UserDetailView: View {
     }
 
     private func handleFollowTap(profile: UserProfile) async {
-        guard appState.accounts.isLoggedIn else {
+        let shouldWriteCloud = appState.accounts.isLoggedIn && appState.settings.defaultFollowTarget == .cloud
+        guard shouldWriteCloud else {
             toggleLocalFollow(profile: profile)
             return
         }
@@ -529,7 +537,10 @@ public struct UserDetailView: View {
 
         do {
             try await API.followUser(uid: targetUID, follow: next)
-            appState.showToast(next ? "已关注" : "已取消关注")
+            if !next && appState.localFollow.contains(uid: targetUID) {
+                appState.localFollow.unfollow(uid: targetUID)
+            }
+            appState.showToast(next ? "已同步关注至云端" : "已取消关注")
         } catch {
             self.profile?.isFollowed = previous
             self.profile?.fansNum = previousFans
@@ -539,7 +550,10 @@ public struct UserDetailView: View {
                     try await API.followUser(uid: targetUID, follow: next)
                     self.profile?.isFollowed = next
                     self.profile?.fansNum = max(0, previousFans + (next ? 1 : -1))
-                    appState.showToast(next ? "已关注" : "已取消关注")
+                    if !next && appState.localFollow.contains(uid: targetUID) {
+                        appState.localFollow.unfollow(uid: targetUID)
+                    }
+                    appState.showToast(next ? "已同步关注至云端" : "已取消关注")
                 } catch {
                     _ = await appState.handleAPIError(error)
                 }
@@ -553,7 +567,7 @@ public struct UserDetailView: View {
             appState.showToast("已取消本机关注")
         } else {
             appState.localFollow.follow(uid: profile.id, username: profile.username, avatar: profile.avatar)
-            appState.showToast(appState.accounts.isLoggedIn ? "已加入悄悄关注" : "已加入本机关注")
+            appState.showToast("已加入本机关注")
         }
     }
 }

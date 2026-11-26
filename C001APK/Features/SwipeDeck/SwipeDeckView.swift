@@ -52,8 +52,8 @@ public struct SwipeDeckView: View {
                 ContentUnavailableView("正在准备推荐卡片", systemImage: "rectangle.stack")
             } else {
                 GeometryReader { geo in
-                    let cardWidth = min(max(geo.size.width - 28, 280), 430)
-                    let cardHeight = min(max(geo.size.height - 24, 420), max(460, geo.size.height * 0.90))
+                    let cardWidth = min(max(geo.size.width - 42, 272), 404)
+                    let cardHeight = min(max(geo.size.height - 54, 410), max(430, geo.size.height * 0.83))
                     let mediaHeight = floor(cardHeight * 0.67)
                     let currentCard = viewModel.cards[safe: viewModel.currentIndex]
 
@@ -91,6 +91,7 @@ public struct SwipeDeckView: View {
                             )
                         }
                         .frame(width: cardWidth, height: cardHeight)
+                        .offset(y: -12)
                         .coordinateSpace(name: "SwipeCardStageSpace")
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -287,6 +288,7 @@ private struct SwipeFeedCardItemView: View {
                         cardHeight: max(220, mediaHeight - 24),
                         cornerRadius: 20,
                         adaptiveContentMode: true,
+                        adaptivePerItemAspect: false,
                         onTapCard: { idx in
                             appState.openMedia(items, at: idx, sourcePrefix: "swipe-media-\(transitionSeed)")
                         },
@@ -478,6 +480,7 @@ private struct SwipeFeedCardItemView: View {
         let ratio = MediaGridView.inferredAspectRatio(from: item.thumbnailUrl)
         let shouldLetterboxWide = (ratio ?? 1.0) > 1.38
         let containerH = max(220, mediaHeight - 16)
+        let isLong = (ratio ?? 1.0) < 0.44
         let showLive = item.isLivePhoto || ImagePipeline.cachedLiveFlagSync(urlString: item.sourceUrl)
         let showHDR = item.isHdr || ImagePipeline.cachedHDRFlagSync(urlString: item.sourceUrl)
 
@@ -515,7 +518,7 @@ private struct SwipeFeedCardItemView: View {
                     MediaContextMenuPreview(item: item, disableHDR: appState.settings.disableHDR)
                 }
 
-            if showLive || showHDR || item.isGif {
+            if showLive || showHDR || item.isGif || isLong {
                 HStack(spacing: 4) {
                     if showLive {
                         HStack(spacing: 2) {
@@ -536,6 +539,13 @@ private struct SwipeFeedCardItemView: View {
                     }
                     if item.isGif {
                         Text("GIF")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .glassEffect(.regular, in: .capsule)
+                    }
+                    if isLong {
+                        Text("长图")
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 3)
@@ -601,32 +611,32 @@ private struct SwipeFeedDeckStage<CardContent: View>: View, @MainActor Animatabl
                 let p = -t
                 let swingOut = sin(p * .pi)
                 let tuckRatio = min(1.0, max(0.0, (p - 0.5) * 2.0))
-                let x = (-swingOut * cardWidth * 0.72) + (tuckRatio * -12)
-                let y = (p * 10.0) + (tuckRatio * 4.0)
+                let x = (-swingOut * cardWidth * 0.72) + (tuckRatio * -18)
+                let y = (p * 12.0) + (tuckRatio * 4.0)
                 let scale = 1.0 - (0.06 * p)
-                let angle = Double(-swingOut * 9.0) + (Double(tuckRatio) * -2.2)
+                let angle = Double(-swingOut * 9.5) + (Double(tuckRatio) * -4.2)
                 let zIndex: Double = p < 0.48 ? 100.0 : 40.0
-                let opacity = 1.0 - Double(tuckRatio) * 0.16
+                let opacity = 1.0 - Double(tuckRatio) * 0.12
                 return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
             } else {
                 let recede = min(1.0, max(0.0, -t - 1.0))
                 return CardGeometry(
-                    x: -12 - recede * 6,
-                    y: 14 + recede * 6,
-                    scale: 0.94 - recede * 0.04,
-                    angle: -2.2 - Double(recede) * 1.4,
-                    opacity: max(0.0, 0.84 * (1.0 - Double(recede))),
+                    x: -18 - recede * 8,
+                    y: 16 + recede * 8,
+                    scale: 0.94 - recede * 0.05,
+                    angle: -4.2 - Double(recede) * 2.2,
+                    opacity: max(0.0, 0.88 * (1.0 - Double(recede))),
                     zIndex: 20.0 - Double(recede)
                 )
             }
         } else {
             let capped = min(2.0, t)
             return CardGeometry(
-                x: capped * 7.0,
-                y: capped * 11.0,
-                scale: 1.0 - capped * 0.042,
-                angle: Double(capped) * 2.0,
-                opacity: t <= 1.0 ? 1.0 : max(0.0, 1.0 - Double(capped - 1.0) * 0.45),
+                x: capped * 17.0,
+                y: capped * 18.0,
+                scale: 1.0 - capped * 0.058,
+                angle: Double(capped) * 4.2,
+                opacity: t <= 1.0 ? 1.0 - Double(capped) * 0.04 : max(0.0, 0.96 - Double(capped - 1.0) * 0.18),
                 zIndex: 80.0 - Double(capped) * 15.0
             )
         }

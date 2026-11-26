@@ -17,6 +17,7 @@ public struct LiveVideoPlayerView: UIViewRepresentable {
     public let playTrigger: Int
     public let isLooping: Bool
     public let isMuted: Bool
+    public var videoGravity: AVLayerVideoGravity = .resizeAspect
     public let onReadyToDisplay: (() -> Void)?
     public let onPlaybackEnded: (() -> Void)?
 
@@ -25,6 +26,7 @@ public struct LiveVideoPlayerView: UIViewRepresentable {
         playTrigger: Int,
         isLooping: Bool,
         isMuted: Bool = false,
+        videoGravity: AVLayerVideoGravity = .resizeAspect,
         onReadyToDisplay: (() -> Void)? = nil,
         onPlaybackEnded: (() -> Void)? = nil
     ) {
@@ -32,6 +34,7 @@ public struct LiveVideoPlayerView: UIViewRepresentable {
         self.playTrigger = playTrigger
         self.isLooping = isLooping
         self.isMuted = isMuted
+        self.videoGravity = videoGravity
         self.onReadyToDisplay = onReadyToDisplay
         self.onPlaybackEnded = onPlaybackEnded
     }
@@ -44,12 +47,13 @@ public struct LiveVideoPlayerView: UIViewRepresentable {
         let view = LiveVideoContainerView()
         view.backgroundColor = .clear
         view.isUserInteractionEnabled = false
-        view.playerLayer.videoGravity = .resizeAspect
+        view.playerLayer.videoGravity = videoGravity
         try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
         return view
     }
 
     public func updateUIView(_ uiView: LiveVideoContainerView, context: Context) {
+        uiView.playerLayer.videoGravity = videoGravity
         context.coordinator.onReadyToDisplay = onReadyToDisplay
         context.coordinator.onPlaybackEnded = onPlaybackEnded
         context.coordinator.isLooping = isLooping

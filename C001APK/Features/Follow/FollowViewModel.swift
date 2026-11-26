@@ -117,14 +117,17 @@ public final class FollowViewModel {
                 loaded = try await fetchLocalFollowRows(page: page, appState: appState)
 
             case .users:
-                guard appState.settings.enableCloudFollowLoad,
-                      appState.accounts.isLoggedIn,
-                      let myUID = appState.accounts.activeUID else {
-                    loaded = appState.settings.enableCloudFollowLoad ? [] : (try await fetchLocalFollowRows(page: page, appState: appState))
-                    hasMoreBySegment[targetSegment] = appState.settings.enableCloudFollowLoad ? false : !loaded.isEmpty
-                    break
+                let localRows = (try? await fetchLocalFollowRows(page: page, appState: appState)) ?? []
+                if appState.settings.enableCloudFollowLoad,
+                   appState.accounts.isLoggedIn,
+                   let myUID = appState.accounts.activeUID {
+                    let cloudRows = try await fetchFollowedUsersRows(myUID: myUID, page: page)
+                    loaded = mergeFollowRows(primary: cloudRows, extra: localRows)
+                    hasMoreBySegment[targetSegment] = !loaded.isEmpty
+                } else {
+                    loaded = localRows
+                    hasMoreBySegment[targetSegment] = !localRows.isEmpty
                 }
-                loaded = try await fetchFollowedUsersRows(myUID: myUID, page: page)
 
             case .topics:
                 guard appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn else {
@@ -143,16 +146,18 @@ public final class FollowViewModel {
                 }
 
             case .all:
-                guard appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn else {
-                    loaded = try await fetchLocalFollowRows(page: page, appState: appState)
-                    break
-                }
-                let raw = try await API.pageFeed(pageName: API.followPageName, page: page)
-                loaded = raw.filter { row in
-                    switch row {
-                    case .linkBar, .linkList, .columnTabs: return false
-                    default: return true
+                let localRows = (try? await fetchLocalFollowRows(page: page, appState: appState)) ?? []
+                if appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn {
+                    let raw = try await API.pageFeed(pageName: API.followPageName, page: page)
+                    let cloudRows = raw.filter { row in
+                        switch row {
+                        case .linkBar, .linkList, .columnTabs: return false
+                        default: return true
+                        }
                     }
+                    loaded = page == 1 ? mergeFollowRows(primary: cloudRows, extra: localRows) : cloudRows
+                } else {
+                    loaded = localRows
                 }
             }
 
@@ -240,6 +245,18 @@ public final class FollowViewModel {
         return collected
             .filter { seen.insert($0.id).inserted }
             .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+    }
+
+    private func mergeFollowRows(primary: [HomeFeedRow], extra: [HomeFeedRow]) -> [HomeFeedRow] {
+        guard !extra.isEmpty else { return primary }
+        var seen = Set<String>()
+        var combined: [HomeFeedRow] = []
+        for row in primary + extra {
+            if seen.insert(row.id).inserted {
+                combined.append(row)
+            }
+        }
+        return combined.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
     }
 
     private func fetchLocalFollowRows(page: Int, appState: AppState) async throws -> [HomeFeedRow] {

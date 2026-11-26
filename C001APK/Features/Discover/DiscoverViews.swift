@@ -26,6 +26,7 @@ public struct TopicDetailView: View {
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
     @State private var hasInitialized = false
+    @State private var didResolveTopicMetadata = false
 
     private let fallbackTabs: [HomeSection] = [
         HomeSection(id: "lastupdate_desc", title: "最新回复", subtitle: "lastupdate_desc", url: "", style: ""),
@@ -39,51 +40,62 @@ public struct TopicDetailView: View {
         if let apiTabs = topic?.tabs, !apiTabs.isEmpty {
             return apiTabs
         }
-        return fallbackTabs
+        return didResolveTopicMetadata ? fallbackTabs : []
     }
 
     private var selectedTabItem: HomeSection {
-        activeTabs.first { $0.id == activeTabID } ?? activeTabs[0]
+        activeTabs.first { $0.id == activeTabID }
+            ?? activeTabs.first
+            ?? fallbackTabs[0]
     }
 
     private var isSortMenuAvailable: Bool {
         let tabs = activeTabs
-        if tabs == fallbackTabs { return false }
+        if tabs.isEmpty || tabs == fallbackTabs { return false }
         return selectedTabItem.title == "讨论"
     }
 
     public var body: some View {
         ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 0) {
-                    ForEach(activeTabs) { tabItem in
-                        topicFeedScrollPage(for: tabItem)
-                            .containerRelativeFrame(.horizontal)
-                            .frame(maxHeight: .infinity)
-                            .id(tabItem.id)
+            Group {
+                if !didResolveTopicMetadata && activeTabs.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 0) {
+                            ForEach(activeTabs) { tabItem in
+                                topicFeedScrollPage(for: tabItem)
+                                    .containerRelativeFrame(.horizontal)
+                                    .frame(maxHeight: .infinity)
+                                    .id(tabItem.id)
+                            }
+                        }
+                        .scrollTargetLayout()
                     }
+                    .scrollTargetBehavior(.paging)
+                    .scrollPosition(id: $scrolledTabID)
                 }
-                .scrollTargetLayout()
             }
-            .scrollTargetBehavior(.paging)
-            .scrollPosition(id: $scrolledTabID)
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .safeAreaBar(edge: .top, spacing: 0) {
-                FloatingTabStrip(
-                    items: activeTabs,
-                    selection: selectedTabItem,
-                    titleProvider: \.title,
-                    onSelect: { option in
-                        activeTabID = option.id
-                    },
-                    onReselect: { option in
-                        withAnimation(.snappy) {
-                            proxy.scrollTo("topic-top-\(option.id)", anchor: .top)
+                if !activeTabs.isEmpty {
+                    FloatingTabStrip(
+                        items: activeTabs,
+                        selection: selectedTabItem,
+                        titleProvider: \.title,
+                        onSelect: { option in
+                            activeTabID = option.id
+                        },
+                        onReselect: { option in
+                            withAnimation(.snappy) {
+                                proxy.scrollTo("topic-top-\(option.id)", anchor: .top)
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
             .navigationTitle(topic?.title.isEmpty == false ? "#\(topic!.title)#" : "#\(tag)#")
             .navigationBarTitleDisplayMode(.inline)
@@ -147,6 +159,7 @@ public struct TopicDetailView: View {
                 hasInitialized = true
                 let loadedTopic = try? await API.topicDetail(tag: tag)
                 topic = loadedTopic
+                didResolveTopicMetadata = true
 
                 let tabs = activeTabs
                 let saved = appState.pageTabSelections["topic-\(tag)"]
@@ -380,6 +393,7 @@ public struct ProductDetailView: View {
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
     @State private var hasInitialized = false
+    @State private var didResolveProductTabs = false
     @State private var productVariants: [ProductConfigVariant] = []
     @State private var productSpecs: [ProductSpecEntry] = []
     @State private var variantSpecSectionsByID: [String: [ProductSpecSection]] = [:]
@@ -405,6 +419,7 @@ public struct ProductDetailView: View {
     }
 
     private var activeChips: [ChoiceChip] {
+        guard didResolveProductTabs else { return [] }
         var base: [ChoiceChip] = !apiTabs.isEmpty
             ? apiTabs.map { ChoiceChip(id: $0.url, title: $0.title) }
             : fallbackTabs
@@ -415,41 +430,52 @@ public struct ProductDetailView: View {
     }
 
     private var selectedChip: ChoiceChip {
-        activeChips.first { $0.id == activeTabID } ?? activeChips[0]
+        activeChips.first { $0.id == activeTabID }
+            ?? activeChips.first
+            ?? fallbackTabs[0]
     }
 
     public var body: some View {
         ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 0) {
-                    ForEach(activeChips) { chip in
-                        productFeedPage(for: chip)
-                            .containerRelativeFrame(.horizontal)
-                            .frame(maxHeight: .infinity)
-                            .id(chip.id)
+            Group {
+                if !didResolveProductTabs && activeChips.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 0) {
+                            ForEach(activeChips) { chip in
+                                productFeedPage(for: chip)
+                                    .containerRelativeFrame(.horizontal)
+                                    .frame(maxHeight: .infinity)
+                                    .id(chip.id)
+                            }
+                        }
+                        .scrollTargetLayout()
                     }
+                    .scrollTargetBehavior(.paging)
+                    .scrollPosition(id: $scrolledTabID)
                 }
-                .scrollTargetLayout()
             }
-            .scrollTargetBehavior(.paging)
-            .scrollPosition(id: $scrolledTabID)
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .safeAreaBar(edge: .top, spacing: 0) {
-                FloatingTabStrip(
-                    items: activeChips,
-                    selection: selectedChip,
-                    titleProvider: \.title,
-                    onSelect: { chip in
-                        activeTabID = chip.id
-                    },
-                    onReselect: { chip in
-                        withAnimation(.snappy) {
-                            proxy.scrollTo("product-top-\(chip.id)", anchor: .top)
+                if !activeChips.isEmpty {
+                    FloatingTabStrip(
+                        items: activeChips,
+                        selection: selectedChip,
+                        titleProvider: \.title,
+                        onSelect: { chip in
+                            activeTabID = chip.id
+                        },
+                        onReselect: { chip in
+                            withAnimation(.snappy) {
+                                proxy.scrollTo("product-top-\(chip.id)", anchor: .top)
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
             .navigationTitle(product?.title ?? "数码产品")
             .navigationBarTitleDisplayMode(.inline)
@@ -764,6 +790,7 @@ public struct ProductDetailView: View {
         let detail = try? await API.productDetail(id: productID)
         product = detail
         isLoadingHeader = false
+        didResolveProductTabs = true
         if let detail {
             if !detail.configVariants.isEmpty {
                 productVariants = detail.configVariants

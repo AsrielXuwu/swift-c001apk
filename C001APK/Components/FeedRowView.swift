@@ -494,11 +494,13 @@ public struct FeedRelationEntitiesView: View {
     }
 
     public var body: some View {
+        let iconSize: CGFloat = style == .detail ? 20 : 18
+        let chipHeight: CGFloat = style == .detail ? 30 : 28
         WrappingChipsLayout(spacing: 6, lineSpacing: 6) {
             ForEach(entities) { entity in
                 Button {
                     if !entity.url.isEmpty {
-                        appState.openRawLink(entity.url)
+                        appState.openRawLink(entity.url, title: entity.title)
                     } else {
                         appState.push(.topic(tag: entity.title))
                     }
@@ -506,20 +508,21 @@ public struct FeedRelationEntitiesView: View {
                     HStack(spacing: 5) {
                         if !entity.pic.isEmpty {
                             RemoteImageView(url: entity.pic, maxPixelSize: 64)
-                                .frame(width: style == .detail ? 20 : 18, height: style == .detail ? 20 : 18)
+                                .frame(width: iconSize, height: iconSize)
                                 .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
                         } else {
                             Image(systemName: iconName(for: entity))
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(Color.accentColor)
+                                .frame(width: iconSize, height: iconSize)
                         }
                         Text(entity.title)
-                            .font(style == .detail ? .caption.weight(.medium) : .caption.weight(.medium))
+                            .font(.caption.weight(.medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                     }
                     .padding(.horizontal, 9)
-                    .padding(.vertical, style == .detail ? 6 : 5)
+                    .frame(height: chipHeight)
                     .background(
                         Color(style == .detail ? .tertiarySystemGroupedBackground : .secondarySystemBackground),
                         in: Capsule()

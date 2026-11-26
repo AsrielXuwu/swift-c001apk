@@ -59,9 +59,10 @@ public struct MediaViewerView: View {
                             let effectiveDisableHDR = sessionDisableHDR ?? appState.settings.disableHDR
                             MediaPageItemView(
                                 item: item,
+                                pageIndex: index,
+                                activeIndex: $currentIndex,
                                 containerSize: containerSize,
                                 disableHDR: effectiveDisableHDR,
-                                isCurrentPage: index == currentIndex,
                                 autoPlayLivePhoto: appState.settings.livePhotoAutoPlay,
                                 isLoopingLivePhoto: loopLivePhoto && index == currentIndex,
                                 replayTrigger: index == currentIndex ? replayLiveToken : 0,
@@ -318,9 +319,10 @@ public struct MediaViewerView: View {
 
 private struct MediaPageItemView: View {
     let item: FeedMedia
+    let pageIndex: Int
+    @Binding var activeIndex: Int
     let containerSize: CGSize
     let disableHDR: Bool
-    let isCurrentPage: Bool
     let autoPlayLivePhoto: Bool
     let isLoopingLivePhoto: Bool
     let replayTrigger: Int
@@ -337,6 +339,10 @@ private struct MediaPageItemView: View {
     @State private var delayedPlayTask: Task<Void, Never>?
     @State private var gifData: Data?
     @State private var didFail = false
+
+    private var isCurrentPage: Bool {
+        activeIndex == pageIndex
+    }
 
     var body: some View {
         ZStack {
@@ -389,13 +395,19 @@ private struct MediaPageItemView: View {
             }
         }
         .ignoresSafeArea(.all)
-        .onChange(of: isCurrentPage) { _, nowCurrent in
-            if !nowCurrent {
+        .onChange(of: activeIndex) { _, newActive in
+            if newActive != pageIndex {
                 delayedPlayTask?.cancel()
                 showLiveVideo = false
                 videoReadyForDisplay = false
                 onLivePlayingChanged(false)
             } else if liveVideoURL != nil && (autoPlayLivePhoto || isLoopingLivePhoto) && !showLiveVideo {
+                let hasHDR = !disableHDR && ((loadedResult?.hasHDRGainMap ?? false) || item.isHdr)
+                scheduleLivePlayback(delaySeconds: isLoopingLivePhoto ? 0 : (hasHDR ? 1.0 : 0.35))
+            }
+        }
+        .onChange(of: liveVideoURL) { _, newURL in
+            if newURL != nil, isCurrentPage, (autoPlayLivePhoto || isLoopingLivePhoto), !showLiveVideo {
                 let hasHDR = !disableHDR && ((loadedResult?.hasHDRGainMap ?? false) || item.isHdr)
                 scheduleLivePlayback(delaySeconds: isLoopingLivePhoto ? 0 : (hasHDR ? 1.0 : 0.35))
             }
@@ -560,7 +572,7 @@ private struct MediaPageItemView: View {
         liveVideoURL = vidFile
         onMediaCapabilitiesDetected(hasHDR, true)
 
-        if isCurrentPage && (autoPlayLivePhoto || isLoopingLivePhoto) {
+        if activeIndex == pageIndex && (autoPlayLivePhoto || isLoopingLivePhoto) && !showLiveVideo {
             let activeHDR = hasHDR && !disableHDR
             scheduleLivePlayback(delaySeconds: isLoopingLivePhoto ? 0 : (activeHDR ? 1.0 : 0.35))
         }
@@ -572,7 +584,7 @@ private struct MediaPageItemView: View {
             if delaySeconds > 0 {
                 try? await Task.sleep(nanoseconds: UInt64(delaySeconds * 1_000_000_000))
             }
-            guard !Task.isCancelled, isCurrentPage, liveVideoURL != nil else { return }
+            guard !Task.isCancelled, activeIndex == pageIndex, liveVideoURL != nil else { return }
             videoReadyForDisplay = false
             showLiveVideo = true
             livePlayTrigger += 1

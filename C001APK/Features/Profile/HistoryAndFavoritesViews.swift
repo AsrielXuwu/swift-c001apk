@@ -531,7 +531,7 @@ public struct LocalFollowListView: View {
                         }
 
                         if !appState.localFollow.users.isEmpty {
-                            Text(appState.accounts.isLoggedIn ? "悄悄关注" : "本机关注")
+                            Text("本机关注（\(appState.localFollow.users.count)）")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 16)
@@ -561,7 +561,9 @@ public struct LocalFollowListView: View {
                         }
 
                         if appState.settings.enableCloudFollowLoad && appState.accounts.isLoggedIn {
-                            Text("云端关注")
+                            let localUIDs = Set(appState.localFollow.users.map(\.uid))
+                            let uniqueCloudUsers = cloudUsers.filter { !localUIDs.contains($0.id) }
+                            Text("云端关注（\(uniqueCloudUsers.count)）")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 16)
@@ -571,13 +573,13 @@ public struct LocalFollowListView: View {
                                 ProgressView()
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 20)
-                            } else if cloudUsers.isEmpty {
-                                Text("暂无云端关注用户")
+                            } else if uniqueCloudUsers.isEmpty {
+                                Text("暂无更多云端关注用户")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                     .padding(.horizontal, 16)
                             } else {
-                                ForEach(Array(cloudUsers.enumerated()), id: \.element.id) { idx, user in
+                                ForEach(Array(uniqueCloudUsers.enumerated()), id: \.element.id) { idx, user in
                                     UserRowView(user: user)
                                         .overlay(alignment: .topTrailing) {
                                             SourceOriginBadge(isCloud: true)
@@ -585,7 +587,7 @@ public struct LocalFollowListView: View {
                                                 .padding(.trailing, 34)
                                         }
                                         .onAppear {
-                                            if idx >= cloudUsers.count - 4 {
+                                            if idx >= uniqueCloudUsers.count - 4 {
                                                 Task { await loadMoreCloud() }
                                             }
                                         }
@@ -603,7 +605,7 @@ public struct LocalFollowListView: View {
             }
         }
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .navigationTitle(appState.accounts.isLoggedIn ? "管理悄悄关注" : "管理本机关注")
+        .navigationTitle("关注列表")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: "\(appState.sessionVersion)|\(appState.settings.enableCloudFollowLoad)") {
             await syncCloudFollows()

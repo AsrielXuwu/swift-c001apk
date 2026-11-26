@@ -230,5 +230,18 @@ final class ModelTests: XCTestCase {
         let feed = FeedItem(json: try JSON(data: multiTagFeedJSON))
         XCTAssertEqual(feed.relationEntities.map(\.title), ["小米15", "薅羊毛小分队", "好物推荐", "摄影打卡"])
         XCTAssertEqual(feed.relationEntities.last?.url, "/t/摄影打卡")
+
+        XCTAssertEqual(
+            FeedLink.inferredPageTitle(from: "/page?url=%2Ffeed%2FrankList%3Ftype%3Dweek&title=%E5%91%A8%E6%A6%9C"),
+            "周榜"
+        )
+        XCTAssertEqual(
+            FeedLink.resolve("coolmarket:///#/ranking/weekList?title=热榜"),
+            .page("#/ranking/weekList?title=热榜")
+        )
+        XCTAssertEqual(
+            FeedLink.resolve("/feed/rankList?type=month"),
+            .page("/feed/rankList?type=month")
+        )
     }
 }

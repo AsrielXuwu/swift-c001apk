@@ -149,15 +149,15 @@ public final class AppState {
         }
     }
 
-    public func openRawLink(_ raw: String, transitionID: String? = nil) {
+    public func openRawLink(_ raw: String, title: String? = nil, transitionID: String? = nil) {
         if raw.hasPrefix("coolapk-internal://route?target="),
            let comp = URLComponents(string: raw),
            let target = comp.queryItems?.first(where: { $0.name == "target" })?.value {
-            openRawLink(target, transitionID: transitionID)
+            openRawLink(target, title: title, transitionID: transitionID)
             return
         }
         guard let resolved = FeedLink.resolve(raw) else { return }
-        let route = AppRoute.from(feedLink: resolved, transitionID: transitionID)
+        let route = AppRoute.from(feedLink: resolved, preferredTitle: title, transitionID: transitionID)
         if case let .web(url) = route, settings.openInBrowser {
             UIApplication.shared.open(url)
             return

@@ -122,11 +122,11 @@ public struct FollowView: View {
         let segLoadingMore = viewModel.loadingMoreSegments.contains(seg)
         let segError = viewModel.errorBySegment[seg]
 
-        if !appState.accounts.isLoggedIn && (seg == .users || seg == .topics) {
+        if !appState.accounts.isLoggedIn && seg == .topics {
             ContentUnavailableView {
                 Label("需要登录酷安账号", systemImage: "person.crop.circle.badge.exclamationmark")
             } description: {
-                Text("游客模式可切换到“全部”或“本机关注”浏览已保存的本地关注动态。")
+                Text("游客模式可切换到“全部”“关注用户”或“本机关注”浏览本地关注动态。")
             } actions: {
                 Button("立即登录") { appState.showLoginSheet = true }
                     .buttonStyle(.borderedProminent)

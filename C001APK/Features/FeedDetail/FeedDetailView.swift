@@ -84,9 +84,8 @@ public struct FeedDetailView: View {
         .toolbar {
             if let feed = viewModel.feed {
                 if compactNavProgress > 0.08 {
-                    let isFollowed = appState.accounts.isLoggedIn
-                        ? feed.isAuthorFollowed
-                        : appState.localFollow.contains(uid: feed.uid)
+                    let isFollowed = (appState.accounts.isLoggedIn && appState.settings.enableCloudFollowLoad && feed.isAuthorFollowed)
+                        || appState.localFollow.contains(uid: feed.uid)
                     let primaryStatus = feed.authorLoginTime.map { "活跃 · \(Formatting.relativeTime($0))" }
                         ?? Formatting.relativeTime(feed.dateline, fallback: feed.datelineText)
                     let secondaryDevice = !feed.deviceTitle.isEmpty
@@ -226,15 +225,14 @@ public struct FeedDetailView: View {
                                 .font(.system(size: 20 * appState.settings.fontScale, weight: .bold))
                         }
 
-                        let shouldDeferTruncatedArticleBody = viewModel.isRefreshingDetail
-                            && feed.kind == .feedArticle
-                            && feed.articleParts.isEmpty
+                        let shouldDeferIncompleteBody = feed.articleParts.isEmpty
+                            && (feed.needsDetailRefresh || (viewModel.isRefreshingDetail && feed.kind == .feedArticle))
 
                         Group {
                             if !feed.articleParts.isEmpty {
                                 articleContent(feed)
                                     .transition(.opacity)
-                            } else if shouldDeferTruncatedArticleBody {
+                            } else if shouldDeferIncompleteBody {
                                 ProgressView("正在加载完整内容…")
                                     .frame(maxWidth: .infinity)
                                     .padding(.vertical, 24)
@@ -251,12 +249,16 @@ public struct FeedDetailView: View {
                                         }
                                     }
                                     if !feed.mediaItems.isEmpty {
-                                        MediaGridView(items: feed.mediaItems)
+                                        if feed.kind == .feedArticle {
+                                            expandedArticleImages(feed)
+                                        } else {
+                                            MediaGridView(items: feed.mediaItems)
+                                        }
                                     }
                                 }
                             }
                         }
-                        .animation(feed.kind == .feedArticle ? .easeOut(duration: 0.22) : nil, value: !feed.articleParts.isEmpty)
+                        .animation((feed.kind == .feedArticle || !feed.articleParts.isEmpty) ? .easeOut(duration: 0.22) : nil, value: !feed.articleParts.isEmpty)
 
                     if let vote = feed.vote {
                         voteSection(vote)
@@ -378,6 +380,33 @@ public struct FeedDetailView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
+        }
+    }
+
+    @ViewBuilder
+    private func expandedArticleImages(_ feed: FeedItem) -> some View {
+        ForEach(Array(feed.mediaItems.enumerated()), id: \.offset) { idx, media in
+            let itemPrefix = "article-media-\(detailSeed)"
+            RemoteImageView(url: media.sourceUrl, maxPixelSize: 1400, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .applyZoomSource(id: "\(itemPrefix)-\(idx)", in: zoomNamespace)
+                .onTapGesture {
+                    appState.openMedia(feed.mediaItems, at: idx, sourcePrefix: itemPrefix)
+                }
+                .contextMenu {
+                    MediaActionsContextMenu(
+                        item: media,
+                        onViewFull: {
+                            appState.openMedia(feed.mediaItems, at: idx, sourcePrefix: itemPrefix)
+                        },
+                        onShareFile: { articleShareImageURL = $0 }
+                    )
+                } preview: {
+                    MediaContextMenuPreview(item: media, disableHDR: appState.settings.disableHDR)
+                }
         }
     }
 
