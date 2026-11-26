@@ -71,12 +71,14 @@ public struct TopicDetailView: View {
                     }
                 )
             }
-            .navigationTitle(topic?.title.isEmpty == false ? "#\(topic!.title)#" : "#\(tag)#")
+            .navigationTitle(compactNavProgress > 0.08 ? "" : (topic?.title.isEmpty == false ? "#\(topic!.title)#" : "#\(tag)#"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let topic, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: topic.logo,
+                        title: topic.title.isEmpty ? "#\(tag)#" : "#\(topic.title)#",
+                        subtitle: "\(Formatting.count(topic.feedNum)) 讨论 · \(Formatting.count(topic.followNum)) 关注",
                         isFollowed: topic.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
@@ -343,12 +345,14 @@ public struct ProductDetailView: View {
                     }
                 )
             }
-            .navigationTitle(product?.title ?? "数码产品")
+            .navigationTitle(compactNavProgress > 0.08 ? "" : (product?.title ?? "数码产品"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let product, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: product.logo,
+                        title: product.title,
+                        subtitle: [product.priceText, "\(Formatting.count(product.followNum)) 关注"].filter { !$0.isEmpty }.joined(separator: " · "),
                         isFollowed: product.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
@@ -947,12 +951,14 @@ public struct DyhDetailView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .navigationTitle(dyh?.title ?? "看看号")
+            .navigationTitle(compactNavProgress > 0.08 ? "" : (dyh?.title ?? "看看号"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let dyh, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: dyh.logo,
+                        title: dyh.title,
+                        subtitle: "\(Formatting.count(dyh.followNum)) 订阅",
                         isFollowed: dyh.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
@@ -1100,12 +1106,14 @@ public struct CollectionDetailView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .navigationTitle(collection?.title ?? "收藏夹")
+            .navigationTitle(compactNavProgress > 0.08 ? "" : (collection?.title ?? "收藏夹"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let collection, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: collection.logo,
+                        title: collection.title,
+                        subtitle: "\(collection.itemNum) 项 · \(Formatting.count(collection.followNum)) 关注",
                         isFollowed: collection.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,

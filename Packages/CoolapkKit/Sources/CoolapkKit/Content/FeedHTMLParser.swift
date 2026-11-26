@@ -65,8 +65,11 @@ public enum FeedLink: Hashable, Sendable {
         if let vid = extractSegment(from: normalized, prefix: "/vote/") {
             return .vote(vid)
         }
-        if let url = URL(string: trimmed), url.scheme == "http" || url.scheme == "https" {
-            return .web(url)
+        if let url = URL(string: trimmed) {
+            let scheme = (url.scheme ?? "").lowercased()
+            if ["http", "https", "fleamarket", "tbopen", "taobao", "alipays"].contains(scheme) {
+                return .web(url)
+            }
         }
         return nil
     }

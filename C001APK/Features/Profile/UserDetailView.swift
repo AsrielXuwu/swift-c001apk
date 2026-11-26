@@ -74,14 +74,24 @@ public struct UserDetailView: View {
                     }
                 )
             }
-            .navigationTitle(profile?.username ?? initialUsername ?? "")
+            .navigationTitle(compactNavProgress > 0.08 ? "" : (profile?.username ?? initialUsername ?? ""))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if compactNavProgress > 0.08, (profile != nil || initialAvatar != nil) {
+                    let loginText = profile?.loginTime.map { Formatting.relativeTime($0) } ?? ""
+                    let fallbackDevice = rows.lazy.compactMap { row -> String? in
+                        if case let .feed(item) = row, !item.deviceTitle.isEmpty { return item.deviceTitle }
+                        return nil
+                    }.first ?? ""
+                    let deviceText = (profile?.deviceTitle.isEmpty == false ? profile?.deviceTitle : nil) ?? fallbackDevice
+                    let subtitle = [loginText, deviceText].filter { !$0.isEmpty }.joined(separator: " · ")
+
                     CollapsedNavEntityToolbar(
                         avatarURL: profile?.avatar ?? initialAvatar ?? "",
+                        title: profile?.username ?? initialUsername ?? "",
+                        subtitle: subtitle,
                         isFollowed: profile.map(isFollowingUser) ?? appState.localFollow.contains(uid: uid),
-                        showFollowButton: profile != nil && uid != appState.accounts.activeUID,
+                        showFollowButton: uid != appState.accounts.activeUID,
                         isDisabled: isTogglingFollow,
                         onTapAvatar: {
                             withAnimation(.snappy) {

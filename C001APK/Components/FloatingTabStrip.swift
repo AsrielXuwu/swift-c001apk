@@ -69,9 +69,11 @@ public struct FloatingTabStrip<Item: Identifiable & Hashable>: View where Item.I
     }
 }
 
-/// Compact circular avatar + tight follow button for collapsed navigation toolbars.
+/// Unified collapsed navigation bar pill: left avatar, two-line title + status/device subtitle, right follow `+` button.
 public struct CollapsedNavEntityToolbar: ToolbarContent {
     public let avatarURL: String
+    public let title: String
+    public let subtitle: String
     public let isFollowed: Bool
     public let showFollowButton: Bool
     public let isDisabled: Bool
@@ -80,6 +82,8 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
 
     public init(
         avatarURL: String,
+        title: String = "",
+        subtitle: String = "",
         isFollowed: Bool,
         showFollowButton: Bool,
         isDisabled: Bool = false,
@@ -87,6 +91,8 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
         onTapFollow: @escaping () -> Void
     ) {
         self.avatarURL = avatarURL
+        self.title = title
+        self.subtitle = subtitle
         self.isFollowed = isFollowed
         self.showFollowButton = showFollowButton
         self.isDisabled = isDisabled
@@ -95,21 +101,53 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
     }
 
     public var body: some ToolbarContent {
-        ToolbarItemGroup(placement: .topBarLeading) {
-            Button(action: onTapAvatar) {
-                AvatarView(url: avatarURL, size: 28)
-            }
-            .accessibilityLabel("回到顶部")
+        ToolbarItem(placement: .principal) {
+            HStack(spacing: 8) {
+                Button(action: onTapAvatar) {
+                    HStack(spacing: 8) {
+                        AvatarView(url: avatarURL, size: 28)
 
-            if showFollowButton {
-                Button(action: onTapFollow) {
-                    Image(systemName: isFollowed ? "checkmark" : "plus")
-                        .font(.body.weight(.semibold))
-                        .foregroundStyle(isFollowed ? Color.primary : Color.accentColor)
+                        VStack(alignment: .leading, spacing: 1) {
+                            if !title.isEmpty {
+                                Text(title)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                            }
+                            if !subtitle.isEmpty {
+                                Text(subtitle)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    .contentShape(Rectangle())
                 }
-                .disabled(isDisabled)
-                .accessibilityLabel(isFollowed ? "取消关注" : "关注")
+                .buttonStyle(.plain)
+                .accessibilityLabel("回到顶部")
+
+                if showFollowButton {
+                    Button(action: onTapFollow) {
+                        Image(systemName: isFollowed ? "checkmark" : "plus")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(isFollowed ? Color.secondary : Color.accentColor)
+                            .frame(width: 24, height: 24)
+                            .background(
+                                (isFollowed ? Color.secondary.opacity(0.14) : Color.accentColor.opacity(0.18)),
+                                in: Circle()
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(isDisabled)
+                    .accessibilityLabel(isFollowed ? "取消关注" : "关注")
+                }
             }
+            .padding(.leading, 4)
+            .padding(.trailing, showFollowButton ? 5 : 10)
+            .padding(.vertical, 3)
+            .frame(maxWidth: 240, alignment: .leading)
+            .glassEffect(.regular.interactive(), in: .capsule)
         }
     }
 }

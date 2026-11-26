@@ -97,6 +97,15 @@ public struct ProfileTabView: View {
                 NavigationLink(value: AppRoute.localFollowList) {
                     Label(appState.accounts.isLoggedIn ? "悄悄关注" : "本机关注", systemImage: "person.badge.shield.checkmark")
                 }
+                NavigationLink(value: AppRoute.myRecentVisits) {
+                    Label("我的常去", systemImage: "location")
+                }
+                NavigationLink(value: AppRoute.myLikes) {
+                    Label("我的赞", systemImage: "hand.thumbsup")
+                }
+                NavigationLink(value: AppRoute.myReplies) {
+                    Label("我的回复", systemImage: "bubble.left.and.bubble.right")
+                }
             }
 
             Section("发现") {

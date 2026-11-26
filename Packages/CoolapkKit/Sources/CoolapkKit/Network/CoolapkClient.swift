@@ -781,6 +781,69 @@ public actor CoolapkClient {
         formatter.dateFormat = "EEE, dd MMM yyyy HH:mm:ss 'GMT'"
         return formatter.string(from: date)
     }
+
+    public func resolveRedirectLocation(
+        path: String,
+        query: [String: String],
+        base: String = CoolapkClient.apiBase
+    ) async -> String? {
+        let fullString = path.hasPrefix("http") ? path : base + path
+        var components = URLComponents(string: fullString)
+        if !query.isEmpty {
+            var items = components?.queryItems ?? []
+            for (key, value) in query where !value.isEmpty {
+                items.append(URLQueryItem(name: key, value: value))
+            }
+            components?.queryItems = items
+        }
+        guard let url = components?.url else { return nil }
+
+        let appToken = await currentAppToken()
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
+        request.setValue(CoolapkToken.packageName, forHTTPHeaderField: "X-App-Id")
+        request.setValue(params.appVersion, forHTTPHeaderField: "X-App-Version")
+        request.setValue(params.appCode, forHTTPHeaderField: "X-App-Code")
+        request.setValue(params.appCode, forHTTPHeaderField: "X-App-Supported")
+        request.setValue(params.apiVersion, forHTTPHeaderField: "X-Api-Version")
+        request.setValue(appToken, forHTTPHeaderField: "X-App-Token")
+        request.setValue(params.deviceCode, forHTTPHeaderField: "X-App-Device")
+        request.setValue(params.sdkInt, forHTTPHeaderField: "X-Sdk-Int")
+        request.setValue("zh-CN", forHTTPHeaderField: "X-Sdk-Locale")
+        request.setValue("universal", forHTTPHeaderField: "X-App-Mode")
+        request.setValue("coolapk", forHTTPHeaderField: "X-App-Channel")
+        if !params.szlmID.isEmpty {
+            request.setValue(params.szlmID, forHTTPHeaderField: "X-App-Szlm-Id")
+        }
+        request.setValue(params.userAgent, forHTTPHeaderField: "User-Agent")
+        let cookieHeader = buildCookieHeader(for: url)
+        if !cookieHeader.isEmpty {
+            request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")
+        }
+
+        let noRedirectConfig = URLSessionConfiguration.ephemeral
+        noRedirectConfig.timeoutIntervalForRequest = 12
+        let noRedirectSession = URLSession(configuration: noRedirectConfig, delegate: NoRedirectDelegate(), delegateQueue: nil)
+        defer { noRedirectSession.invalidateAndCancel() }
+
+        guard let (data, response) = try? await noRedirectSession.data(for: request),
+              let http = response as? HTTPURLResponse else {
+            return nil
+        }
+        if (300...399).contains(http.statusCode),
+           let location = http.value(forHTTPHeaderField: "Location"),
+           location.hasPrefix("http://") || location.hasPrefix("https://") {
+            return coolapkNormalizedURL(location)
+        }
+        if let json = try? JSON(data: data) {
+            let direct = json.data.string
+            if direct.hasPrefix("http://") || direct.hasPrefix("https://") {
+                return coolapkNormalizedURL(direct)
+            }
+        }
+        return nil
+    }
 }
 
 private final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, Sendable {

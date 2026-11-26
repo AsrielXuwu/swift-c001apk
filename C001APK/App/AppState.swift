@@ -61,7 +61,8 @@ public final class AppState {
             isInitialBootstrap: true
         )
         isSessionBootstrapped = true
-        if settings.autoAcquireSzlmOnLaunch,
+        if settings.onboardingCompleted,
+           settings.autoAcquireSzlmOnLaunch,
            settings.protocolParameters.szlmID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Task { [weak self] in
                 guard let self else { return }

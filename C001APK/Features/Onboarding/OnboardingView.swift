@@ -44,20 +44,30 @@ public struct OnboardingView: View {
                         Task { await acquireIdentity() }
                     } label: {
                         HStack {
-                            Text("可选：主动获取数盟设备标识")
+                            Text("随机机型参数并获取数盟设备标识")
                             Spacer()
                             if isAcquiringID { ProgressView() }
                         }
                     }
                     .disabled(isAcquiringID)
 
-                    if let szlmStatus {
+                    let params = appState.settings.protocolParameters
+                    Text("当前机型：\(params.deviceBrand) \(params.deviceModel) · SDK \(params.sdkInt)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    if !params.szlmID.isEmpty {
+                        Text("已保存设备标识：\(params.szlmID)")
+                            .font(.caption.monospaced())
+                            .foregroundStyle(Color.accentColor)
+                            .lineLimit(2)
+                    } else if let szlmStatus {
                         Text(szlmStatus)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 } footer: {
-                    Text("仅在你主动点击时联系数盟服务以减少人机验证；不会在后台或启动时自动取号。")
+                    Text("点击后会自动随机生成并保存一套机型协议参数，然后向数盟服务获取设备标识以减少风控与人机验证；内置默认机型参数仍会保留，可随时在「设置 → 客户端协议参数」重置恢复。")
                 }
             }
             .navigationTitle("初始设置")
@@ -81,10 +91,13 @@ public struct OnboardingView: View {
         isAcquiringID = true
         defer { isAcquiringID = false }
         do {
-            _ = try await appState.settings.acquireSzlmID()
-            szlmStatus = "已获取并应用数盟设备标识"
+            let id = try await appState.settings.acquireSzlmID(
+                forceBypassCooldown: true,
+                randomizeDeviceFirst: true
+            )
+            szlmStatus = "已保存设备标识：\(id)"
         } catch {
-            szlmStatus = error.localizedDescription
+            szlmStatus = "获取失败：\(error.localizedDescription)"
         }
     }
 }

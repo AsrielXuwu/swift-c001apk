@@ -36,6 +36,9 @@ public struct FeedRowView: View {
             if let source = feed.sourceFeed {
                 forwardedQuoteCard(source)
             }
+            if feed.isSecondHand || !feed.extraURL.isEmpty {
+                SecondHandOrExtraCard(feed: feed)
+            }
             if !feed.targetTitle.isEmpty {
                 targetEntityStrip
             }
@@ -64,7 +67,12 @@ public struct FeedRowView: View {
         if let onSelectFeed {
             onSelectFeed()
         } else {
-            appState.push(.feed(id: feed.id, initial: feed, transitionID: "feed-\(transitionSeed)"))
+            let targetID = feed.effectiveFeedID
+            appState.push(.feed(
+                id: targetID,
+                initial: targetID == feed.id ? feed : nil,
+                transitionID: "feed-\(transitionSeed)"
+            ))
         }
     }
 
@@ -370,6 +378,132 @@ public struct FeedRowView: View {
             isLiked = prevLiked
             likeCount = prevCount
             _ = await appState.handleAPIError(error)
+        }
+    }
+}
+
+public struct SecondHandOrExtraCard: View {
+    public let feed: FeedItem
+
+    @Environment(AppState.self) private var appState
+
+    public init(feed: FeedItem) {
+        self.feed = feed
+    }
+
+    public var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if feed.isSecondHand {
+                HStack(spacing: 8) {
+                    Text("二手交易")
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(Color.orange.opacity(0.16), in: Capsule())
+                        .foregroundStyle(Color.orange)
+
+                    if !feed.priceText.isEmpty {
+                        Text(feed.priceText)
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(Color.orange)
+                    }
+
+                    if !feed.originalPriceText.isEmpty {
+                        Text(feed.originalPriceText)
+                            .font(.caption)
+                            .strikethrough()
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 4)
+
+                    if !feed.cityText.isEmpty {
+                        Label(feed.cityText, systemImage: "mappin.and.ellipse")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    } else if !feed.dealStatusText.isEmpty {
+                        Text(feed.dealStatusText)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            }
+
+            let actionURL = !feed.xianyuURL.isEmpty ? feed.xianyuURL : feed.extraURL
+            if !actionURL.isEmpty {
+                let isXianyu = FeedItem.isXianyuOrTradeURL(actionURL)
+                Button {
+                    openLink(actionURL, preferSystemApp: isXianyu)
+                } label: {
+                    HStack(spacing: 10) {
+                        if !feed.extraPic.isEmpty {
+                            RemoteImageView(url: feed.extraPic, maxPixelSize: 120)
+                                .frame(width: 40, height: 40)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        } else {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill((isXianyu ? Color.yellow : Color.accentColor).opacity(0.18))
+                                .frame(width: 40, height: 40)
+                                .overlay {
+                                    Image(systemName: isXianyu ? "bag.fill" : "link")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(isXianyu ? Color.orange : Color.accentColor)
+                                }
+                        }
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(
+                                !feed.extraTitle.isEmpty
+                                    ? feed.extraTitle
+                                    : (isXianyu ? "前往闲鱼查看宝贝详情" : actionURL)
+                            )
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+
+                            Text(isXianyu ? "点击跳转闲鱼 · \(actionURL)" : actionURL)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 4)
+
+                        Text(isXianyu ? "去闲鱼" : "打开")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background((isXianyu ? Color.orange : Color.accentColor).opacity(0.14), in: Capsule())
+                            .foregroundStyle(isXianyu ? Color.orange : Color.accentColor)
+                    }
+                    .padding(10)
+                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(feed.isSecondHand && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty ? 10 : 0)
+        .background(
+            (feed.isSecondHand && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty)
+                ? Color(.secondarySystemBackground)
+                : Color.clear,
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+    }
+
+    private func openLink(_ raw: String, preferSystemApp: Bool) {
+        if preferSystemApp, let url = URL(string: raw) {
+            UIApplication.shared.open(url) { opened in
+                if !opened {
+                    Task { @MainActor in
+                        appState.openRawLink(raw)
+                    }
+                }
+            }
+        } else {
+            appState.openRawLink(raw)
         }
     }
 }

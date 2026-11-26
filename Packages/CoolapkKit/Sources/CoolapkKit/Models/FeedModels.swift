@@ -32,13 +32,27 @@ public struct FeedMedia: Hashable, Identifiable, Sendable, Codable {
         contentId: String? = nil,
         contentType: MediaContentType = .feed
     ) {
-        self.sourceUrl = coolapkNormalizedURL(sourceUrl)
-        self.previewUrl = previewUrl.map(coolapkNormalizedURL)
-        self.videoUrl = videoUrl.map(coolapkNormalizedURL)
-        self.isLivePhoto = isLivePhoto || (videoUrl?.isEmpty == false)
-        self.isHdr = isHdr
+        let normalizedSource = coolapkNormalizedURL(sourceUrl)
+        let normalizedPreview = previewUrl.map(coolapkNormalizedURL)
+        let normalizedVideo = videoUrl.map(coolapkNormalizedURL)
+        self.sourceUrl = normalizedSource
+        self.previewUrl = normalizedPreview
+        self.videoUrl = normalizedVideo
+        let hintedLive = Self.hasLiveURLHint(normalizedSource) || (normalizedPreview.map(Self.hasLiveURLHint) ?? false)
+        let hintedHDR = Self.hasHDRURLHint(normalizedSource) || (normalizedPreview.map(Self.hasHDRURLHint) ?? false)
+        self.isLivePhoto = isLivePhoto || (normalizedVideo?.isEmpty == false) || hintedLive
+        self.isHdr = isHdr || hintedHDR
         self.contentId = contentId
         self.contentType = contentType
+    }
+
+    public static func hasLiveURLHint(_ url: String) -> Bool {
+        url.range(of: "-livepic", options: .caseInsensitive) != nil
+    }
+
+    public static func hasHDRURLHint(_ url: String) -> Bool {
+        let lower = url.lowercased()
+        return lower.contains("-uhdr") || lower.contains("-xhdr")
     }
 
     public var displayUrl: String { sourceUrl }
@@ -292,10 +306,12 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         case question
         case vote
         case dyh
+        case ershou
         case unknown
     }
 
     public let id: String
+    public var targetFeedID: String
     public var kind: Kind
     public var uid: String
     public var username: String
@@ -307,6 +323,8 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public var ipLocation: String
     public var dateline: Date?
     public var datelineText: String
+    public var authorLoginTime: Date?
+    public var isAuthorFollowed: Bool
     public var likeNum: Int
     public var commentNum: Int
     public var replyNum: Int
@@ -326,6 +344,15 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public var targetURL: String
     public var targetPic: String
     public var targetInfo: String
+    public var extraTitle: String
+    public var extraURL: String
+    public var extraPic: String
+    public var extraInfo: String
+    public var priceText: String
+    public var originalPriceText: String
+    public var cityText: String
+    public var dealStatusText: String
+    public var xianyuURL: String
     public var forwardSourceName: String
     public var replyRows: [ReplyItem]
     public var topReplyRows: [ReplyItem]
@@ -338,8 +365,26 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public var topicIDs: [String]
     public var changeCount: Int
 
+    public var effectiveFeedID: String {
+        targetFeedID.isEmpty ? id : targetFeedID
+    }
+
+    public var isSecondHand: Bool {
+        kind == .ershou
+            || feedType == "ershou"
+            || feedTypeName.contains("二手")
+            || (!xianyuURL.isEmpty && !priceText.isEmpty)
+    }
+
     public static func == (lhs: FeedItem, rhs: FeedItem) -> Bool {
-        lhs.id == rhs.id && lhs.isLiked == rhs.isLiked && lhs.likeNum == rhs.likeNum && lhs.isFavorited == rhs.isFavorited && lhs.favNum == rhs.favNum && lhs.replyNum == rhs.replyNum
+        lhs.id == rhs.id
+            && lhs.isLiked == rhs.isLiked
+            && lhs.likeNum == rhs.likeNum
+            && lhs.isFavorited == rhs.isFavorited
+            && lhs.favNum == rhs.favNum
+            && lhs.replyNum == rhs.replyNum
+            && lhs.isAuthorFollowed == rhs.isAuthorFollowed
+            && lhs.authorLoginTime == rhs.authorLoginTime
     }
 
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -347,9 +392,13 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public init(json: JSON) {
         let resolvedID = json.id.exists ? json.id.identifier : json.entityId.identifier
         id = resolvedID
+        let rawFeedID = [json.fid.identifier, json.feed_id.identifier, json.feedId.identifier].first { !$0.isEmpty } ?? ""
+        targetFeedID = rawFeedID.isEmpty ? resolvedID : rawFeedID
         uid = json.uid.identifier
-        username = json.username.string
-        avatar = coolapkNormalizedURL(json.userAvatar.string.isEmpty ? json.avatar.string : json.userAvatar.string)
+        username = json.username.string.isEmpty ? json.userInfo.username.string : json.username.string
+        avatar = coolapkNormalizedURL(
+            [json.userAvatar.string, json.avatar.string, json.userInfo.userAvatar.string].first { !$0.isEmpty } ?? ""
+        )
         message = json.message.string
         messageTitle = json.message_title.string
         title = json.title.string
@@ -357,6 +406,11 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         ipLocation = json.ip_location.string
         dateline = json.dateline.date ?? json.lastupdate.date
         datelineText = json.dateline_text.string
+        authorLoginTime = json.userInfo.logintime.date ?? json.logintime.date
+        let followAuthorFlag = json.userAction.followAuthor.exists
+            ? json.userAction.followAuthor
+            : (json.userInfo.isFollowed.exists ? json.userInfo.isFollowed : json.userAction.follow)
+        isAuthorFollowed = followAuthorFlag.bool || followAuthorFlag.int > 0
         likeNum = json.likenum.int
         commentNum = json.commentnum.int
         replyNum = json.replynum.int
@@ -389,6 +443,96 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         isLiked = json.userAction.like.int > 0
         isFavorited = json.userAction.favorite.int > 0 || json.userAction.collect.int > 0
 
+        let resolvedExtraTitle = json.extra_title.string
+        let resolvedExtraURL = json.extra_url.string
+        let resolvedExtraPic = coolapkNormalizedURL(json.extra_pic.string)
+        let resolvedExtraInfo = json.extra_info.string
+        extraTitle = resolvedExtraTitle
+        extraURL = resolvedExtraURL
+        extraPic = resolvedExtraPic
+        extraInfo = resolvedExtraInfo
+
+        let ershouObj = json.ershou_info.isObject ? json.ershou_info : (json.ershou_info.parsed.isObject ? json.ershou_info.parsed : json.extraData.parsed)
+        let parsedPriceNum = [
+            json.ershou_price.double,
+            json.price.double,
+            ershouObj.price.double,
+            ershouObj.ershou_price.double
+        ].first { $0 > 0 } ?? 0
+        let rawPriceString = [
+            json.ershou_price.string,
+            json.price.string,
+            json.price_text.string,
+            ershouObj.price.string,
+            ershouObj.price_text.string
+        ].first { !$0.isEmpty } ?? ""
+
+        let isSecondHandPost = parsedType == "ershou"
+            || parsedType.lowercased().contains("second")
+            || json.feedTypeName.string.contains("二手")
+            || parsedPriceNum > 0
+            || !json.ershou_info.isNull
+
+        if parsedPriceNum > 0 {
+            let formatted = parsedPriceNum.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(parsedPriceNum))
+                : String(format: "%.2f", parsedPriceNum)
+            priceText = "¥\(formatted)"
+        } else if !rawPriceString.isEmpty {
+            priceText = rawPriceString.hasPrefix("¥") || rawPriceString.hasPrefix("￥") ? rawPriceString : "¥\(rawPriceString)"
+        } else if isSecondHandPost {
+            priceText = Self.extractInferredPrice(from: [json.message_title.string, resolvedExtraTitle, resolvedExtraInfo, json.message.string].joined(separator: " "))
+        } else {
+            priceText = ""
+        }
+
+        let rawOrigPrice = [
+            json.orig_price.double,
+            json.origin_price.double,
+            json.ershou_origin_price.double,
+            ershouObj.orig_price.double,
+            ershouObj.origin_price.double
+        ].first { $0 > 0 } ?? 0
+        if rawOrigPrice > 0 {
+            let formatted = rawOrigPrice.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(rawOrigPrice))
+                : String(format: "%.2f", rawOrigPrice)
+            originalPriceText = "¥\(formatted)"
+        } else {
+            originalPriceText = [json.orig_price.string, json.origin_price.string].first { !$0.isEmpty } ?? ""
+        }
+
+        cityText = [
+            json.ershou_city.string,
+            ershouObj.city.string,
+            json.city.string,
+            json.long_location.string
+        ].first { !$0.isEmpty } ?? ""
+        dealStatusText = [
+            json.ershou_status_text.string,
+            json.deal_status_text.string,
+            ershouObj.status_text.string,
+            json.extra_info.string
+        ].first { !$0.isEmpty } ?? ""
+
+        let linkCandidates = [
+            json.xianyu_url.string,
+            json.goofish_url.string,
+            json.ershou_url.string,
+            json.trade_url.string,
+            ershouObj.url.string,
+            ershouObj.xianyu_url.string,
+            resolvedExtraURL,
+            json.media_url.string
+        ].filter { !$0.isEmpty }
+        let matchedCandidate = linkCandidates.first { Self.isXianyuOrTradeURL($0) }
+        if let matchedCandidate {
+            xianyuURL = matchedCandidate
+        } else {
+            let plainMsg = FeedHTMLParser.plainText(json.message.string)
+            xianyuURL = Self.extractFirstXianyuURL(in: json.message.string + " " + plainMsg + " " + resolvedExtraInfo) ?? ""
+        }
+
         switch feedType {
         case "feedArticle": kind = .feedArticle
         case "product": kind = .product
@@ -396,8 +540,9 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         case "question": kind = .question
         case "vote": kind = .vote
         case "dyh", "dyhArticle": kind = .dyh
-        case "feed": kind = isArticle ? .feedArticle : .feed
-        default: kind = parsedType.isEmpty ? .feed : .unknown
+        case "ershou": kind = .ershou
+        case "feed": kind = isArticle ? .feedArticle : (isSecondHandPost ? .ershou : .feed)
+        default: kind = isSecondHandPost ? .ershou : (parsedType.isEmpty ? .feed : .unknown)
         }
 
         if json.targetRow.exists, !json.targetRow.isNull {
@@ -459,5 +604,107 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
 
     public var forwardLabel: String {
         sourceFeed != nil ? "转发动态" : ""
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let decodedID = try c.decode(String.self, forKey: .id)
+        id = decodedID
+        targetFeedID = try c.decodeIfPresent(String.self, forKey: .targetFeedID) ?? decodedID
+        kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .feed
+        uid = try c.decodeIfPresent(String.self, forKey: .uid) ?? ""
+        username = try c.decodeIfPresent(String.self, forKey: .username) ?? ""
+        avatar = try c.decodeIfPresent(String.self, forKey: .avatar) ?? ""
+        message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
+        messageTitle = try c.decodeIfPresent(String.self, forKey: .messageTitle) ?? ""
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
+        deviceTitle = try c.decodeIfPresent(String.self, forKey: .deviceTitle) ?? ""
+        ipLocation = try c.decodeIfPresent(String.self, forKey: .ipLocation) ?? ""
+        dateline = try c.decodeIfPresent(Date.self, forKey: .dateline)
+        datelineText = try c.decodeIfPresent(String.self, forKey: .datelineText) ?? ""
+        authorLoginTime = try c.decodeIfPresent(Date.self, forKey: .authorLoginTime)
+        isAuthorFollowed = try c.decodeIfPresent(Bool.self, forKey: .isAuthorFollowed) ?? false
+        likeNum = try c.decodeIfPresent(Int.self, forKey: .likeNum) ?? 0
+        commentNum = try c.decodeIfPresent(Int.self, forKey: .commentNum) ?? 0
+        replyNum = try c.decodeIfPresent(Int.self, forKey: .replyNum) ?? 0
+        forwardNum = try c.decodeIfPresent(Int.self, forKey: .forwardNum) ?? 0
+        favNum = try c.decodeIfPresent(Int.self, forKey: .favNum) ?? 0
+        shareNum = try c.decodeIfPresent(Int.self, forKey: .shareNum) ?? 0
+        pics = try c.decodeIfPresent([String].self, forKey: .pics) ?? []
+        mediaItems = try c.decodeIfPresent([FeedMedia].self, forKey: .mediaItems) ?? []
+        cover = try c.decodeIfPresent(String.self, forKey: .cover) ?? ""
+        isLiked = try c.decodeIfPresent(Bool.self, forKey: .isLiked) ?? false
+        isFavorited = try c.decodeIfPresent(Bool.self, forKey: .isFavorited) ?? false
+        isHeadline = try c.decodeIfPresent(Bool.self, forKey: .isHeadline) ?? false
+        infoText = try c.decodeIfPresent(String.self, forKey: .infoText) ?? ""
+        feedTypeName = try c.decodeIfPresent(String.self, forKey: .feedTypeName) ?? "动态"
+        feedType = try c.decodeIfPresent(String.self, forKey: .feedType) ?? "feed"
+        targetTitle = try c.decodeIfPresent(String.self, forKey: .targetTitle) ?? ""
+        targetURL = try c.decodeIfPresent(String.self, forKey: .targetURL) ?? ""
+        targetPic = try c.decodeIfPresent(String.self, forKey: .targetPic) ?? ""
+        targetInfo = try c.decodeIfPresent(String.self, forKey: .targetInfo) ?? ""
+        extraTitle = try c.decodeIfPresent(String.self, forKey: .extraTitle) ?? ""
+        extraURL = try c.decodeIfPresent(String.self, forKey: .extraURL) ?? ""
+        extraPic = try c.decodeIfPresent(String.self, forKey: .extraPic) ?? ""
+        extraInfo = try c.decodeIfPresent(String.self, forKey: .extraInfo) ?? ""
+        priceText = try c.decodeIfPresent(String.self, forKey: .priceText) ?? ""
+        originalPriceText = try c.decodeIfPresent(String.self, forKey: .originalPriceText) ?? ""
+        cityText = try c.decodeIfPresent(String.self, forKey: .cityText) ?? ""
+        dealStatusText = try c.decodeIfPresent(String.self, forKey: .dealStatusText) ?? ""
+        xianyuURL = try c.decodeIfPresent(String.self, forKey: .xianyuURL) ?? ""
+        forwardSourceName = try c.decodeIfPresent(String.self, forKey: .forwardSourceName) ?? ""
+        replyRows = try c.decodeIfPresent([ReplyItem].self, forKey: .replyRows) ?? []
+        topReplyRows = try c.decodeIfPresent([ReplyItem].self, forKey: .topReplyRows) ?? []
+        sourceFeed = try c.decodeIfPresent(ForwardedContent.self, forKey: .sourceFeed)
+        rankScore = try c.decodeIfPresent(Int.self, forKey: .rankScore) ?? 0
+        articleParts = try c.decodeIfPresent([FeedArticlePart].self, forKey: .articleParts) ?? []
+        vote = try c.decodeIfPresent(VoteInfo.self, forKey: .vote)
+        questionAnswerNum = try c.decodeIfPresent(Int.self, forKey: .questionAnswerNum) ?? 0
+        topicTags = try c.decodeIfPresent([String].self, forKey: .topicTags) ?? []
+        topicIDs = try c.decodeIfPresent([String].self, forKey: .topicIDs) ?? []
+        changeCount = try c.decodeIfPresent(Int.self, forKey: .changeCount) ?? 0
+    }
+
+    public static func isXianyuOrTradeURL(_ raw: String) -> Bool {
+        let lower = raw.lowercased()
+        return lower.contains("goofish.com")
+            || lower.contains("idlefish")
+            || lower.contains("xianyu")
+            || lower.contains("m.tb.cn")
+            || lower.contains("2.taobao.com")
+            || lower.contains("fleamarket://")
+            || lower.contains("tbopen://")
+    }
+
+    private static func extractFirstXianyuURL(in text: String) -> String? {
+        let pattern = #"(?:https?://|fleamarket://|tbopen://)[^\s"'<>]+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return nil }
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        for match in regex.matches(in: text, range: nsRange) {
+            if let range = Range(match.range, in: text) {
+                let candidate = String(text[range]).trimmingCharacters(in: CharacterSet(charactersIn: ".,;)]}>\"'"))
+                if isXianyuOrTradeURL(candidate) {
+                    return candidate
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func extractInferredPrice(from text: String) -> String {
+        let patterns = [
+            #"[¥￥]\s*(\d+(?:\.\d{1,2})?)"#,
+            #"(\d{2,6}(?:\.\d{1,2})?)\s*(?:元|块|r|R)(?:\b|[^\w])"#
+        ]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+            if let match = regex.firstMatch(in: text, range: nsRange),
+               let range = Range(match.range(at: 1), in: text) {
+                let num = String(text[range])
+                if !num.isEmpty { return "¥\(num)" }
+            }
+        }
+        return ""
     }
 }

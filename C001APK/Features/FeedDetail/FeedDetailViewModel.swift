@@ -7,12 +7,14 @@ import Observation
 public final class FeedDetailViewModel {
     public let feedID: String
     public var feed: FeedItem?
+    public var authorProfile: UserProfile?
     public var replies: [ReplyItem] = []
     public var answers: [HomeFeedRow] = []
     public var sortMode: ReplySortMode = .lastUpdateDesc
     public var authorOnly = false
     public var isCoinRepliesExpanded = false
     public var temporarilyRevealedFilter = false
+    public var isTogglingAuthorFollow = false
 
     public private(set) var isLoadingFeed = false
     public private(set) var isRefreshingDetail = false
@@ -72,6 +74,9 @@ public final class FeedDetailViewModel {
                 if loaded.kind == .question {
                     answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
                 }
+                if !loaded.uid.isEmpty && authorProfile == nil {
+                    authorProfile = try? await API.userProfile(uid: loaded.uid)
+                }
             }
             isRefreshingDetail = false
             isLoadingFeed = false
@@ -83,6 +88,9 @@ public final class FeedDetailViewModel {
             appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
             if loaded.kind == .question {
                 answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
+            }
+            if !loaded.uid.isEmpty && authorProfile == nil {
+                authorProfile = try? await API.userProfile(uid: loaded.uid)
             }
         }
         isRefreshingDetail = false
@@ -149,6 +157,36 @@ public final class FeedDetailViewModel {
             if retried && !append {
                 await fetchReplies(page: page, append: false, appState: appState)
             }
+        }
+    }
+
+    public func toggleAuthorFollow(appState: AppState) async {
+        guard let currentFeed = feed, !currentFeed.uid.isEmpty else { return }
+        guard !isTogglingAuthorFollow else { return }
+        if !appState.accounts.isLoggedIn {
+            let currentlyLocal = appState.localFollow.contains(uid: currentFeed.uid)
+            if currentlyLocal {
+                appState.localFollow.unfollow(uid: currentFeed.uid)
+                appState.showToast("已取消本机关注")
+            } else {
+                appState.localFollow.follow(uid: currentFeed.uid, username: currentFeed.username, avatar: currentFeed.avatar)
+                appState.showToast("已加入本机关注")
+            }
+            return
+        }
+        isTogglingAuthorFollow = true
+        defer { isTogglingAuthorFollow = false }
+        let currentlyFollowed = authorProfile?.isFollowed ?? currentFeed.isAuthorFollowed
+        let targetFollow = !currentlyFollowed
+        authorProfile?.isFollowed = targetFollow
+        feed?.isAuthorFollowed = targetFollow
+        do {
+            try await API.followUser(uid: currentFeed.uid, follow: targetFollow)
+            appState.showToast(targetFollow ? "已关注 \(currentFeed.username)" : "已取消关注")
+        } catch {
+            authorProfile?.isFollowed = currentlyFollowed
+            feed?.isAuthorFollowed = currentlyFollowed
+            _ = await appState.handleAPIError(error)
         }
     }
 

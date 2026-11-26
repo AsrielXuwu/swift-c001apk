@@ -57,7 +57,7 @@ public struct FollowView: View {
                     }
                 }
             }
-            .task(id: "\(appState.isSessionBootstrapped)|\(appState.sessionVersion)|\(viewModel.segment.rawValue)") {
+            .task(id: "\(appState.isSessionBootstrapped)|\(appState.sessionVersion)|\(appState.settings.enableCloudFollowLoad)|\(viewModel.segment.rawValue)") {
                 guard appState.isSessionBootstrapped else { return }
                 await viewModel.loadInitial(segment: viewModel.segment, appState: appState)
             }

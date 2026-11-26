@@ -23,6 +23,9 @@ public struct MediaViewerView: View {
     @State private var showControls = true
     @State private var loopLivePhoto = false
     @State private var contrastByIndex: [Int: MediaContrastState] = [:]
+    @State private var hdrByIndex: [Int: Bool] = [:]
+    @State private var liveByIndex: [Int: Bool] = [:]
+    @State private var sessionDisableHDR: Bool? = nil
 
     public init(presentation: MediaViewerPresentation) {
         self.presentation = presentation
@@ -51,10 +54,11 @@ public struct MediaViewerView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 0) {
                         ForEach(Array(presentation.items.enumerated()), id: \.offset) { index, item in
+                            let effectiveDisableHDR = sessionDisableHDR ?? appState.settings.disableHDR
                             MediaPageItemView(
                                 item: item,
                                 containerSize: containerSize,
-                                disableHDR: appState.settings.disableHDR,
+                                disableHDR: effectiveDisableHDR,
                                 autoPlayLivePhoto: appState.settings.livePhotoAutoPlay,
                                 isLoopingLivePhoto: loopLivePhoto && index == currentIndex,
                                 onToggleControls: {
@@ -64,6 +68,10 @@ public struct MediaViewerView: View {
                                     if contrastByIndex[index] != contrast {
                                         contrastByIndex[index] = contrast
                                     }
+                                },
+                                onMediaCapabilitiesDetected: { hasHDR, isLive in
+                                    hdrByIndex[index] = hasHDR
+                                    liveByIndex[index] = isLive
                                 }
                             )
                             .frame(width: containerSize.width, height: containerSize.height)
@@ -130,17 +138,41 @@ public struct MediaViewerView: View {
 
                     Spacer()
 
-                    if currentItem.isLivePhoto {
-                        Button {
-                            loopLivePhoto.toggle()
-                        } label: {
-                            Label(loopLivePhoto ? "循环中" : "实况", systemImage: "livephoto")
-                                .font(.caption.weight(.semibold))
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 8)
-                                .glassEffect(.regular.interactive(), in: .capsule)
+                    let showHDRBadge = currentItem.isHdr || (hdrByIndex[currentIndex] ?? false)
+                    let showLiveBadge = currentItem.isLivePhoto || (liveByIndex[currentIndex] ?? false)
+                    let isHDREnabled = !(sessionDisableHDR ?? appState.settings.disableHDR)
+
+                    if showHDRBadge || showLiveBadge {
+                        HStack(spacing: 6) {
+                            if showHDRBadge {
+                                Button {
+                                    sessionDisableHDR = isHDREnabled
+                                } label: {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: isHDREnabled ? "sparkles" : "eye.slash")
+                                        Text(isHDREnabled ? "HDR" : "SDR")
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 8)
+                                    .glassEffect(.regular.interactive(), in: .capsule)
+                                }
+                                .foregroundStyle(isHDREnabled ? Color.yellow : topTint)
+                            }
+
+                            if showLiveBadge {
+                                Button {
+                                    loopLivePhoto.toggle()
+                                } label: {
+                                    Label(loopLivePhoto ? "循环中" : "Live", systemImage: "livephoto")
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 8)
+                                        .glassEffect(.regular.interactive(), in: .capsule)
+                                }
+                                .foregroundStyle(loopLivePhoto ? Color.accentColor : topTint)
+                            }
                         }
-                        .foregroundStyle(loopLivePhoto ? Color.accentColor : topTint)
                     } else {
                         Color.clear.frame(width: 38, height: 38)
                     }
@@ -218,23 +250,36 @@ public struct MediaViewerView: View {
             return
         }
 
-        if item.isLivePhoto, let videoURLString = item.videoUrl {
-            guard let imgFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: item.sourceUrl, defaultExtension: "jpg"),
-                  let vidFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: videoURLString, defaultExtension: "mov") else {
-                appState.showToast("实况原件下载失败")
+        if item.isLivePhoto || (liveByIndex[currentIndex] ?? false) {
+            let embeddedVideo = await ImagePipeline.shared.extractEmbeddedMotionVideo(fromImageURL: item.sourceUrl)
+            let remoteVideoURL: String? = if embeddedVideo != nil {
+                nil
+            } else if let explicit = item.videoUrl, !explicit.isEmpty {
+                explicit
+            } else {
+                await API.resolveLivePhotoVideoURL(imageURL: item.sourceUrl)
+            }
+            let vidFile: URL? = if let embeddedVideo {
+                embeddedVideo
+            } else if let remoteVideoURL {
+                await ImagePipeline.shared.downloadToTemporaryFile(urlString: remoteVideoURL, defaultExtension: "mov")
+            } else {
+                nil
+            }
+            if let vidFile,
+               let imgFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: item.sourceUrl, defaultExtension: "jpg") {
+                do {
+                    try await PHPhotoLibrary.shared().performChanges {
+                        let req = PHAssetCreationRequest.forAsset()
+                        req.addResource(with: .photo, fileURL: imgFile, options: nil)
+                        req.addResource(with: .pairedVideo, fileURL: vidFile, options: nil)
+                    }
+                    appState.showToast("已保存实况照片到相册")
+                } catch {
+                    appState.showToast("保存失败：\(error.localizedDescription)")
+                }
                 return
             }
-            do {
-                try await PHPhotoLibrary.shared().performChanges {
-                    let req = PHAssetCreationRequest.forAsset()
-                    req.addResource(with: .photo, fileURL: imgFile, options: nil)
-                    req.addResource(with: .pairedVideo, fileURL: vidFile, options: nil)
-                }
-                appState.showToast("已保存实况照片到相册")
-            } catch {
-                appState.showToast("保存失败：\(error.localizedDescription)")
-            }
-            return
         }
 
         guard let data = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl) else {
@@ -280,6 +325,7 @@ private struct MediaPageItemView: View {
     let isLoopingLivePhoto: Bool
     let onToggleControls: () -> Void
     let onContrastDetected: (MediaContrastState) -> Void
+    let onMediaCapabilitiesDetected: (Bool, Bool) -> Void
 
     @State private var loadedResult: LoadedImageResult?
     @State private var livePhoto: PHLivePhoto?
@@ -320,14 +366,22 @@ private struct MediaPageItemView: View {
             }
         }
         .ignoresSafeArea(.all)
-        .task(id: item.id) {
+        .task(id: "\(item.id)|\(disableHDR)") {
             didFail = false
             if item.isGif {
                 gifData = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl)
             }
-            let result = await ImagePipeline.shared.loadImage(urlString: item.sourceUrl, maxPixelSize: nil)
+            let result = await ImagePipeline.shared.loadImage(
+                urlString: item.sourceUrl,
+                maxPixelSize: nil,
+                preferHDR: !disableHDR
+            )
             loadedResult = result
             if let result {
+                let detectedHDR = result.hasHDRGainMap || item.isHdr
+                let hasLiveHint = item.isLivePhoto || ImagePipeline.cachedLiveFlagSync(urlString: item.sourceUrl)
+                onMediaCapabilitiesDetected(detectedHDR, hasLiveHint)
+
                 if let cgImage = result.image.cgImage {
                     let imageSize = result.image.size
                     let size = containerSize
@@ -336,8 +390,8 @@ private struct MediaPageItemView: View {
                     }.value
                     onContrastDetected(detected)
                 }
-                if item.isLivePhoto, let videoURL = item.videoUrl {
-                    await loadLivePhoto(imageURL: item.sourceUrl, videoURL: videoURL)
+                if !item.isGif, livePhoto == nil {
+                    await loadLivePhotoIfAvailable(hasLiveHint: hasLiveHint, hasHDR: detectedHDR)
                 }
             } else {
                 didFail = true
@@ -446,9 +500,29 @@ private struct MediaPageItemView: View {
         return sum / count
     }
 
-    private func loadLivePhoto(imageURL: String, videoURL: String) async {
-        guard let imgFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: imageURL, defaultExtension: "jpg"),
-              let vidFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: videoURL, defaultExtension: "mov") else {
+    private func loadLivePhotoIfAvailable(hasLiveHint: Bool, hasHDR: Bool) async {
+        let embeddedVideo = await ImagePipeline.shared.extractEmbeddedMotionVideo(fromImageURL: item.sourceUrl)
+        let resolvedRemoteURL: String?
+        if embeddedVideo != nil {
+            resolvedRemoteURL = nil
+        } else if let explicit = item.videoUrl, !explicit.isEmpty {
+            resolvedRemoteURL = explicit
+        } else if hasLiveHint {
+            resolvedRemoteURL = await API.resolveLivePhotoVideoURL(imageURL: item.sourceUrl)
+        } else {
+            resolvedRemoteURL = nil
+        }
+
+        let vidFile: URL? = if let embeddedVideo {
+            embeddedVideo
+        } else if let resolvedRemoteURL {
+            await ImagePipeline.shared.downloadToTemporaryFile(urlString: resolvedRemoteURL, defaultExtension: "mov")
+        } else {
+            nil
+        }
+
+        guard let vidFile,
+              let imgFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: item.sourceUrl, defaultExtension: "jpg") else {
             return
         }
         let placeholder = loadedResult?.image
@@ -474,6 +548,7 @@ private struct MediaPageItemView: View {
         }
         if let assembled = box.photo {
             livePhoto = assembled
+            onMediaCapabilitiesDetected(hasHDR, true)
             if autoPlayLivePhoto {
                 liveAutoPlayTrigger += 1
             }

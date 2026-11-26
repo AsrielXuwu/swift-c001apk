@@ -327,6 +327,29 @@ public final class SettingsStore {
         return updated
     }
 
+    @discardableResult
+    public func resetDeviceParametersToDefault(preserveSzlmID: Bool = true) -> ProtocolParameters {
+        let sdk = Int(CoolapkToken.defaultSDKInt) ?? 35
+        let build = CoolapkToken.buildID(forSDKInt: sdk)
+        let reset = ProtocolParameters(
+            appVersion: CoolapkToken.defaultAppVersion,
+            appCode: CoolapkToken.defaultAppCode,
+            apiVersion: CoolapkToken.defaultAPIVersion,
+            sdkInt: CoolapkToken.defaultSDKInt,
+            deviceBrand: CoolapkToken.defaultDeviceBrand,
+            deviceModel: CoolapkToken.defaultDeviceModel,
+            userAgent: CoolapkToken.defaultUserAgent(),
+            deviceCode: CoolapkToken.makeDeviceCode(
+                brand: CoolapkToken.defaultDeviceBrand,
+                model: CoolapkToken.defaultDeviceModel,
+                build: build
+            ),
+            szlmID: preserveSzlmID ? protocolParameters.szlmID : ""
+        )
+        protocolParameters = reset
+        return reset
+    }
+
     public func acquireSzlmID(
         forceBypassCooldown: Bool = false,
         randomizeDeviceFirst: Bool = false
@@ -337,11 +360,10 @@ public final class SettingsStore {
             throw SzlmDuidError("可再次获取时间：\(formatter.string(from: next))")
         }
         if randomizeDeviceFirst {
-            _ = randomizeDeviceParameters()
+            let updatedParams = randomizeDeviceParameters()
+            await CoolapkClient.shared.updateParameters(updatedParams)
+            await ImagePipeline.shared.updateUserAgent(updatedParams.userAgent)
         }
-        let now = Date()
-        let threshold = now.addingTimeInterval(-86400)
-        szlmAcquisitionAttempts = szlmAcquisitionAttempts.filter { $0 > threshold } + [now]
         let sdk = Int(protocolParameters.sdkInt) ?? 35
         let androidVer = CoolapkToken.androidVersion(forSDKInt: sdk)
         let acquired = try await SzlmDuidClient.acquire(
@@ -350,12 +372,19 @@ public final class SettingsStore {
             androidVersion: androidVer,
             sdkInt: sdk
         )
-        szlmLastAcquiredAt = Date()
+        let trimmedID = acquired.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedID.isEmpty else {
+            throw SzlmDuidError("数盟返回了空的设备标识，请重试")
+        }
+        let now = Date()
+        let threshold = now.addingTimeInterval(-86400)
+        szlmAcquisitionAttempts = szlmAcquisitionAttempts.filter { $0 > threshold } + [now]
+        szlmLastAcquiredAt = now
         var updated = protocolParameters
-        updated.szlmID = acquired
+        updated.szlmID = trimmedID
         protocolParameters = updated
         await CoolapkClient.shared.updateParameters(updated)
         await CoolapkClient.shared.clearCaptchaState()
-        return acquired
+        return trimmedID
     }
 }

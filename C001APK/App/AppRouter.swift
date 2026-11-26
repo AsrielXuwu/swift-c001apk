@@ -81,6 +81,9 @@ public enum AppRoute: Hashable, Sendable {
     case history
     case favorites
     case localFollowList
+    case myRecentVisits
+    case myLikes
+    case myReplies
     case accounts
     case settings
     case contentFilterSettings

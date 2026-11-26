@@ -78,4 +78,39 @@ final class ModelTests: XCTestCase {
         let followedProfile = UserProfile(json: try JSON(data: followedRaw))
         XCTAssertTrue(followedProfile.isFollowed)
     }
+
+    func testMediaHintsAndSecondHandAndLoginTimeParsing() throws {
+        let raw = Data("""
+        {
+          "id": 7788,
+          "uid": 99,
+          "username": "极客卖家",
+          "feedType": "ershou",
+          "feedTypeName": "二手",
+          "message_title": "出闲置平板",
+          "message": "成色极佳 <a href=\\"https://h5.m.goofish.com/item?id=123\\">闲鱼</a>",
+          "ershou_price": 1899,
+          "orig_price": 2999,
+          "city": "上海",
+          "extra_title": "闲鱼商品",
+          "extra_url": "https://h5.m.goofish.com/item?id=123",
+          "device_title": "iPhone 17 Pro",
+          "logintime": 1700000000,
+          "picArr": [
+            "http://image.coolapk.com/shot-livepic.jpg",
+            "http://image.coolapk.com/sunset-xhdr.jpg"
+          ]
+        }
+        """.utf8)
+        let feed = FeedItem(json: try JSON(data: raw))
+        XCTAssertTrue(feed.isSecondHand)
+        XCTAssertEqual(feed.priceText, "¥1899")
+        XCTAssertEqual(feed.originalPriceText, "¥2999")
+        XCTAssertEqual(feed.cityText, "上海")
+        XCTAssertEqual(feed.xianyuURL, "https://h5.m.goofish.com/item?id=123")
+        XCTAssertNotNil(feed.authorLoginTime)
+        XCTAssertEqual(feed.mediaItems.count, 2)
+        XCTAssertTrue(feed.mediaItems[0].isLivePhoto)
+        XCTAssertTrue(feed.mediaItems[1].isHdr)
+    }
 }

@@ -414,6 +414,8 @@ public enum API: Sendable {
                 rows.append(.feed(FeedItem(json: payload)))
             case "history", "recentHistory":
                 rows.append(.browse(BrowseItem(json: item)))
+            case "recentHistoryEntity", "visited", "recentVisit":
+                rows.append(.browse(BrowseItem(json: item)))
             case "collection":
                 rows.append(.collection(CollectionItem(json: item)))
             case "event", "activity":
@@ -887,15 +889,34 @@ public enum API: Sendable {
         return result.isValid && !result.explicitlyInvalid
     }
 
+    public static func resolveLivePhotoVideoURL(imageURL: String) async -> String? {
+        guard !imageURL.isEmpty else { return nil }
+        return await client.resolveRedirectLocation(
+            path: "/v6/livePhoto/showVideo",
+            query: ["picUrl": imageURL]
+        )
+    }
+
     // MARK: - Search
 
-    public static func search(keyword: String, type: String, page: Int) async throws -> [JSON] {
-        let json = try await client.get("/v6/search", [
+    public static func search(
+        keyword: String,
+        type: String,
+        feedType: String = "all",
+        sort: String = "default",
+        page: Int
+    ) async throws -> [JSON] {
+        var query: [String: String] = [
             "type": type,
             "searchValue": keyword,
             "page": String(page),
             "showAnonymous": "-1",
-        ])
+        ]
+        if type == "feed" {
+            if !feedType.isEmpty { query["feedType"] = feedType }
+            if !sort.isEmpty { query["sort"] = sort }
+        }
+        let json = try await client.get("/v6/search", query)
         return json.data.array
     }
 
@@ -957,11 +978,14 @@ public enum API: Sendable {
     }
 
     public static func collectionList(uid: String?, feedID: String? = nil, page: Int) async throws -> [CollectionItem] {
-        var params: [String: String] = ["uid": uid ?? "", "page": String(page)]
+        var params: [String: String] = [
+            "uid": uid ?? "",
+            "page": String(page),
+            "showDefault": "1"
+        ]
         if let feedID, !feedID.isEmpty {
             params["id"] = feedID
             params["type"] = "feed"
-            params["showDefault"] = "1"
         }
         let json = try await client.get("/v6/collection/list", params)
         return json.data.array.map { CollectionItem(json: $0) }
@@ -1242,6 +1266,19 @@ public enum API: Sendable {
 
     public static func userLikeFeeds(uid: String, page: Int) async throws -> [HomeFeedRow] {
         let json = try await client.get("/v6/user/likeList", ["uid": uid, "page": String(page)])
+        return rows(from: json.data.array)
+    }
+
+    public static func userRecentVisits(uid: String? = nil, page: Int) async throws -> [HomeFeedRow] {
+        var params = ["page": String(page)]
+        if let uid, !uid.isEmpty { params["uid"] = uid }
+        let json = try await client.get("/v6/user/recentHistoryList", params)
+        return rows(from: json.data.array)
+    }
+
+    public static func userReplies(uid: String, received: Bool = false, page: Int) async throws -> [HomeFeedRow] {
+        let path = received ? "/v6/user/replyToMeList" : "/v6/user/replyList"
+        let json = try await client.get(path, ["uid": uid, "page": String(page)])
         return rows(from: json.data.array)
     }
 }

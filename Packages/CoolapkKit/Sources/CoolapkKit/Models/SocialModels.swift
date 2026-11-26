@@ -19,6 +19,8 @@ public struct UserProfile: Identifiable, Hashable, Sendable {
     public var isFollowed: Bool
     public var gender: Int
     public var registerDate: Date?
+    public var loginTime: Date?
+    public var deviceTitle: String
 
     public static func == (lhs: UserProfile, rhs: UserProfile) -> Bool { lhs.id == rhs.id }
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -45,6 +47,8 @@ public struct UserProfile: Identifiable, Hashable, Sendable {
         isFollowed = followFlag.bool || followFlag.int > 0
         gender = json.gender.int
         registerDate = json.regdate.date
+        loginTime = json.logintime.date
+        deviceTitle = json.device_title.string.isEmpty ? json.user_device.string : json.device_title.string
     }
 }
 

@@ -24,16 +24,17 @@ public struct RemoteImageView: View {
     }
 
     public var body: some View {
-        let taskKey = "\(url)|\(Int(maxPixelSize ?? 0))"
+        let shouldHDR = honorHDR && !appState.settings.disableHDR
+        let taskKey = "\(url)|\(Int(maxPixelSize ?? 0))|\(shouldHDR)"
         let activeLoaded = (loadedKey == taskKey ? loaded : nil)
-            ?? ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: maxPixelSize)
+            ?? ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: maxPixelSize, preferHDR: shouldHDR)
 
         Group {
             if let activeLoaded {
                 let base = Image(uiImage: activeLoaded.image)
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
-                if honorHDR && activeLoaded.hasHDRGainMap && !appState.settings.disableHDR {
+                if shouldHDR && activeLoaded.hasHDRGainMap {
                     base.allowedDynamicRange(.high)
                 } else {
                     base.allowedDynamicRange(.standard)
@@ -55,14 +56,14 @@ public struct RemoteImageView: View {
                 didFail = true
                 return
             }
-            if let sync = ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: maxPixelSize) {
+            if let sync = ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: maxPixelSize, preferHDR: shouldHDR) {
                 loadedKey = taskKey
                 loaded = sync
                 didFail = false
                 return
             }
             didFail = false
-            let fetched = await ImagePipeline.shared.loadImage(urlString: url, maxPixelSize: maxPixelSize)
+            let fetched = await ImagePipeline.shared.loadImage(urlString: url, maxPixelSize: maxPixelSize, preferHDR: shouldHDR)
             guard !Task.isCancelled else { return }
             loadedKey = taskKey
             loaded = fetched

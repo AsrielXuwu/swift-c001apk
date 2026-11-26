@@ -13,6 +13,7 @@ public struct LoadedImageResult: @unchecked Sendable {
 private final class SyncImageMemoryStore: @unchecked Sendable {
     let images: NSCache<NSString, UIImage>
     let hdrFlags = NSCache<NSString, NSNumber>()
+    let liveFlags = NSCache<NSString, NSNumber>()
 
     init() {
         let cache = NSCache<NSString, UIImage>()
@@ -28,6 +29,7 @@ public actor ImagePipeline {
 
     private var memoryCache: NSCache<NSString, UIImage> { Self.memoryStore.images }
     private var hdrFlagCache: NSCache<NSString, NSNumber> { Self.memoryStore.hdrFlags }
+    private var liveFlagCache: NSCache<NSString, NSNumber> { Self.memoryStore.liveFlags }
     private let session: URLSession
     private let diskDirectory: URL
     private let maxDiskBytes: Int = 500 * 1024 * 1024
@@ -54,12 +56,26 @@ public actor ImagePipeline {
         try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
     }
 
-    public nonisolated static func cachedImageSync(urlString: String, maxPixelSize: CGFloat? = nil) -> LoadedImageResult? {
+    public nonisolated static func cachedImageSync(
+        urlString: String,
+        maxPixelSize: CGFloat? = nil,
+        preferHDR: Bool = false
+    ) -> LoadedImageResult? {
         guard let normalized = normalizedURLStatic(urlString) else { return nil }
-        let cacheKey = makeKeyStatic(url: normalized.absoluteString, maxPixelSize: maxPixelSize) as NSString
+        let cacheKey = makeKeyStatic(url: normalized.absoluteString, maxPixelSize: maxPixelSize, preferHDR: preferHDR) as NSString
         guard let cached = memoryStore.images.object(forKey: cacheKey) else { return nil }
-        let isHDR = memoryStore.hdrFlags.object(forKey: normalized.absoluteString as NSString)?.boolValue ?? false
+        let isHDR = memoryStore.hdrFlags.object(forKey: normalized.absoluteString as NSString)?.boolValue ?? cached.isHighDynamicRange
         return LoadedImageResult(image: cached, hasHDRGainMap: isHDR, pixelSize: cached.size)
+    }
+
+    public nonisolated static func cachedHDRFlagSync(urlString: String) -> Bool {
+        guard let normalized = normalizedURLStatic(urlString) else { return false }
+        return memoryStore.hdrFlags.object(forKey: normalized.absoluteString as NSString)?.boolValue ?? false
+    }
+
+    public nonisolated static func cachedLiveFlagSync(urlString: String) -> Bool {
+        guard let normalized = normalizedURLStatic(urlString) else { return false }
+        return memoryStore.liveFlags.object(forKey: normalized.absoluteString as NSString)?.boolValue ?? false
     }
 
     public func updateUserAgent(_ value: String) {
@@ -71,14 +87,19 @@ public actor ImagePipeline {
     public func purgeMemory() {
         memoryCache.removeAllObjects()
         hdrFlagCache.removeAllObjects()
+        liveFlagCache.removeAllObjects()
     }
 
-    public func loadImage(urlString: String, maxPixelSize: CGFloat? = nil) async -> LoadedImageResult? {
+    public func loadImage(
+        urlString: String,
+        maxPixelSize: CGFloat? = nil,
+        preferHDR: Bool = false
+    ) async -> LoadedImageResult? {
         guard let normalized = normalizedURL(urlString) else { return nil }
-        let cacheKey = makeKey(url: normalized.absoluteString, maxPixelSize: maxPixelSize) as NSString
+        let cacheKey = makeKey(url: normalized.absoluteString, maxPixelSize: maxPixelSize, preferHDR: preferHDR) as NSString
 
         if let cached = memoryCache.object(forKey: cacheKey) {
-            let isHDR = hdrFlagCache.object(forKey: normalized.absoluteString as NSString)?.boolValue ?? false
+            let isHDR = hdrFlagCache.object(forKey: normalized.absoluteString as NSString)?.boolValue ?? cached.isHighDynamicRange
             return LoadedImageResult(image: cached, hasHDRGainMap: isHDR, pixelSize: cached.size)
         }
 
@@ -88,7 +109,7 @@ public actor ImagePipeline {
         }
 
         let task = Task<LoadedImageResult?, Never> {
-            await fetchAndDecode(url: normalized, cacheKey: keyStr, maxPixelSize: maxPixelSize)
+            await fetchAndDecode(url: normalized, cacheKey: keyStr, maxPixelSize: maxPixelSize, preferHDR: preferHDR)
         }
         inFlightTasks[keyStr] = task
         let result = await task.value
@@ -153,59 +174,153 @@ public actor ImagePipeline {
     public func clearAllCaches() {
         memoryCache.removeAllObjects()
         hdrFlagCache.removeAllObjects()
+        liveFlagCache.removeAllObjects()
         try? FileManager.default.removeItem(at: diskDirectory)
         try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
     }
 
-    // MARK: - Decoding
+    /// Extracts an embedded MotionPhoto MP4 video from JPEG XMP/tail data when present.
+    public func extractEmbeddedMotionVideo(fromImageURL imageURL: String) async -> URL? {
+        guard let data = await fetchRawData(urlString: imageURL, maxBytes: 64 * 1024 * 1024),
+              data.count > 64 else {
+            return nil
+        }
+        let headerSlice = data.prefix(min(data.count, 512 * 1024))
+        let xmpText = String(decoding: headerSlice, as: ISO88591Fallback.self)
+        let declaresMotion = Self.xmpDeclaresMotionPhoto(xmpText)
+        guard declaresMotion else { return nil }
 
-    private func fetchAndDecode(url: URL, cacheKey: String, maxPixelSize: CGFloat?) async -> LoadedImageResult? {
-        guard let data = await fetchRawData(urlString: url.absoluteString) else { return nil }
-        return decode(data: data, urlString: url.absoluteString, cacheKey: cacheKey, maxPixelSize: maxPixelSize)
+        let declaredLen = Self.extractMotionVideoLength(from: xmpText)
+        let ftypMarker = Data([0x66, 0x74, 0x79, 0x70]) // "ftyp"
+        var videoData: Data?
+        if let len = declaredLen, len > 16, len < data.count {
+            let start = data.count - len
+            if data.count - start >= 8, data.subdata(in: (start + 4)..<(start + 8)) == ftypMarker {
+                videoData = data.subdata(in: start..<data.count)
+            }
+        }
+        if videoData == nil {
+            let scanStart = max(0, data.count - min(data.count, 32 * 1024 * 1024))
+            if let range = data.range(of: ftypMarker, options: [.backwards], in: scanStart..<data.count),
+               range.lowerBound >= 4 {
+                let mp4Start = range.lowerBound - 4
+                videoData = data.subdata(in: mp4Start..<data.count)
+            }
+        }
+        guard let extracted = videoData, !extracted.isEmpty else { return nil }
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("mp4")
+        do {
+            try extracted.write(to: tempURL, options: .atomic)
+            return tempURL
+        } catch {
+            return nil
+        }
     }
 
-    private func decode(data: Data, urlString: String, cacheKey: String, maxPixelSize: CGFloat?) -> LoadedImageResult? {
+    // MARK: - Decoding
+
+    private func fetchAndDecode(url: URL, cacheKey: String, maxPixelSize: CGFloat?, preferHDR: Bool) async -> LoadedImageResult? {
+        guard let data = await fetchRawData(urlString: url.absoluteString) else { return nil }
+        return decode(data: data, urlString: url.absoluteString, cacheKey: cacheKey, maxPixelSize: maxPixelSize, preferHDR: preferHDR)
+    }
+
+    private func decode(data: Data, urlString: String, cacheKey: String, maxPixelSize: CGFloat?, preferHDR: Bool) -> LoadedImageResult? {
         let cfData = data as CFData
         let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
         guard let source = CGImageSourceCreateWithData(cfData, sourceOptions as CFDictionary) else {
             return nil
         }
 
+        let prefixBytes = data.prefix(min(data.count, 256 * 1024))
+        let xmpPrefix = String(decoding: prefixBytes, as: ISO88591Fallback.self)
         let hasGainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
             source,
             0,
             kCGImageAuxiliaryDataTypeHDRGainMap
-        ) != nil
-        hdrFlagCache.setObject(NSNumber(value: hasGainMap), forKey: urlString as NSString)
+        ) != nil || xmpPrefix.range(of: "hdrgm:Version", options: .caseInsensitive) != nil
+        let isMotion = Self.xmpDeclaresMotionPhoto(xmpPrefix)
+        liveFlagCache.setObject(NSNumber(value: isMotion), forKey: urlString as NSString)
 
-        let cgImage: CGImage?
-        if let maxPixelSize, maxPixelSize > 0 {
-            let thumbOptions: [CFString: Any] = [
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceShouldCacheImmediately: true,
-                kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
-            ]
-            cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary)
-        } else {
-            let fullOptions: [CFString: Any] = [
-                kCGImageSourceShouldCacheImmediately: true,
-                kCGImageSourceShouldAllowFloat: true
-            ]
-            cgImage = CGImageSourceCreateImageAtIndex(source, 0, fullOptions as CFDictionary)
+        var uiImage: UIImage?
+        var resolvedHDR = hasGainMap
+
+        if preferHDR {
+            var config = UIImageReader.Configuration()
+            config.prefersHighDynamicRange = true
+            if let maxPixelSize, maxPixelSize > 0 {
+                config.preferredThumbnailSize = CGSize(width: maxPixelSize, height: maxPixelSize)
+            }
+            let reader = UIImageReader(configuration: config)
+            if let decoded = reader.image(data: data) {
+                uiImage = decoded
+                if decoded.isHighDynamicRange {
+                    resolvedHDR = true
+                }
+            }
         }
 
-        let uiImage: UIImage?
-        if let cgImage {
-            uiImage = UIImage(cgImage: cgImage)
-        } else {
-            uiImage = UIImage(data: data)
+        hdrFlagCache.setObject(NSNumber(value: resolvedHDR), forKey: urlString as NSString)
+
+        if uiImage == nil {
+            let cgImage: CGImage?
+            if let maxPixelSize, maxPixelSize > 0 {
+                let thumbOptions: [CFString: Any] = [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceShouldCacheImmediately: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+                ]
+                cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary)
+            } else {
+                let fullOptions: [CFString: Any] = [
+                    kCGImageSourceShouldCacheImmediately: true,
+                    kCGImageSourceShouldAllowFloat: true
+                ]
+                cgImage = CGImageSourceCreateImageAtIndex(source, 0, fullOptions as CFDictionary)
+            }
+
+            if let cgImage {
+                uiImage = UIImage(cgImage: cgImage)
+            } else {
+                uiImage = UIImage(data: data)
+            }
         }
+
         guard let finalImage = uiImage else { return nil }
+        if finalImage.isHighDynamicRange {
+            resolvedHDR = true
+            hdrFlagCache.setObject(NSNumber(value: true), forKey: urlString as NSString)
+        }
 
         let cost = Int(finalImage.size.width * finalImage.size.height * finalImage.scale * finalImage.scale * 4)
         memoryCache.setObject(finalImage, forKey: cacheKey as NSString, cost: max(1024, cost))
-        return LoadedImageResult(image: finalImage, hasHDRGainMap: hasGainMap, pixelSize: finalImage.size)
+        return LoadedImageResult(image: finalImage, hasHDRGainMap: resolvedHDR, pixelSize: finalImage.size)
+    }
+
+    private nonisolated static func xmpDeclaresMotionPhoto(_ xmp: String) -> Bool {
+        xmp.contains("GCamera:MotionPhoto=\"1\"")
+            || xmp.contains("GCamera:MicroVideo=\"1\"")
+            || xmp.contains("OpCamera:OLivePhotoVersion=\"")
+    }
+
+    private nonisolated static func extractMotionVideoLength(from xmp: String) -> Int? {
+        let patterns = [
+            #"Item:Mime="video/mp4"[^>]*Item:Length="(\d+)""#,
+            #"Item:Length="(\d+)"[^>]*Item:Mime="video/mp4""#,
+            #"GCamera:MicroVideoOffset="(\d+)""#,
+            #"OpCamera:VideoLength="(\d+)""#
+        ]
+        for pattern in patterns {
+            if let regex = try? NSRegularExpression(pattern: pattern),
+               let match = regex.firstMatch(in: xmp, range: NSRange(xmp.startIndex..<xmp.endIndex, in: xmp)),
+               let range = Range(match.range(at: 1), in: xmp),
+               let val = Int(xmp[range]) {
+                return val
+            }
+        }
+        return nil
     }
 
     private nonisolated static func normalizedURLStatic(_ raw: String) -> URL? {
@@ -216,19 +331,23 @@ public actor ImagePipeline {
         return URL(string: str)
     }
 
-    private nonisolated static func makeKeyStatic(url: String, maxPixelSize: CGFloat?) -> String {
+    private nonisolated static func makeKeyStatic(url: String, maxPixelSize: CGFloat?, preferHDR: Bool = false) -> String {
+        var key = url
         if let maxPixelSize {
-            return "\(url)#w=\(Int(maxPixelSize))"
+            key += "#w=\(Int(maxPixelSize))"
         }
-        return url
+        if preferHDR {
+            key += "#hdr"
+        }
+        return key
     }
 
     private func normalizedURL(_ raw: String) -> URL? {
         Self.normalizedURLStatic(raw)
     }
 
-    private func makeKey(url: String, maxPixelSize: CGFloat?) -> String {
-        Self.makeKeyStatic(url: url, maxPixelSize: maxPixelSize)
+    private func makeKey(url: String, maxPixelSize: CGFloat?, preferHDR: Bool = false) -> String {
+        Self.makeKeyStatic(url: url, maxPixelSize: maxPixelSize, preferHDR: preferHDR)
     }
 
     private func diskFileURL(for urlString: String) -> URL {
@@ -239,4 +358,17 @@ public actor ImagePipeline {
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
+}
+
+private enum ISO88591Fallback: Unicode.Codec {
+    typealias CodeUnit = UInt8
+    typealias EncodedScalar = CollectionOfOne<UInt8>
+
+    static var encodedReplacementCharacter: CollectionOfOne<UInt8> { CollectionOfOne(0x3F) }
+    static func decode(_ input: CollectionOfOne<UInt8>) -> Unicode.Scalar {
+        Unicode.Scalar(input.first!)
+    }
+    static func encode(_ input: Unicode.Scalar) -> CollectionOfOne<UInt8>? {
+        CollectionOfOne(UInt8(min(input.value, 255)))
+    }
 }

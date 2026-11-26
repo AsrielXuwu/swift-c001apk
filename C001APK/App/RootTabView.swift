@@ -171,6 +171,15 @@ public struct RootTabView: View {
         case .localFollowList:
             LocalFollowListView()
                 .c001NativeTopBar()
+        case .myRecentVisits:
+            UserRecentVisitsView()
+                .c001NativeTopBar()
+        case .myLikes:
+            UserLikesListView()
+                .c001NativeTopBar()
+        case .myReplies:
+            UserRepliesListView()
+                .c001NativeTopBar()
         case .accounts:
             AccountsView()
                 .c001NativeTopBar()

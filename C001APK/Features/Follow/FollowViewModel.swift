@@ -30,12 +30,15 @@ public final class FollowViewModel {
     private var cachedFollowedUIDs: Set<String> = []
     private var cachedFollowedUsers: [UserBrief] = []
     private var sessionMarker = -1
+    private var cloudFollowMarker: Bool?
 
     public init() {}
 
     public func syncSessionIfNeeded(appState: AppState) {
-        if sessionMarker != appState.sessionVersion {
+        let cloudEnabled = appState.settings.enableCloudFollowLoad
+        if sessionMarker != appState.sessionVersion || cloudFollowMarker != cloudEnabled {
             sessionMarker = appState.sessionVersion
+            cloudFollowMarker = cloudEnabled
             activeTasks.values.forEach { $0.cancel() }
             activeTasks.removeAll()
             rowsBySegment.removeAll()

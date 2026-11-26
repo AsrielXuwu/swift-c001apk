@@ -4,9 +4,11 @@ import Observation
 
 public enum SearchCategory: String, CaseIterable, Identifiable, Sendable {
     case all = "feed"
-    case user = "user"
-    case topic = "feedTopic"
     case app = "apk"
+    case game = "game"
+    case topic = "feedTopic"
+    case product = "product"
+    case user = "user"
     case dyh = "dyh"
 
     public var id: String { rawValue }
@@ -14,10 +16,60 @@ public enum SearchCategory: String, CaseIterable, Identifiable, Sendable {
     public var label: String {
         switch self {
         case .all: return "动态"
-        case .user: return "用户"
-        case .topic: return "话题"
         case .app: return "应用"
+        case .game: return "游戏"
+        case .topic: return "话题"
+        case .product: return "数码"
+        case .user: return "用户"
         case .dyh: return "看看号"
+        }
+    }
+}
+
+public enum SearchFeedFilter: String, CaseIterable, Identifiable, Sendable {
+    case all = "all"
+    case feed = "feed"
+    case feedArticle = "feedArticle"
+    case picture = "picture"
+    case ershou = "ershou"
+    case question = "question"
+    case answer = "answer"
+    case vote = "vote"
+    case rating = "rating"
+    case comment = "comment"
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .all: return "全部"
+        case .feed: return "动态"
+        case .feedArticle: return "文章"
+        case .picture: return "酷图"
+        case .ershou: return "二手"
+        case .question: return "问答"
+        case .answer: return "回答"
+        case .vote: return "投票"
+        case .rating: return "评分"
+        case .comment: return "评论"
+        }
+    }
+}
+
+public enum SearchSortOrder: String, CaseIterable, Identifiable, Sendable {
+    case defaultOrder = "default"
+    case hot = "hot"
+    case dateline = "dateline"
+    case reply = "reply"
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .defaultOrder: return "综合"
+        case .hot: return "热门"
+        case .dateline: return "最新"
+        case .reply: return "最新回复"
         }
     }
 }
@@ -26,7 +78,11 @@ public enum SearchCategory: String, CaseIterable, Identifiable, Sendable {
 @Observable
 public final class SearchViewModel {
     public var category: SearchCategory = .all
+    public var feedFilter: SearchFeedFilter = .all
+    public var sortOrder: SearchSortOrder = .defaultOrder
     public var hotWords: [String] = []
+    public var hotRankingRows: [HomeFeedRow] = []
+    public var isLoadingDiscovery = false
     public var suggestions: [String] = []
     public var submittedKeyword: String = ""
 
@@ -34,7 +90,7 @@ public final class SearchViewModel {
     public private(set) var dyhResults: [DyhItem] = []
     public private(set) var searchingCategories: Set<SearchCategory> = []
     public private(set) var loadingMoreCategories: Set<SearchCategory> = []
-    public private(set) var searchedKeywordByCategory: [SearchCategory: String] = [:]
+    public private(set) var searchedQueryKeyByCategory: [SearchCategory: String] = [:]
     public private(set) var hasMoreByCategory: [SearchCategory: Bool] = [:]
 
     private var pageByCategory: [SearchCategory: Int] = [:]
@@ -42,9 +98,32 @@ public final class SearchViewModel {
 
     public init() {}
 
-    public func loadHotWordsIfNeeded() async {
-        guard hotWords.isEmpty else { return }
-        hotWords = (try? await API.hotSearchWords()) ?? []
+    public func currentQueryKey(for keyword: String, category target: SearchCategory) -> String {
+        if target == .all {
+            return "\(keyword)|\(feedFilter.rawValue)|\(sortOrder.rawValue)"
+        }
+        return keyword
+    }
+
+    public func loadDiscoveryIfNeeded(force: Bool = false) async {
+        if !force && (!hotWords.isEmpty || !hotRankingRows.isEmpty) { return }
+        isLoadingDiscovery = true
+        defer { isLoadingDiscovery = false }
+
+        if hotWords.isEmpty || force {
+            hotWords = (try? await API.hotSearchWords()) ?? []
+        }
+        if hotRankingRows.isEmpty || force {
+            let fetched = (try? await API.pageFeed(pageName: "V9_HOME_TAB_RANKING", page: 1)) ?? []
+            hotRankingRows = fetched.filter { row in
+                switch row {
+                case .feed, .product, .topic, .app, .collection, .dyh, .event:
+                    return true
+                default:
+                    return false
+                }
+            }
+        }
     }
 
     public func updateSuggestions(for query: String) {
@@ -72,14 +151,15 @@ public final class SearchViewModel {
             submittedKeyword = trimmed
             rowsByCategory.removeAll()
             dyhResults.removeAll()
-            searchedKeywordByCategory.removeAll()
+            searchedQueryKeyByCategory.removeAll()
             pageByCategory.removeAll()
             hasMoreByCategory.removeAll()
             appState.settings.addSearchHistory(trimmed)
         }
         suggestions = []
 
-        if !force && searchedKeywordByCategory[activeCategory] == trimmed {
+        let queryKey = currentQueryKey(for: trimmed, category: activeCategory)
+        if !force && searchedQueryKeyByCategory[activeCategory] == queryKey {
             return
         }
 
@@ -88,7 +168,7 @@ public final class SearchViewModel {
         searchingCategories.insert(activeCategory)
         defer {
             searchingCategories.remove(activeCategory)
-            searchedKeywordByCategory[activeCategory] = trimmed
+            searchedQueryKeyByCategory[activeCategory] = queryKey
         }
         await fetch(category: activeCategory, keyword: trimmed, page: 1, append: false, appState: appState)
     }
@@ -106,7 +186,13 @@ public final class SearchViewModel {
 
     private func fetch(category targetCategory: SearchCategory, keyword: String, page: Int, append: Bool, appState: AppState) async {
         do {
-            let items = try await API.search(keyword: keyword, type: targetCategory.rawValue, page: page)
+            let items = try await API.search(
+                keyword: keyword,
+                type: targetCategory.rawValue,
+                feedType: feedFilter.rawValue,
+                sort: sortOrder.rawValue,
+                page: page
+            )
             guard submittedKeyword == keyword else { return }
             if targetCategory == .dyh {
                 let parsed = items.map { DyhItem(json: $0) }

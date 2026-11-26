@@ -232,12 +232,26 @@ public struct MediaGridView: View {
     @ViewBuilder
     private func badgeStack(for item: FeedMedia, isLong: Bool = false) -> some View {
         let showLive = item.isLivePhoto
-        let showHDR = item.isHdr && !appState.settings.disableHDR
+            || ImagePipeline.cachedLiveFlagSync(urlString: item.sourceUrl)
+            || ImagePipeline.cachedLiveFlagSync(urlString: item.thumbnailUrl)
+        let showHDR = item.isHdr
+            || ImagePipeline.cachedHDRFlagSync(urlString: item.sourceUrl)
+            || ImagePipeline.cachedHDRFlagSync(urlString: item.thumbnailUrl)
         let showGIF = item.isGif
 
         if showLive || showHDR || showGIF || isLong {
             HStack(spacing: 4) {
-                if showLive { badgePill("LIVE") }
+                if showLive {
+                    HStack(spacing: 2) {
+                        Image(systemName: "livephoto")
+                        Text("Live")
+                    }
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .glassEffect(.regular, in: .capsule)
+                    .foregroundStyle(.primary)
+                }
                 if showHDR { badgePill("HDR") }
                 if showGIF { badgePill("GIF") }
                 if isLong { badgePill("长图") }
@@ -338,11 +352,27 @@ private struct PhotoStackCardView<MenuContent: View>: View {
 
             // Stationary floating controls outside moving/rotating deck so badges never deform.
             VStack {
+                let showStackLive = activeItem.isLivePhoto
+                    || ImagePipeline.cachedLiveFlagSync(urlString: activeItem.sourceUrl)
+                    || ImagePipeline.cachedLiveFlagSync(urlString: activeItem.thumbnailUrl)
+                let showStackHDR = activeItem.isHdr
+                    || ImagePipeline.cachedHDRFlagSync(urlString: activeItem.sourceUrl)
+                    || ImagePipeline.cachedHDRFlagSync(urlString: activeItem.thumbnailUrl)
                 HStack {
                     Spacer()
                     HStack(spacing: 4) {
-                        if activeItem.isLivePhoto { stackPill("LIVE") }
-                        if activeItem.isHdr && !disableHDR { stackPill("HDR") }
+                        if showStackLive {
+                            HStack(spacing: 2) {
+                                Image(systemName: "livephoto")
+                                Text("Live")
+                            }
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .glassEffect(.regular, in: .capsule)
+                            .foregroundStyle(.primary)
+                        }
+                        if showStackHDR { stackPill("HDR") }
                         if activeItem.isGif { stackPill("GIF") }
                         stackPill("\(activeIdx + 1)/\(count)")
                     }
@@ -650,8 +680,9 @@ private struct MediaContextMenuPreview: View {
     init(item: FeedMedia, disableHDR: Bool) {
         self.item = item
         self.disableHDR = disableHDR
-        let initial = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200)
-            ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080)
+        let initial = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
+            ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
+            ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080, preferHDR: false)
         self._displayResult = State(initialValue: initial)
     }
 
@@ -660,43 +691,93 @@ private struct MediaContextMenuPreview: View {
         let clamped = max(0.5, min(ratio, 2.0))
         let width: CGFloat = 320
         let height: CGFloat = min(380, max(180, width / clamped))
+        let isHDR = item.isHdr || (displayResult?.hasHDRGainMap ?? false)
+        let isLive = (livePhoto != nil) || item.isLivePhoto || ImagePipeline.cachedLiveFlagSync(urlString: item.sourceUrl)
 
-        ZStack {
-            Color(.secondarySystemGroupedBackground)
+        ZStack(alignment: .topTrailing) {
+            ZStack {
+                Color(.secondarySystemGroupedBackground)
 
-            if let gifData, item.isGif {
-                AnimatedGIFView(data: gifData, contentMode: .scaleAspectFit)
-            } else if let livePhoto, item.isLivePhoto {
-                LivePhotoRepresentable(
-                    livePhoto: livePhoto,
-                    autoPlayTrigger: playTrigger,
-                    isLooping: true
-                )
-            } else if let displayResult {
-                let imageView = Image(uiImage: displayResult.image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                if !disableHDR && (displayResult.hasHDRGainMap || item.isHdr) {
-                    imageView.allowedDynamicRange(.high)
+                if let gifData, item.isGif {
+                    AnimatedGIFView(data: gifData, contentMode: .scaleAspectFit)
+                } else if let livePhoto, isLive {
+                    LivePhotoRepresentable(
+                        livePhoto: livePhoto,
+                        autoPlayTrigger: playTrigger,
+                        isLooping: true
+                    )
+                } else if let displayResult {
+                    let imageView = Image(uiImage: displayResult.image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                    if !disableHDR && isHDR {
+                        imageView.allowedDynamicRange(.high)
+                    } else {
+                        imageView.allowedDynamicRange(.standard)
+                    }
                 } else {
-                    imageView.allowedDynamicRange(.standard)
+                    ProgressView()
                 }
-            } else {
-                ProgressView()
+            }
+
+            if isLive || isHDR {
+                HStack(spacing: 4) {
+                    if isLive {
+                        HStack(spacing: 2) {
+                            Image(systemName: "livephoto")
+                            Text("Live")
+                        }
+                        .font(.caption2.weight(.semibold))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .glassEffect(.regular, in: .capsule)
+                    }
+                    if isHDR {
+                        Text("HDR")
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .glassEffect(.regular, in: .capsule)
+                    }
+                }
+                .padding(8)
+                .allowsHitTesting(false)
             }
         }
         .frame(width: width, height: height)
         .task(id: item.id) {
-            if displayResult == nil {
-                displayResult = await ImagePipeline.shared.loadImage(urlString: item.sourceUrl, maxPixelSize: 1200)
-            }
+            displayResult = await ImagePipeline.shared.loadImage(
+                urlString: item.sourceUrl,
+                maxPixelSize: nil,
+                preferHDR: !disableHDR
+            )
             if item.isGif {
                 gifData = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl)
-            } else if item.isLivePhoto, let videoURL = item.videoUrl {
-                guard let imgFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: item.sourceUrl, defaultExtension: "jpg"),
-                      let vidFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: videoURL, defaultExtension: "mov") else {
-                    return
-                }
+                return
+            }
+
+            let embeddedVideo = await ImagePipeline.shared.extractEmbeddedMotionVideo(fromImageURL: item.sourceUrl)
+            let remoteVideoURL: String?
+            if embeddedVideo != nil {
+                remoteVideoURL = nil
+            } else if let explicit = item.videoUrl, !explicit.isEmpty {
+                remoteVideoURL = explicit
+            } else if item.isLivePhoto || ImagePipeline.cachedLiveFlagSync(urlString: item.sourceUrl) {
+                remoteVideoURL = await API.resolveLivePhotoVideoURL(imageURL: item.sourceUrl)
+            } else {
+                remoteVideoURL = nil
+            }
+
+            let resolvedVideoFile: URL? = if let embeddedVideo {
+                embeddedVideo
+            } else if let remoteVideoURL {
+                await ImagePipeline.shared.downloadToTemporaryFile(urlString: remoteVideoURL, defaultExtension: "mov")
+            } else {
+                nil
+            }
+
+            if let vidFile = resolvedVideoFile,
+               let imgFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: item.sourceUrl, defaultExtension: "jpg") {
                 let placeholder = displayResult?.image
                 let lock = OSAllocatedUnfairLock(initialState: false)
                 let box: LivePhotoPreviewBox = await withCheckedContinuation { continuation in

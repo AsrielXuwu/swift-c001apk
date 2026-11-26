@@ -77,10 +77,9 @@ public struct ProtocolParamsView: View {
                 }
                 .fontWeight(.semibold)
 
-                Button("恢复默认参数", role: .destructive) {
-                    draft = ProtocolParameters()
-                    appState.settings.protocolParameters = draft
-                    appState.showToast("已恢复默认参数")
+                Button("恢复默认参数（保留设备标识）", role: .destructive) {
+                    draft = appState.settings.resetDeviceParametersToDefault(preserveSzlmID: true)
+                    appState.showToast("已恢复内置默认机型参数")
                 }
             }
         }

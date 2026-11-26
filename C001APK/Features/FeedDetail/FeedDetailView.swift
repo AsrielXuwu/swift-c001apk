@@ -10,6 +10,8 @@ public struct FeedDetailView: View {
     @Environment(\.zoomNamespace) private var zoomNamespace
     @State private var viewModel: FeedDetailViewModel
     @State private var detailSeed = UUID().uuidString
+    @State private var compactNavProgress: CGFloat = 0
+    @State private var scrollToTopTrigger = 0
     @State private var selectedReplyForThread: ReplyItem?
     @State private var engagementMode: EngagementSelection?
     @State private var isExporting = false
@@ -45,6 +47,7 @@ public struct FeedDetailView: View {
     }
 
     public var body: some View {
+        let authorTitle = viewModel.feed.map { $0.username.isEmpty ? $0.feedTypeName : $0.username } ?? ""
         Group {
             if let feed = viewModel.feed {
                 if let match = appState.contentFilter.match(feed: feed), !viewModel.temporarilyRevealedFilter {
@@ -75,11 +78,39 @@ public struct FeedDetailView: View {
                 }
             }
         }
-        .navigationTitle(viewModel.feed?.feedTypeName ?? "动态详情")
+        .navigationTitle(compactNavProgress > 0.08 ? "" : authorTitle)
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
             if let feed = viewModel.feed {
+                if compactNavProgress > 0.08 {
+                    let activeTime = (viewModel.authorProfile?.loginTime ?? feed.authorLoginTime).map {
+                        Formatting.relativeTime($0)
+                    } ?? Formatting.relativeTime(feed.dateline, fallback: feed.datelineText)
+                    let deviceText = feed.deviceTitle.isEmpty
+                        ? (viewModel.authorProfile?.deviceTitle ?? "")
+                        : feed.deviceTitle
+                    let subtitle = [activeTime, deviceText].filter { !$0.isEmpty }.joined(separator: " · ")
+                    let isFollowed = appState.accounts.isLoggedIn
+                        ? (viewModel.authorProfile?.isFollowed ?? feed.isAuthorFollowed)
+                        : appState.localFollow.contains(uid: feed.uid)
+
+                    CollapsedNavEntityToolbar(
+                        avatarURL: feed.avatar,
+                        title: feed.username.isEmpty ? "匿名酷友" : feed.username,
+                        subtitle: subtitle,
+                        isFollowed: isFollowed,
+                        showFollowButton: !feed.uid.isEmpty && feed.uid != appState.accounts.activeUID,
+                        isDisabled: viewModel.isTogglingAuthorFollow,
+                        onTapAvatar: {
+                            scrollToTopTrigger += 1
+                        },
+                        onTapFollow: {
+                            Task { await viewModel.toggleAuthorFollow(appState: appState) }
+                        }
+                    )
+                }
+
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if isExporting {
                         ProgressView()
@@ -179,12 +210,16 @@ public struct FeedDetailView: View {
     }
 
     private func detailScroll(_ feed: FeedItem) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 14) {
-                    authorBar(feed)
+        ScrollViewReader { scrollProxy in
+            ScrollView {
+                Color.clear.frame(height: 0).id("feed-detail-top")
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        authorBar(feed)
+                            .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
+                            .scaleEffect(1.0 - compactNavProgress * 0.03, anchor: .top)
 
-                    if !feed.messageTitle.isEmpty {
+                        if !feed.messageTitle.isEmpty {
                         Text(feed.messageTitle)
                             .font(.system(size: 20 * appState.settings.fontScale, weight: .bold))
                     }
@@ -259,6 +294,10 @@ public struct FeedDetailView: View {
                         }
                     }
 
+                    if feed.isSecondHand || !feed.extraURL.isEmpty {
+                        SecondHandOrExtraCard(feed: feed)
+                    }
+
                     if !feed.targetTitle.isEmpty {
                         Button {
                             if !feed.targetURL.isEmpty {
@@ -313,14 +352,30 @@ public struct FeedDetailView: View {
                 repliesHeader(feed)
 
                 repliesSection(feed)
+                }
+                .padding(.top, 10)
+                .padding(.bottom, 20)
             }
-            .padding(.top, 10)
-            .padding(.bottom, 20)
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top
+            } action: { _, offset in
+                let progress = min(1, max(0, (offset - 32) / 60))
+                if abs(progress - compactNavProgress) > 0.02 {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        compactNavProgress = progress
+                    }
+                }
+            }
+            .onChange(of: scrollToTopTrigger) { _, _ in
+                withAnimation(.snappy) {
+                    scrollProxy.scrollTo("feed-detail-top", anchor: .top)
+                }
+            }
+            .refreshable {
+                await viewModel.loadAll(appState: appState)
+            }
+            .scrollEdgeEffectStyle(.soft, for: .top)
         }
-        .refreshable {
-            await viewModel.loadAll(appState: appState)
-        }
-        .scrollEdgeEffectStyle(.soft, for: .top)
     }
 
     private func authorBar(_ feed: FeedItem) -> some View {
