@@ -72,6 +72,7 @@ public struct MediaGridView: View {
                         .clipped()
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .applyZoomSource(id: sourceID, in: zoomNamespace)
                         .onTapGesture {
                             triggerTap(at: index)
@@ -127,6 +128,7 @@ public struct MediaGridView: View {
             .clipped()
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
@@ -147,8 +149,34 @@ public struct MediaGridView: View {
 
     @ViewBuilder
     private func mediaContextMenu(item: FeedMedia, index: Int) -> some View {
+        MediaActionsContextMenu(
+            item: item,
+            onViewFull: { triggerTap(at: index) },
+            onShareFile: { shareFileURL = $0 }
+        )
+    }
+}
+
+public struct MediaActionsContextMenu: View {
+    public let item: FeedMedia
+    public let onViewFull: () -> Void
+    public let onShareFile: (URL) -> Void
+
+    @Environment(AppState.self) private var appState
+
+    public init(
+        item: FeedMedia,
+        onViewFull: @escaping () -> Void,
+        onShareFile: @escaping (URL) -> Void
+    ) {
+        self.item = item
+        self.onViewFull = onViewFull
+        self.onShareFile = onShareFile
+    }
+
+    public var body: some View {
         Button {
-            triggerTap(at: index)
+            onViewFull()
         } label: {
             Label("查看大图", systemImage: "arrow.up.left.and.arrow.down.right")
         }
@@ -178,7 +206,7 @@ public struct MediaGridView: View {
                     urlString: item.sourceUrl,
                     defaultExtension: item.isGif ? "gif" : "jpg"
                 ) {
-                    shareFileURL = temp
+                    onShareFile(temp)
                 } else {
                     appState.showToast("准备分享文件失败")
                 }
@@ -228,6 +256,9 @@ public struct MediaGridView: View {
             appState.showToast("图片读取失败")
         }
     }
+}
+
+extension MediaGridView {
 
     @ViewBuilder
     private func badgeStack(for item: FeedMedia, isLong: Bool = false) -> some View {
@@ -296,6 +327,7 @@ private struct PhotoStackCardView<MenuContent: View>: View {
 
     @Environment(\.zoomNamespace) private var zoomNamespace
     @Environment(\.replySwipeLock) private var replySwipeLock
+    @Environment(\.replyCardCoordinateSpace) private var replyCardCoordinateSpace
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
     @State private var lastDragEndedAt: Date = .distantPast
@@ -416,6 +448,19 @@ private struct PhotoStackCardView<MenuContent: View>: View {
             .padding(.trailing, (visibleLayers > 1 ? 20 : 0) + 10)
         }
         .frame(height: visibleLayers > 1 ? 236 : 218)
+        .background {
+            if let replyCardCoordinateSpace, count > 1 {
+                Color.clear
+                    .onGeometryChange(for: CGRect.self) { proxy in
+                        proxy.frame(in: .named(replyCardCoordinateSpace))
+                    } action: { _, rect in
+                        replySwipeLock?.updateMediaFrame(id: transitionSeed, rect: rect)
+                    }
+                    .onDisappear {
+                        replySwipeLock?.clearMediaFrame(id: transitionSeed)
+                    }
+            }
+        }
         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 18, style: .continuous))
         .contextMenu {
@@ -668,16 +713,16 @@ public struct AnimatedGIFView: UIViewRepresentable {
     }
 }
 
-private struct MediaContextMenuPreview: View {
-    let item: FeedMedia
-    let disableHDR: Bool
+public struct MediaContextMenuPreview: View {
+    public let item: FeedMedia
+    public let disableHDR: Bool
 
     @State private var displayResult: LoadedImageResult?
     @State private var livePhoto: PHLivePhoto?
     @State private var playTrigger = 0
     @State private var gifData: Data?
 
-    init(item: FeedMedia, disableHDR: Bool) {
+    public init(item: FeedMedia, disableHDR: Bool) {
         self.item = item
         self.disableHDR = disableHDR
         let initial = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
@@ -686,7 +731,7 @@ private struct MediaContextMenuPreview: View {
         self._displayResult = State(initialValue: initial)
     }
 
-    var body: some View {
+    public var body: some View {
         let ratio = MediaGridView.inferredAspectRatio(from: item.thumbnailUrl) ?? 1.25
         let clamped = max(0.5, min(ratio, 2.0))
         let width: CGFloat = 320

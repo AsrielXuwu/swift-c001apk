@@ -364,9 +364,20 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public var topicTags: [String]
     public var topicIDs: [String]
     public var changeCount: Int
+    public var totalPicCount: Int
+    public var isTruncated: Bool
 
     public var effectiveFeedID: String {
-        targetFeedID.isEmpty ? id : targetFeedID
+        let candidate = (targetFeedID.isEmpty || targetFeedID == "0") ? id : targetFeedID
+        return candidate == "0" ? "" : candidate
+    }
+
+    public var needsDetailRefresh: Bool {
+        if kind == .feedArticle && articleParts.isEmpty { return true }
+        if kind == .vote && vote == nil { return true }
+        if isTruncated || message.contains("查看更多") { return true }
+        if totalPicCount > mediaItems.count { return true }
+        return false
     }
 
     public var isSecondHand: Bool {
@@ -390,10 +401,21 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
 
     public init(json: JSON) {
-        let resolvedID = json.id.exists ? json.id.identifier : json.entityId.identifier
+        let rawResolvedID = json.id.exists ? json.id.identifier : json.entityId.identifier
+        let nonZeroResolvedID = rawResolvedID == "0" ? "" : rawResolvedID
+        let rawEntityType = json.entityType.string.lowercased()
+        let explicitFeedID = [json.feed_id.identifier, json.feedId.identifier]
+            .first { !$0.isEmpty && $0 != "0" }
+            ?? (!rawEntityType.isEmpty && rawEntityType != "feed"
+                ? [json.fid.identifier].first { !$0.isEmpty && $0 != "0" }
+                : nil)
+            ?? Self.extractFeedIDFromURL(json.url.string)
+            ?? ""
+        let resolvedID = !nonZeroResolvedID.isEmpty ? nonZeroResolvedID : explicitFeedID
         id = resolvedID
-        let rawFeedID = [json.fid.identifier, json.feed_id.identifier, json.feedId.identifier].first { !$0.isEmpty } ?? ""
-        targetFeedID = rawFeedID.isEmpty ? resolvedID : rawFeedID
+        targetFeedID = (!explicitFeedID.isEmpty && !rawEntityType.isEmpty && rawEntityType != "feed")
+            ? explicitFeedID
+            : resolvedID
         uid = json.uid.identifier
         username = json.username.string.isEmpty ? json.userInfo.username.string : json.username.string
         avatar = coolapkNormalizedURL(
@@ -439,6 +461,14 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             contentType: isArticle ? .article : .feed
         )
         pics = mediaItems.map(\.sourceUrl)
+        totalPicCount = max(
+            mediaItems.count,
+            [json.pic_count.int, json.pic_num.int, json.picArr.array.count].max() ?? 0
+        )
+        isTruncated = json.is_truncated.bool
+            || json.is_long_feed.bool
+            || json.message.string.contains("查看更多")
+            || (isArticle && outputArray.isEmpty)
 
         isLiked = json.userAction.like.int > 0
         isFavorited = json.userAction.favorite.int > 0 || json.userAction.collect.int > 0
@@ -610,7 +640,8 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let decodedID = try c.decode(String.self, forKey: .id)
         id = decodedID
-        targetFeedID = try c.decodeIfPresent(String.self, forKey: .targetFeedID) ?? decodedID
+        let decodedTarget = try c.decodeIfPresent(String.self, forKey: .targetFeedID) ?? ""
+        targetFeedID = (decodedTarget.isEmpty || decodedTarget == "0") ? decodedID : decodedTarget
         kind = try c.decodeIfPresent(Kind.self, forKey: .kind) ?? .feed
         uid = try c.decodeIfPresent(String.self, forKey: .uid) ?? ""
         username = try c.decodeIfPresent(String.self, forKey: .username) ?? ""
@@ -663,6 +694,19 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         topicTags = try c.decodeIfPresent([String].self, forKey: .topicTags) ?? []
         topicIDs = try c.decodeIfPresent([String].self, forKey: .topicIDs) ?? []
         changeCount = try c.decodeIfPresent(Int.self, forKey: .changeCount) ?? 0
+        totalPicCount = try c.decodeIfPresent(Int.self, forKey: .totalPicCount) ?? mediaItems.count
+        isTruncated = try c.decodeIfPresent(Bool.self, forKey: .isTruncated) ?? false
+    }
+
+    private static func extractFeedIDFromURL(_ rawURL: String) -> String? {
+        guard !rawURL.isEmpty,
+              let regex = try? NSRegularExpression(pattern: #"/feed/(\d+)"#),
+              let match = regex.firstMatch(in: rawURL, range: NSRange(rawURL.startIndex..<rawURL.endIndex, in: rawURL)),
+              let range = Range(match.range(at: 1), in: rawURL) else {
+            return nil
+        }
+        let id = String(rawURL[range])
+        return (id.isEmpty || id == "0") ? nil : id
     }
 
     public static func isXianyuOrTradeURL(_ raw: String) -> Bool {

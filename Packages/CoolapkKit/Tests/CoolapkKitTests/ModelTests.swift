@@ -113,4 +113,53 @@ final class ModelTests: XCTestCase {
         XCTAssertTrue(feed.mediaItems[0].isLivePhoto)
         XCTAssertTrue(feed.mediaItems[1].isHdr)
     }
+
+    func testFeedZeroFidPreservesIDAndTopicAndConfigInfoParsing() throws {
+        let feedData = Data("""
+        {
+          "entityType": "feed",
+          "id": 543210,
+          "fid": 0,
+          "uid": 100,
+          "username": "测试作者",
+          "message": "一条完整动态"
+        }
+        """.utf8)
+        let feed = FeedItem(json: try JSON(data: feedData))
+        XCTAssertEqual(feed.id, "543210")
+        XCTAssertEqual(feed.effectiveFeedID, "543210")
+        XCTAssertFalse(feed.needsDetailRefresh)
+
+        let topicData = Data("""
+        {
+          "id": 88,
+          "title": "鸿蒙OS",
+          "feed_num": 0,
+          "commentnum": 1280,
+          "follownum": 420,
+          "hot_num_txt": "2.5万"
+        }
+        """.utf8)
+        let topic = TopicItem(json: try JSON(data: topicData))
+        XCTAssertEqual(topic.feedNum, 1280)
+        XCTAssertEqual(topic.followNum, 420)
+        XCTAssertEqual(topic.hotNum, 25000)
+
+        let configData = Data("""
+        {
+          "status": 1,
+          "dataRows": {
+            "基本信息": [
+              {"type": "groupData", "keyName": "核心硬件", "depth": 1},
+              {"type": "itemData", "data": {"title": "处理器", "unit": "", "show_value": "骁龙8至尊版", "addition_value": "-"}}
+            ]
+          }
+        }
+        """.utf8)
+        let sections = ProductSpecSection.sections(fromConfigInfoJSON: try JSON(data: configData))
+        XCTAssertEqual(sections.count, 1)
+        XCTAssertEqual(sections[0].items.first?.label, "处理器")
+        XCTAssertEqual(sections[0].items.first?.value, "骁龙8至尊版")
+        XCTAssertEqual(sections[0].items.first?.group, "核心硬件")
+    }
 }

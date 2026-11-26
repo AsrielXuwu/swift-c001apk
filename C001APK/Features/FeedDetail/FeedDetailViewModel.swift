@@ -7,14 +7,12 @@ import Observation
 public final class FeedDetailViewModel {
     public let feedID: String
     public var feed: FeedItem?
-    public var authorProfile: UserProfile?
     public var replies: [ReplyItem] = []
     public var answers: [HomeFeedRow] = []
     public var sortMode: ReplySortMode = .lastUpdateDesc
     public var authorOnly = false
     public var isCoinRepliesExpanded = false
     public var temporarilyRevealedFilter = false
-    public var isTogglingAuthorFollow = false
 
     public private(set) var isLoadingFeed = false
     public private(set) var isRefreshingDetail = false
@@ -46,37 +44,34 @@ public final class FeedDetailViewModel {
         self.feed = initialFeed
     }
 
-    private func shouldRefreshBodyFirst(_ item: FeedItem) -> Bool {
-        item.kind == .feedArticle
-            || !item.messageTitle.isEmpty
-            || item.message.contains("查看更多")
-            || item.mediaItems.count > 9
-    }
+    public func loadAll(appState: AppState, forceRefreshDetail: Bool = false) async {
+        guard !feedID.isEmpty, feedID != "0" else {
+            isLoadingFeed = false
+            isRefreshingDetail = false
+            isLoadingReplies = false
+            if feed == nil {
+                errorMessage = "无效的动态 ID"
+            }
+            return
+        }
 
-    public func loadAll(appState: AppState) async {
-        let hadInitialFeed = (feed != nil)
-        let prioritizeDetail = feed.map(shouldRefreshBodyFirst) ?? true
+        let initialFeed = feed
+        let hadInitialFeed = (initialFeed != nil)
+        let shouldFetchDetail = forceRefreshDetail || initialFeed == nil || (initialFeed?.needsDetailRefresh == true)
+
         isLoadingFeed = !hadInitialFeed
-        isRefreshingDetail = true
+        isRefreshingDetail = shouldFetchDetail && hadInitialFeed
         isLoadingReplies = replies.isEmpty
         errorMessage = nil
         currentReplyPage = 1
         hasMoreReplies = true
 
-        // Keep requests serialized to avoid simultaneous burst anti-bot verification.
-        // For articles/truncated posts, refresh full detail before replies so body renders smoothly.
-        if hadInitialFeed && !prioritizeDetail {
+        if let initialFeed, !shouldFetchDetail {
+            appState.historyAndFav.recordVisit(initialFeed, enabled: appState.settings.recordHistory)
             await fetchReplies(page: 1, append: false, appState: appState)
             isLoadingReplies = false
-            if let loaded = await fetchFeedDetail(appState: appState) {
-                feed = loaded
-                appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
-                if loaded.kind == .question {
-                    answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
-                }
-                if !loaded.uid.isEmpty && authorProfile == nil {
-                    authorProfile = try? await API.userProfile(uid: loaded.uid)
-                }
+            if initialFeed.kind == .question, answers.isEmpty {
+                answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
             }
             isRefreshingDetail = false
             isLoadingFeed = false
@@ -88,9 +83,6 @@ public final class FeedDetailViewModel {
             appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
             if loaded.kind == .question {
                 answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
-            }
-            if !loaded.uid.isEmpty && authorProfile == nil {
-                authorProfile = try? await API.userProfile(uid: loaded.uid)
             }
         }
         isRefreshingDetail = false
@@ -160,36 +152,6 @@ public final class FeedDetailViewModel {
         }
     }
 
-    public func toggleAuthorFollow(appState: AppState) async {
-        guard let currentFeed = feed, !currentFeed.uid.isEmpty else { return }
-        guard !isTogglingAuthorFollow else { return }
-        if !appState.accounts.isLoggedIn {
-            let currentlyLocal = appState.localFollow.contains(uid: currentFeed.uid)
-            if currentlyLocal {
-                appState.localFollow.unfollow(uid: currentFeed.uid)
-                appState.showToast("已取消本机关注")
-            } else {
-                appState.localFollow.follow(uid: currentFeed.uid, username: currentFeed.username, avatar: currentFeed.avatar)
-                appState.showToast("已加入本机关注")
-            }
-            return
-        }
-        isTogglingAuthorFollow = true
-        defer { isTogglingAuthorFollow = false }
-        let currentlyFollowed = authorProfile?.isFollowed ?? currentFeed.isAuthorFollowed
-        let targetFollow = !currentlyFollowed
-        authorProfile?.isFollowed = targetFollow
-        feed?.isAuthorFollowed = targetFollow
-        do {
-            try await API.followUser(uid: currentFeed.uid, follow: targetFollow)
-            appState.showToast(targetFollow ? "已关注 \(currentFeed.username)" : "已取消关注")
-        } catch {
-            authorProfile?.isFollowed = currentlyFollowed
-            feed?.isAuthorFollowed = currentlyFollowed
-            _ = await appState.handleAPIError(error)
-        }
-    }
-
     public func toggleLike(appState: AppState) async {
         guard var current = feed else { return }
         guard appState.accounts.isLoggedIn else {
@@ -237,7 +199,7 @@ public final class FeedDetailViewModel {
         do {
             try await API.pinReply(feedID: feedID, replyID: reply.isTop ? nil : reply.id)
             appState.showToast(reply.isTop ? "已取消置顶" : "已置顶评论")
-            await loadAll(appState: appState)
+            await loadAll(appState: appState, forceRefreshDetail: true)
         } catch {
             _ = await appState.handleAPIError(error)
         }

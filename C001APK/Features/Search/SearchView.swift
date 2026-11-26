@@ -281,7 +281,13 @@ public struct SearchView: View {
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.primary)
                     Spacer()
-                    Text("\(Formatting.count(topic.feedNum)) 讨论")
+                    Text(
+                        topic.feedNum > 0
+                            ? "\(Formatting.count(topic.feedNum)) 讨论"
+                            : (!topic.feedNumText.isEmpty
+                                ? "\(topic.feedNumText) 讨论"
+                                : (!topic.hotNumText.isEmpty ? "\(topic.hotNumText) 热度" : "0 讨论"))
+                    )
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

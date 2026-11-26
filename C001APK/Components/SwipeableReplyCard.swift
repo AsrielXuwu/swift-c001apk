@@ -4,11 +4,17 @@ import SwiftUI
 public final class ReplySwipeLock {
     public var isDraggingMedia = false
     private var lastMediaDragEndedAt: Date = .distantPast
+    private var mediaFrames: [String: CGRect] = [:]
 
     public init() {}
 
     public var isBlocked: Bool {
-        isDraggingMedia || Date().timeIntervalSince(lastMediaDragEndedAt) < 0.22
+        isDraggingMedia || Date().timeIntervalSince(lastMediaDragEndedAt) < 0.30
+    }
+
+    public func isBlocked(startLocation: CGPoint) -> Bool {
+        if isBlocked { return true }
+        return mediaFrames.values.contains { $0.insetBy(dx: -6, dy: -6).contains(startLocation) }
     }
 
     public func setDraggingMedia(_ active: Bool) {
@@ -17,16 +23,33 @@ public final class ReplySwipeLock {
             lastMediaDragEndedAt = Date()
         }
     }
+
+    public func updateMediaFrame(id: String, rect: CGRect) {
+        mediaFrames[id] = rect
+    }
+
+    public func clearMediaFrame(id: String) {
+        mediaFrames.removeValue(forKey: id)
+    }
 }
 
 private struct ReplySwipeLockKey: EnvironmentKey {
     static let defaultValue: ReplySwipeLock? = nil
 }
 
+private struct ReplyCardSpaceKey: EnvironmentKey {
+    static let defaultValue: String? = nil
+}
+
 public extension EnvironmentValues {
     var replySwipeLock: ReplySwipeLock? {
         get { self[ReplySwipeLockKey.self] }
         set { self[ReplySwipeLockKey.self] = newValue }
+    }
+
+    var replyCardCoordinateSpace: String? {
+        get { self[ReplyCardSpaceKey.self] }
+        set { self[ReplyCardSpaceKey.self] = newValue }
     }
 }
 
@@ -40,8 +63,10 @@ public struct SwipeableReplyCard<Content: View>: View {
     @State private var offsetX: CGFloat = 0
     @State private var isOpen = false
     @State private var isDraggingHorizontally = false
+    @State private var blockedCurrentDrag = false
     @State private var lastSwipeEndedAt: Date = .distantPast
     @State private var swipeLock = ReplySwipeLock()
+    @State private var cardCoordinateSpace = "reply-card-\(UUID().uuidString)"
 
     public init(
         onReply: @escaping () -> Void,
@@ -115,11 +140,19 @@ public struct SwipeableReplyCard<Content: View>: View {
             content()
                 .environment(\.suppressMediaTap, shouldSuppressChildMediaTap)
                 .environment(\.replySwipeLock, swipeLock)
+                .environment(\.replyCardCoordinateSpace, cardCoordinateSpace)
+                .coordinateSpace(name: cardCoordinateSpace)
                 .offset(x: offsetX)
                 .simultaneousGesture(
-                    DragGesture(minimumDistance: 24)
+                    DragGesture(minimumDistance: 24, coordinateSpace: .named(cardCoordinateSpace))
                         .onChanged { value in
+                            if blockedCurrentDrag || (!isDraggingHorizontally && swipeLock.isBlocked(startLocation: value.startLocation)) {
+                                blockedCurrentDrag = true
+                                isDraggingHorizontally = false
+                                return
+                            }
                             if swipeLock.isBlocked {
+                                blockedCurrentDrag = true
                                 isDraggingHorizontally = false
                                 if offsetX != (isOpen ? -revealWidth : 0) {
                                     withAnimation(.snappy(duration: 0.2)) {
@@ -140,10 +173,13 @@ public struct SwipeableReplyCard<Content: View>: View {
                             }
                         }
                         .onEnded { value in
-                            if swipeLock.isBlocked {
+                            defer { blockedCurrentDrag = false }
+                            if blockedCurrentDrag || (!isDraggingHorizontally && swipeLock.isBlocked(startLocation: value.startLocation)) || swipeLock.isBlocked {
                                 isDraggingHorizontally = false
-                                withAnimation(.snappy(duration: 0.2)) {
-                                    offsetX = isOpen ? -revealWidth : 0
+                                if offsetX != (isOpen ? -revealWidth : 0) {
+                                    withAnimation(.snappy(duration: 0.2)) {
+                                        offsetX = isOpen ? -revealWidth : 0
+                                    }
                                 }
                                 return
                             }

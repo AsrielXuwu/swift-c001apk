@@ -260,7 +260,9 @@ public struct FavoritesListView: View {
                                     .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1.5)
                             }
                         }
-                        .padding(.horizontal, 12)
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
                     }
                     .buttonStyle(.plain)
                     .contextMenu {
@@ -271,6 +273,7 @@ public struct FavoritesListView: View {
                             }
                         }
                     }
+                    .padding(.horizontal, 12)
                 }
 
                 // Cloud collections with filter + open detail + "云端" corner badge

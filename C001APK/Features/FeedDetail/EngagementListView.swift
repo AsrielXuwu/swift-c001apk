@@ -39,14 +39,13 @@ public struct EngagementListView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    LazyVStack(spacing: 10) {
                         if case .likes = mode {
                             ForEach(Array(users.enumerated()), id: \.element.id) { idx, user in
                                 UserRowView(user: user)
                                     .onAppear {
                                         if idx >= users.count - 4 { Task { await loadMore() } }
                                     }
-                                Divider().padding(.leading, 16)
                             }
                         } else {
                             ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
@@ -57,7 +56,10 @@ public struct EngagementListView: View {
                             }
                         }
                     }
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 10)
+                }
+                .refreshable {
+                    await loadInitial()
                 }
             }
         }

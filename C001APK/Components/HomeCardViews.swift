@@ -725,9 +725,15 @@ public struct TopicRowView: View {
                     Text("#\(topic.title)#")
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
-                    let subtitle = topic.description.isEmpty
-                        ? "\(Formatting.count(topic.feedNum)) 动态 · \(Formatting.count(topic.followNum)) 关注"
-                        : topic.description
+                    let statsText: String = {
+                        let primary = topic.feedNum > 0
+                            ? "\(Formatting.count(topic.feedNum)) 讨论"
+                            : (!topic.feedNumText.isEmpty
+                                ? "\(topic.feedNumText) 讨论"
+                                : (!topic.hotNumText.isEmpty ? "\(topic.hotNumText) 热度" : "\(Formatting.count(topic.hotNum)) 热度"))
+                        return "\(primary) · \(Formatting.count(topic.followNum)) 关注"
+                    }()
+                    let subtitle = topic.description.isEmpty ? statsText : topic.description
                     Text(subtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)

@@ -71,14 +71,12 @@ public struct TopicDetailView: View {
                     }
                 )
             }
-            .navigationTitle(compactNavProgress > 0.08 ? "" : (topic?.title.isEmpty == false ? "#\(topic!.title)#" : "#\(tag)#"))
+            .navigationTitle(topic?.title.isEmpty == false ? "#\(topic!.title)#" : "#\(tag)#")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let topic, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: topic.logo,
-                        title: topic.title.isEmpty ? "#\(tag)#" : "#\(topic.title)#",
-                        subtitle: "\(Formatting.count(topic.feedNum)) 讨论 · \(Formatting.count(topic.followNum)) 关注",
                         isFollowed: topic.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
@@ -138,7 +136,7 @@ public struct TopicDetailView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         VStack(alignment: .leading, spacing: 4) {
                             Text("#\(topic.title)#").font(.headline)
-                            Text("\(Formatting.count(topic.feedNum)) 动态 · \(Formatting.count(topic.followNum)) 关注")
+                            Text(topicStatsText(topic))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             if !topic.description.isEmpty {
@@ -200,6 +198,22 @@ public struct TopicDetailView: View {
             topic = try? await API.topicDetail(tag: tag)
             await reloadFeeds(for: sortType, force: true)
         }
+    }
+
+    private func topicStatsText(_ topic: TopicItem) -> String {
+        let primary: String
+        if topic.feedNum > 0 {
+            primary = "\(Formatting.count(topic.feedNum)) 讨论"
+        } else if !topic.feedNumText.isEmpty {
+            primary = "\(topic.feedNumText) 讨论"
+        } else if !topic.hotNumText.isEmpty {
+            primary = "\(topic.hotNumText) 热度"
+        } else if topic.hotNum > 0 {
+            primary = "\(Formatting.count(topic.hotNum)) 热度"
+        } else {
+            primary = "0 讨论"
+        }
+        return "\(primary) · \(Formatting.count(topic.followNum)) 关注"
     }
 
     private func reloadFeeds(for sort: String, force: Bool) async {
@@ -277,7 +291,8 @@ public struct ProductDetailView: View {
     @State private var hasInitialized = false
     @State private var productVariants: [ProductConfigVariant] = []
     @State private var productSpecs: [ProductSpecEntry] = []
-    @State private var configRawRows: [HomeFeedRow] = []
+    @State private var variantSpecSectionsByID: [String: [ProductSpecSection]] = [:]
+    @State private var loadingVariantSpecIDs: Set<String> = []
     @State private var selectedVariantID: String = ""
     @State private var isLoadingSpecs = false
 
@@ -345,14 +360,12 @@ public struct ProductDetailView: View {
                     }
                 )
             }
-            .navigationTitle(compactNavProgress > 0.08 ? "" : (product?.title ?? "数码产品"))
+            .navigationTitle(product?.title ?? "数码产品")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let product, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: product.logo,
-                        title: product.title,
-                        subtitle: [product.priceText, "\(Formatting.count(product.followNum)) 关注"].filter { !$0.isEmpty }.joined(separator: " · "),
                         isFollowed: product.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
@@ -508,12 +521,14 @@ public struct ProductDetailView: View {
         let variants = !productVariants.isEmpty ? productVariants : (product?.configVariants ?? [])
         let activeVariant = variants.first { $0.id == selectedVariantID } ?? variants.first
         let generalSpecs = !productSpecs.isEmpty ? productSpecs : (product?.specEntries ?? [])
+        let activeSections = activeVariant.flatMap { variantSpecSectionsByID[$0.id] } ?? []
+        let isLoadingActiveVariant = activeVariant.map { loadingVariantSpecIDs.contains($0.id) } ?? false
 
-        if isLoadingSpecs && variants.isEmpty && generalSpecs.isEmpty && configRawRows.isEmpty {
+        if isLoadingSpecs && variants.isEmpty && generalSpecs.isEmpty {
             ProgressView("正在加载版本配置与参数…")
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 48)
-        } else if variants.isEmpty && generalSpecs.isEmpty && configRawRows.isEmpty {
+        } else if variants.isEmpty && generalSpecs.isEmpty {
             ContentUnavailableView("暂无公开参数与版本配置", systemImage: "cpu")
                 .frame(maxWidth: .infinity, minHeight: 200)
         } else {
@@ -531,6 +546,7 @@ public struct ProductDetailView: View {
                                         withAnimation(.snappy(duration: 0.2)) {
                                             selectedVariantID = variant.id
                                         }
+                                        Task { await loadVariantSpecsIfNeeded(variant.id) }
                                     } label: {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(variant.title)
@@ -560,6 +576,9 @@ public struct ProductDetailView: View {
 
                         if let activeVariant {
                             VStack(alignment: .leading, spacing: 6) {
+                                if !activeVariant.priceText.isEmpty {
+                                    specRow(label: "参考价格", value: activeVariant.priceText)
+                                }
                                 if !activeVariant.releaseTime.isEmpty {
                                     specRow(label: "发布日期", value: activeVariant.releaseTime)
                                 }
@@ -574,11 +593,41 @@ public struct ProductDetailView: View {
                                 }
                             }
                             .padding(.top, 4)
+                            .task(id: activeVariant.id) {
+                                await loadVariantSpecsIfNeeded(activeVariant.id)
+                            }
                         }
                     }
                     .padding(14)
                     .c001CardStyle(cornerRadius: 18)
                     .padding(.horizontal, 12)
+
+                    if isLoadingActiveVariant && activeSections.isEmpty {
+                        ProgressView("正在加载该版本详细参数…")
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 20)
+                    }
+
+                    ForEach(activeSections) { section in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(section.title)
+                                .font(.headline)
+
+                            ForEach(Array(section.items.enumerated()), id: \.element.id) { idx, entry in
+                                let showGroup = !entry.group.isEmpty && (idx == 0 || section.items[idx - 1].group != entry.group)
+                                if showGroup {
+                                    Text(entry.group)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(Color.accentColor)
+                                        .padding(.top, idx == 0 ? 0 : 6)
+                                }
+                                specRow(label: entry.label, value: entry.value)
+                            }
+                        }
+                        .padding(14)
+                        .c001CardStyle(cornerRadius: 18)
+                        .padding(.horizontal, 12)
+                    }
                 }
 
                 if !generalSpecs.isEmpty {
@@ -592,10 +641,6 @@ public struct ProductDetailView: View {
                     .padding(14)
                     .c001CardStyle(cornerRadius: 18)
                     .padding(.horizontal, 12)
-                }
-
-                ForEach(configRawRows) { row in
-                    HomeRowRenderer(row: row)
                 }
             }
         }
@@ -651,21 +696,27 @@ public struct ProductDetailView: View {
         let chipTitle = activeChips.first(where: { $0.id == tabID })?.title ?? ""
         if isConfigTab(id: tabID, title: chipTitle) {
             isLoadingSpecs = true
-            let result = await API.productConfig(productID: productID, tabURL: tabID == "__specs__" ? nil : tabID)
-            if !result.variants.isEmpty {
-                productVariants = result.variants
-                if selectedVariantID.isEmpty, let firstID = result.variants.first?.id {
-                    selectedVariantID = firstID
+            let variants = !productVariants.isEmpty ? productVariants : (product?.configVariants ?? [])
+            if variants.isEmpty || productSpecs.isEmpty {
+                let result = await API.productConfig(productID: productID, tabURL: tabID == "__specs__" ? nil : tabID)
+                if productVariants.isEmpty && !result.variants.isEmpty {
+                    productVariants = result.variants
+                    if selectedVariantID.isEmpty, let firstID = result.variants.first?.id {
+                        selectedVariantID = firstID
+                    }
+                }
+                if !result.specs.isEmpty {
+                    var merged = productSpecs
+                    for s in result.specs where !merged.contains(where: { $0.label == s.label }) {
+                        merged.append(s)
+                    }
+                    productSpecs = merged
                 }
             }
-            if !result.specs.isEmpty {
-                var merged = productSpecs
-                for s in result.specs where !merged.contains(where: { $0.label == s.label }) {
-                    merged.append(s)
-                }
-                productSpecs = merged
+            let targetVariantID = !selectedVariantID.isEmpty ? selectedVariantID : (productVariants.first?.id ?? "")
+            if !targetVariantID.isEmpty {
+                await loadVariantSpecsIfNeeded(targetVariantID)
             }
-            configRawRows = result.rawRows
             isLoadingSpecs = false
             loadedTabs.insert(tabID)
             hasMoreByTab[tabID] = false
@@ -717,6 +768,19 @@ public struct ProductDetailView: View {
             hasMoreByTab[tabID] = !unique.isEmpty
             if !unique.isEmpty { pageByTab[tabID] = next }
         }
+    }
+
+    private func loadVariantSpecsIfNeeded(_ variantID: String) async {
+        guard !variantID.isEmpty,
+              !variantID.hasPrefix("cfg-"),
+              variantSpecSectionsByID[variantID] == nil,
+              !loadingVariantSpecIDs.contains(variantID) else {
+            return
+        }
+        loadingVariantSpecIDs.insert(variantID)
+        defer { loadingVariantSpecIDs.remove(variantID) }
+        let fetched = await API.productConfigInfo(configID: variantID)
+        variantSpecSectionsByID[variantID] = fetched
     }
 
     private func toggleFollow(_ current: ProductItem) async {
@@ -951,14 +1015,12 @@ public struct DyhDetailView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .navigationTitle(compactNavProgress > 0.08 ? "" : (dyh?.title ?? "看看号"))
+            .navigationTitle(dyh?.title ?? "看看号")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let dyh, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: dyh.logo,
-                        title: dyh.title,
-                        subtitle: "\(Formatting.count(dyh.followNum)) 订阅",
                         isFollowed: dyh.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
@@ -1106,14 +1168,12 @@ public struct CollectionDetailView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .navigationTitle(compactNavProgress > 0.08 ? "" : (collection?.title ?? "收藏夹"))
+            .navigationTitle(collection?.title ?? "收藏夹")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let collection, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: collection.logo,
-                        title: collection.title,
-                        subtitle: "\(collection.itemNum) 项 · \(Formatting.count(collection.followNum)) 关注",
                         isFollowed: collection.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,

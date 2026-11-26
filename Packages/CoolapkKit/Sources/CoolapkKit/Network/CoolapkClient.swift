@@ -64,7 +64,7 @@ public actor CoolapkClient {
     private var params: ProtocolParameters
     private var cachedToken: String?
     private var tokenDate: Date = .distantPast
-    private let tokenLifetime: TimeInterval = 5 * 60
+    private let tokenLifetime: TimeInterval = 15
     private var inFlightGETs: [String: Task<JSON, Error>] = [:]
     private var hasBootstrappedSession = false
 
@@ -259,6 +259,13 @@ public actor CoolapkClient {
         tokenDate = .distantPast
     }
 
+    public func prepareForForeground(flushConnections: Bool) async {
+        invalidateToken()
+        if flushConnections {
+            await session.flush()
+        }
+    }
+
     // MARK: - Core Requests
 
     private func makeSignedRequest(
@@ -342,7 +349,8 @@ public actor CoolapkClient {
         parameters: [String: String],
         method: String,
         body: Data?,
-        contentType: String?
+        contentType: String?,
+        clearProofOnCaptcha: Bool = true
     ) async throws -> JSON {
         let initialGeneration = sessionGeneration
         var attempt = 0
@@ -373,8 +381,8 @@ public actor CoolapkClient {
 
             if let challenge = CaptchaChallenge.from(json: json) {
                 // Only clear captcha proof if it actually matched the rejected request;
-                // avoids wiping a fresher proof solved concurrently by another request.
-                if let usedProof, usedProof == captchaProof {
+                // avoids wiping a fresher proof solved concurrently by another request or fallback chain.
+                if clearProofOnCaptcha, let usedProof, usedProof == captchaProof {
                     clearCaptchaState()
                 }
                 throw APIError.captchaRequired(challenge, message: json.message.string)
@@ -412,14 +420,27 @@ public actor CoolapkClient {
     }
 
     @discardableResult
-    public func get(_ path: String, _ parameters: [String: String] = [:], base: String = CoolapkClient.apiBase) async throws -> JSON {
+    public func get(
+        _ path: String,
+        _ parameters: [String: String] = [:],
+        base: String = CoolapkClient.apiBase,
+        clearProofOnCaptcha: Bool = true
+    ) async throws -> JSON {
         let sortedParams = parameters.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
         let key = "\(sessionGeneration)|\(base)|\(path)|\(sortedParams)"
         if let existing = inFlightGETs[key] {
             return try await existing.value
         }
         let task = Task<JSON, Error> {
-            try await perform(base: base, path: path, parameters: parameters, method: "GET", body: nil, contentType: nil)
+            try await perform(
+                base: base,
+                path: path,
+                parameters: parameters,
+                method: "GET",
+                body: nil,
+                contentType: nil,
+                clearProofOnCaptcha: clearProofOnCaptcha
+            )
         }
         inFlightGETs[key] = task
         defer { inFlightGETs.removeValue(forKey: key) }

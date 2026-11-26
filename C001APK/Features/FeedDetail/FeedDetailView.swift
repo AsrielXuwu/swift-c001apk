@@ -10,14 +10,13 @@ public struct FeedDetailView: View {
     @Environment(\.zoomNamespace) private var zoomNamespace
     @State private var viewModel: FeedDetailViewModel
     @State private var detailSeed = UUID().uuidString
-    @State private var compactNavProgress: CGFloat = 0
-    @State private var scrollToTopTrigger = 0
     @State private var selectedReplyForThread: ReplyItem?
     @State private var engagementMode: EngagementSelection?
     @State private var isExporting = false
     @State private var pendingExport: PreparedExportResult?
     @State private var showExportWarningAlert = false
     @State private var shareURL: URL?
+    @State private var articleShareImageURL: URL?
 
     private enum EngagementSelection: Identifiable {
         case likes(String)
@@ -47,7 +46,6 @@ public struct FeedDetailView: View {
     }
 
     public var body: some View {
-        let authorTitle = viewModel.feed.map { $0.username.isEmpty ? $0.feedTypeName : $0.username } ?? ""
         Group {
             if let feed = viewModel.feed {
                 if let match = appState.contentFilter.match(feed: feed), !viewModel.temporarilyRevealedFilter {
@@ -73,44 +71,16 @@ public struct FeedDetailView: View {
                 } description: {
                     Text(viewModel.errorMessage ?? "无法读取动态内容")
                 } actions: {
-                    Button("重试") { Task { await viewModel.loadAll(appState: appState) } }
+                    Button("重试") { Task { await viewModel.loadAll(appState: appState, forceRefreshDetail: true) } }
                         .buttonStyle(.borderedProminent)
                 }
             }
         }
-        .navigationTitle(compactNavProgress > 0.08 ? "" : authorTitle)
+        .navigationTitle("动态详情")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
             if let feed = viewModel.feed {
-                if compactNavProgress > 0.08 {
-                    let activeTime = (viewModel.authorProfile?.loginTime ?? feed.authorLoginTime).map {
-                        Formatting.relativeTime($0)
-                    } ?? Formatting.relativeTime(feed.dateline, fallback: feed.datelineText)
-                    let deviceText = feed.deviceTitle.isEmpty
-                        ? (viewModel.authorProfile?.deviceTitle ?? "")
-                        : feed.deviceTitle
-                    let subtitle = [activeTime, deviceText].filter { !$0.isEmpty }.joined(separator: " · ")
-                    let isFollowed = appState.accounts.isLoggedIn
-                        ? (viewModel.authorProfile?.isFollowed ?? feed.isAuthorFollowed)
-                        : appState.localFollow.contains(uid: feed.uid)
-
-                    CollapsedNavEntityToolbar(
-                        avatarURL: feed.avatar,
-                        title: feed.username.isEmpty ? "匿名酷友" : feed.username,
-                        subtitle: subtitle,
-                        isFollowed: isFollowed,
-                        showFollowButton: !feed.uid.isEmpty && feed.uid != appState.accounts.activeUID,
-                        isDisabled: viewModel.isTogglingAuthorFollow,
-                        onTapAvatar: {
-                            scrollToTopTrigger += 1
-                        },
-                        onTapFollow: {
-                            Task { await viewModel.toggleAuthorFollow(appState: appState) }
-                        }
-                    )
-                }
-
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if isExporting {
                         ProgressView()
@@ -188,6 +158,12 @@ public struct FeedDetailView: View {
         )) { item in
             ActivityShareSheet(items: [item.url])
         }
+        .sheet(item: Binding(
+            get: { articleShareImageURL.map { ExportShareItem(url: $0) } },
+            set: { if $0 == nil { articleShareImageURL = nil } }
+        )) { item in
+            ActivityShareSheet(items: [item.url])
+        }
         .alert("部分内容提示", isPresented: $showExportWarningAlert) {
             Button("仍然保存") {
                 if let result = pendingExport {
@@ -205,31 +181,24 @@ public struct FeedDetailView: View {
             await viewModel.loadAll(appState: appState)
         }
         .onChange(of: appState.feedRefreshTrigger) { _, _ in
-            Task { await viewModel.loadAll(appState: appState) }
+            Task { await viewModel.loadAll(appState: appState, forceRefreshDetail: true) }
         }
     }
 
     private func detailScroll(_ feed: FeedItem) -> some View {
-        ScrollViewReader { scrollProxy in
-            ScrollView {
-                Color.clear.frame(height: 0).id("feed-detail-top")
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        authorBar(feed)
-                            .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
-                            .scaleEffect(1.0 - compactNavProgress * 0.03, anchor: .top)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 14) {
+                    authorBar(feed)
 
-                        if !feed.messageTitle.isEmpty {
+                    if !feed.messageTitle.isEmpty {
                         Text(feed.messageTitle)
                             .font(.system(size: 20 * appState.settings.fontScale, weight: .bold))
                     }
 
                     let shouldDeferTruncatedArticleBody = viewModel.isRefreshingDetail
                         && feed.articleParts.isEmpty
-                        && (feed.kind == .feedArticle
-                            || !feed.messageTitle.isEmpty
-                            || feed.message.contains("查看更多")
-                            || feed.mediaItems.count > 9)
+                        && feed.needsDetailRefresh
 
                     Group {
                         if !feed.articleParts.isEmpty {
@@ -352,30 +321,14 @@ public struct FeedDetailView: View {
                 repliesHeader(feed)
 
                 repliesSection(feed)
-                }
-                .padding(.top, 10)
-                .padding(.bottom, 20)
             }
-            .onScrollGeometryChange(for: CGFloat.self) { geo in
-                geo.contentOffset.y + geo.contentInsets.top
-            } action: { _, offset in
-                let progress = min(1, max(0, (offset - 32) / 60))
-                if abs(progress - compactNavProgress) > 0.02 {
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        compactNavProgress = progress
-                    }
-                }
-            }
-            .onChange(of: scrollToTopTrigger) { _, _ in
-                withAnimation(.snappy) {
-                    scrollProxy.scrollTo("feed-detail-top", anchor: .top)
-                }
-            }
-            .refreshable {
-                await viewModel.loadAll(appState: appState)
-            }
-            .scrollEdgeEffectStyle(.soft, for: .top)
+            .padding(.top, 10)
+            .padding(.bottom, 20)
         }
+        .refreshable {
+            await viewModel.loadAll(appState: appState, forceRefreshDetail: true)
+        }
+        .scrollEdgeEffectStyle(.soft, for: .top)
     }
 
     private func authorBar(_ feed: FeedItem) -> some View {
@@ -413,17 +366,28 @@ public struct FeedDetailView: View {
     private func articleContent(_ feed: FeedItem) -> some View {
         if !feed.cover.isEmpty {
             let coverPrefix = "cover-\(detailSeed)"
-            Button {
-                appState.openMedia([FeedMedia(sourceUrl: feed.cover, contentId: feed.id, contentType: .article)], at: 0, sourcePrefix: coverPrefix)
-            } label: {
-                RemoteImageView(url: feed.cover, maxPixelSize: 1400)
-                    .frame(maxWidth: .infinity, maxHeight: 240)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace)
-            }
-            .buttonStyle(.plain)
+            let coverMedia = FeedMedia(sourceUrl: feed.cover, contentId: feed.id, contentType: .article)
+            RemoteImageView(url: feed.cover, maxPixelSize: 1400)
+                .frame(maxWidth: .infinity, maxHeight: 240)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace)
+                .onTapGesture {
+                    appState.openMedia([coverMedia], at: 0, sourcePrefix: coverPrefix)
+                }
+                .contextMenu {
+                    MediaActionsContextMenu(
+                        item: coverMedia,
+                        onViewFull: {
+                            appState.openMedia([coverMedia], at: 0, sourcePrefix: coverPrefix)
+                        },
+                        onShareFile: { articleShareImageURL = $0 }
+                    )
+                } preview: {
+                    MediaContextMenuPreview(item: coverMedia, disableHDR: appState.settings.disableHDR)
+                }
         }
 
         ForEach(feed.articleParts) { part in
@@ -447,16 +411,28 @@ public struct FeedDetailView: View {
             case "image":
                 if !part.url.isEmpty {
                     let partPrefix = "art-\(detailSeed)-\(part.id)"
+                    let partMedia = FeedMedia(sourceUrl: part.url, contentId: feed.id, contentType: .article)
                     VStack(spacing: 4) {
-                        Button {
-                            appState.openMedia([FeedMedia(sourceUrl: part.url, contentId: feed.id, contentType: .article)], at: 0, sourcePrefix: partPrefix)
-                        } label: {
-                            RemoteImageView(url: part.url, maxPixelSize: 1400, contentMode: .fit)
-                                .frame(maxWidth: .infinity)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                .applyZoomSource(id: "\(partPrefix)-0", in: zoomNamespace)
-                        }
-                        .buttonStyle(.plain)
+                        RemoteImageView(url: part.url, maxPixelSize: 1400, contentMode: .fit)
+                            .frame(maxWidth: .infinity)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .applyZoomSource(id: "\(partPrefix)-0", in: zoomNamespace)
+                            .onTapGesture {
+                                appState.openMedia([partMedia], at: 0, sourcePrefix: partPrefix)
+                            }
+                            .contextMenu {
+                                MediaActionsContextMenu(
+                                    item: partMedia,
+                                    onViewFull: {
+                                        appState.openMedia([partMedia], at: 0, sourcePrefix: partPrefix)
+                                    },
+                                    onShareFile: { articleShareImageURL = $0 }
+                                )
+                            } preview: {
+                                MediaContextMenuPreview(item: partMedia, disableHDR: appState.settings.disableHDR)
+                            }
                         if !part.description.isEmpty {
                             Text(part.description)
                                 .font(.caption)
@@ -780,7 +756,9 @@ public struct FeedDetailView: View {
             }
             .padding(14)
             .c001CardStyle(cornerRadius: 20)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
             .onTapGesture {
                 if appState.accounts.isLoggedIn {
                     appState.composeMode = .replyToComment(targetID: reply.id, replyToName: reply.username)

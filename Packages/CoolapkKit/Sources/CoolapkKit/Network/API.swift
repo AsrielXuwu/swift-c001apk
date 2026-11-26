@@ -235,26 +235,42 @@ public enum API: Sendable {
         return []
     }
 
+    /// Fetches detailed parameter sections for a specific product configuration/SKU from `m.coolapk.com/mp/product/configInfo`.
+    public static func productConfigInfo(configID: String) async -> [ProductSpecSection] {
+        guard !configID.isEmpty, configID != "0" else { return [] }
+        guard let json = try? await client.get(
+            "https://m.coolapk.com/mp/product/configInfo",
+            ["id": configID],
+            clearProofOnCaptcha: false
+        ) else {
+            return []
+        }
+        return ProductSpecSection.sections(fromConfigInfoJSON: json)
+    }
+
     public static func productConfig(
         productID: String,
         tabURL: String? = nil
     ) async -> (variants: [ProductConfigVariant], specs: [ProductSpecEntry], rawRows: [HomeFeedRow]) {
         var variants: [ProductConfigVariant] = []
         var specs: [ProductSpecEntry] = []
-        var rawRows: [HomeFeedRow] = []
 
         func ingestConfigJSON(_ data: JSON) {
             let arr = data.array
             if !arr.isEmpty {
-                let parsedVariants = arr.enumerated().compactMap { idx, elem -> ProductConfigVariant? in
-                    guard elem.isObject else { return nil }
+                let realConfigItems = arr.filter { elem in
+                    guard elem.isObject else { return false }
+                    // Exclude unrelated recommendation cards ("同价位", "同SoC", "同系列", "版本配置" headers).
+                    return elem.entityType.string != "card"
+                }
+                let parsedVariants = realConfigItems.enumerated().compactMap { idx, elem -> ProductConfigVariant? in
                     let variant = ProductConfigVariant(json: elem, index: idx)
                     return (variant.title.isEmpty && variant.specs.isEmpty) ? nil : variant
                 }
                 if !parsedVariants.isEmpty && variants.isEmpty {
                     variants = parsedVariants
                 }
-                for (idx, elem) in arr.enumerated() where elem.isObject {
+                for (idx, elem) in realConfigItems.enumerated() {
                     let extracted = ProductConfigVariant.extractSpecEntries(from: elem, prefix: "cfg-arr-\(idx)")
                     for entry in extracted where !specs.contains(where: { $0.label == entry.label }) {
                         specs.append(entry)
@@ -269,13 +285,6 @@ public enum API: Sendable {
                         specs.append(ProductSpecEntry(id: "cfg-kv-\(idx)-\(directTitle)", label: directTitle, value: directVal))
                     }
                 }
-                let mappedRows = rows(from: arr).filter { row in
-                    if case .feed = row { return false }
-                    return true
-                }
-                if !mappedRows.isEmpty && rawRows.isEmpty {
-                    rawRows = mappedRows
-                }
             } else if data.isObject {
                 let parsed = ProductItem(json: data)
                 if !parsed.configVariants.isEmpty && variants.isEmpty {
@@ -287,35 +296,19 @@ public enum API: Sendable {
             }
         }
 
-        let cleaned = tabURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !cleaned.isEmpty {
-            if cleaned.hasPrefix("/v6/") {
-                if let json = try? await client.get(cleaned, ["id": productID]) {
-                    ingestConfigJSON(json.data)
-                }
-            } else {
-                let parsed = parsePageLink(cleaned)
-                if let items = try? await client.dataList(url: parsed.url, page: 1, extra: parsed.extra) {
-                    ingestConfigJSON(JSON(value: .array(items.map(\.value))))
-                }
+        let candidates: [(String, [String: String])] = [
+            ("/v6/product/configList", ["id": productID]),
+            ("/v6/product/configList", ["productId": productID]),
+            ("/v6/product/detail", ["id": productID, "type": "config"])
+        ]
+        for (path, params) in candidates {
+            if let json = try? await client.get(path, params, clearProofOnCaptcha: false) {
+                ingestConfigJSON(json.data)
+                if !variants.isEmpty && !specs.isEmpty { break }
             }
         }
 
-        if variants.isEmpty || specs.isEmpty {
-            let candidates: [(String, [String: String])] = [
-                ("/v6/product/configList", ["id": productID]),
-                ("/v6/product/configList", ["productId": productID]),
-                ("/v6/product/detail", ["id": productID, "type": "config"])
-            ]
-            for (path, params) in candidates {
-                if let json = try? await client.get(path, params) {
-                    ingestConfigJSON(json.data)
-                    if !variants.isEmpty && !specs.isEmpty { break }
-                }
-            }
-        }
-
-        return (variants, specs, rawRows)
+        return (variants, specs, [])
     }
 
     private static func parsePageLink(_ link: String) -> (url: String, extra: [String: String]) {
@@ -624,7 +617,7 @@ public enum API: Sendable {
 
     public static func feedDetail(id: String, allowPublicFallback: Bool = true) async throws -> FeedItem {
         do {
-            let json = try await client.get("/v6/feed/detail", ["id": id])
+            let json = try await client.get("/v6/feed/detail", ["id": id], clearProofOnCaptcha: !allowPublicFallback)
             return FeedItem(json: json.data)
         } catch let error as APIError {
             if allowPublicFallback {
@@ -657,14 +650,20 @@ public enum API: Sendable {
             "fromFeedAuthor": authorOnly ? "1" : "0",
         ]
         do {
-            // Use primary apiBase first so cookies/SESSID/szlm stay consistent across endpoints.
-            let json = try await client.get("/v6/feed/replyList", query, base: CoolapkClient.apiBase)
+            // Prefer api2Base first to share host/session state with home timeline, then fall back to apiBase.
+            let json = try await client.get(
+                "/v6/feed/replyList",
+                query,
+                base: CoolapkClient.api2Base,
+                clearProofOnCaptcha: false
+            )
             return json.data.array
                 .filter { ReplyItem.isValidReplyJSON($0) }
                 .map { ReplyItem(json: $0) }
         } catch let error as APIError {
             if case .captchaRequired = error {
-                if let fallback = try? await client.get("/v6/feed/replyList", query, base: CoolapkClient.api2Base) {
+                await client.prepareForForeground(flushConnections: false)
+                if let fallback = try? await client.get("/v6/feed/replyList", query, base: CoolapkClient.apiBase) {
                     return fallback.data.array
                         .filter { ReplyItem.isValidReplyJSON($0) }
                         .map { ReplyItem(json: $0) }

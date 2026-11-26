@@ -267,11 +267,100 @@ public struct ProductSpecEntry: Identifiable, Hashable, Sendable {
     public let id: String
     public var label: String
     public var value: String
+    public var group: String
 
-    public init(id: String, label: String, value: String) {
+    public init(id: String, label: String, value: String, group: String = "") {
         self.id = id
         self.label = label
         self.value = value
+        self.group = group
+    }
+}
+
+public struct ProductSpecSection: Identifiable, Hashable, Sendable {
+    public let id: String
+    public var title: String
+    public var items: [ProductSpecEntry]
+
+    public init(id: String, title: String, items: [ProductSpecEntry]) {
+        self.id = id
+        self.title = title
+        self.items = items
+    }
+
+    /// Parses Coolapk's `m.coolapk.com/mp/product/configInfo` `dataRows` payload.
+    public static func sections(fromConfigInfoJSON json: JSON) -> [ProductSpecSection] {
+        let dataRowsDict = json.dataRows.dictionary
+        guard !dataRowsDict.isEmpty else { return [] }
+
+        var sections: [ProductSpecSection] = []
+        for (sectionTitle, rowsJSON) in dataRowsDict.sorted(by: { $0.key < $1.key }) {
+            let rows = rowsJSON.array
+            var groupPath: [String] = []
+            var entries: [ProductSpecEntry] = []
+
+            for (rowIdx, row) in rows.enumerated() {
+                let rowType = row.type.string
+                if rowType == "groupData" {
+                    let groupName = row.keyName.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !groupName.isEmpty {
+                        let depth = max(1, row.depth.int)
+                        while groupPath.count >= depth { groupPath.removeLast() }
+                        while groupPath.count < depth - 1 { groupPath.append("") }
+                        groupPath.append(groupName)
+                    }
+                } else if rowType == "itemData" {
+                    let itemData = row.data
+                    let name = itemData.title.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    guard !name.isEmpty, let shown = displayValue(itemData.show_value) else { continue }
+                    let unit = itemData.unit.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let mainValue = (shown == "-" || unit.isEmpty) ? shown : "\(shown)\(unit)"
+                    let addition = displayValue(itemData.addition_value)
+                    let fullValue: String
+                    if let addition, addition != "-", addition != mainValue {
+                        fullValue = "\(mainValue)\n\(addition)"
+                    } else {
+                        fullValue = mainValue
+                    }
+                    let groupLabel = groupPath.filter { !$0.isEmpty }.joined(separator: " / ")
+                    entries.append(ProductSpecEntry(
+                        id: "cfginfo-\(sectionTitle)-\(rowIdx)-\(name)",
+                        label: name,
+                        value: fullValue,
+                        group: groupLabel
+                    ))
+                }
+            }
+
+            if !entries.isEmpty {
+                sections.append(ProductSpecSection(
+                    id: "section-\(sectionTitle)",
+                    title: sectionTitle,
+                    items: entries
+                ))
+            }
+        }
+        return sections
+    }
+
+    private static func displayValue(_ json: JSON) -> String? {
+        guard !json.isNull else { return nil }
+        let text: String
+        switch json.value {
+        case .string, .number, .bool:
+            text = json.string
+        case .array:
+            text = json.array.compactMap { displayValue($0) }.joined(separator: " / ")
+        case .object:
+            text = json.dictionary
+                .sorted(by: { $0.key < $1.key })
+                .compactMap { k, v in displayValue(v).map { "\(k): \($0)" } }
+                .joined(separator: " / ")
+        case .null:
+            text = ""
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -486,6 +575,9 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
     public var logo: String
     public var feedNum: Int
     public var followNum: Int
+    public var hotNum: Int
+    public var feedNumText: String
+    public var hotNumText: String
     public var isFollowed: Bool
 
     public init(json: JSON) {
@@ -493,10 +585,41 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
         title = json.title.string
         description = json.description.string
         logo = json.logo.string.isEmpty ? json.pic.string : json.logo.string
-        feedNum = json.feed_num.int
-        followNum = json.follow_num.int
+        let rawFeedTxt = [
+            json.commentnum_txt.string,
+            json.feed_comment_num_txt.string,
+            json.feed_num_txt.string
+        ].first { !$0.isEmpty } ?? ""
+        let rawHotTxt = json.hot_num_txt.string
+        feedNum = [
+            json.feed_num.int,
+            json.commentnum.int,
+            json.feed_comment_num.int,
+            json.commentCount.int,
+            json.comment_num.int,
+            Self.parseCompactCount(rawFeedTxt)
+        ].first { $0 > 0 } ?? 0
+        followNum = [json.follow_num.int, json.follownum.int].first { $0 > 0 } ?? 0
+        hotNum = [json.hot_num.int, Self.parseCompactCount(rawHotTxt)].first { $0 > 0 } ?? 0
+        feedNumText = rawFeedTxt
+        hotNumText = rawHotTxt
         isFollowed = json.isFollowed.int > 0 || json.follow.int > 0
             || json.extraData.parsed.showCancelFollowMenu.int > 0
+    }
+
+    private static func parseCompactCount(_ raw: String) -> Int {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return 0 }
+        if trimmed.hasSuffix("亿"), let val = Double(trimmed.dropLast()) {
+            return Int(val * 100_000_000)
+        }
+        if trimmed.hasSuffix("万") || trimmed.hasSuffix("w"), let val = Double(trimmed.dropLast()) {
+            return Int(val * 10_000)
+        }
+        if trimmed.hasSuffix("k"), let val = Double(trimmed.dropLast()) {
+            return Int(val * 1_000)
+        }
+        return Int(trimmed) ?? Int(Double(trimmed) ?? 0)
     }
 }
 
