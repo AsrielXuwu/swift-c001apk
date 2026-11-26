@@ -8,22 +8,58 @@ public struct MessagesView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 0) {
-            Picker("消息分类", selection: $viewModel.segment) {
-                ForEach(MessagesSegment.allCases) { seg in
-                    Text(seg.rawValue).tag(seg)
-                }
+        TabView(selection: $viewModel.segment) {
+            ForEach(MessagesSegment.allCases) { seg in
+                segmentContent(for: seg)
+                    .tag(seg)
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-
-            content
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .safeAreaInset(edge: .top, spacing: 0) {
+            floatingMessageSegmentStrip
         }
         .navigationTitle("消息")
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .task(id: "\(appState.sessionVersion)|\(viewModel.segment.rawValue)") {
             await viewModel.loadInitial(appState: appState, force: true)
+        }
+    }
+
+    private var floatingMessageSegmentStrip: some View {
+        GlassEffectContainer(spacing: 4) {
+            HStack(spacing: 4) {
+                ForEach(MessagesSegment.allCases) { seg in
+                    let isSelected = viewModel.segment == seg
+                    Button {
+                        withAnimation(.snappy(duration: 0.22)) {
+                            viewModel.segment = seg
+                        }
+                    } label: {
+                        Text(seg.rawValue)
+                            .font(.caption.weight(isSelected ? .semibold : .medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
+                            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(5)
+            .glassEffect(.regular.interactive(), in: .capsule)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+    }
+
+    @ViewBuilder
+    private func segmentContent(for seg: MessagesSegment) -> some View {
+        if viewModel.segment != seg {
+            Color.clear
+        } else {
+            content
         }
     }
 
@@ -99,7 +135,7 @@ public struct MessagesView: View {
                         }
                     }
                 }
-                .listStyle(.plain)
+                .listStyle(.insetGrouped)
                 .refreshable {
                     await viewModel.loadInitial(appState: appState, force: true)
                 }
@@ -156,7 +192,7 @@ public struct MessagesView: View {
                         }
                     }
                 }
-                .listStyle(.plain)
+                .listStyle(.insetGrouped)
                 .refreshable {
                     await viewModel.loadInitial(appState: appState, force: true)
                 }

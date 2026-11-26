@@ -506,9 +506,54 @@ public enum API: Sendable {
         return json.data.array.map { TopicItem(json: $0) }
     }
 
-    public static func checkLogin() async throws -> Bool {
+    public struct LoginCheckResult: Sendable {
+        public let isValid: Bool
+        public let explicitlyInvalid: Bool
+        public let uid: String
+        public let username: String
+        public let token: String
+
+        public init(
+            isValid: Bool,
+            explicitlyInvalid: Bool = false,
+            uid: String = "",
+            username: String = "",
+            token: String = ""
+        ) {
+            self.isValid = isValid
+            self.explicitlyInvalid = explicitlyInvalid
+            self.uid = uid
+            self.username = username
+            self.token = token
+        }
+    }
+
+    public static func checkLoginInfo(expectedUID: String? = nil) async throws -> LoginCheckResult {
         let json = try await client.get("/v6/account/checkLoginInfo")
-        return json.data.string == "1" || json.data.int == 1
+        if json.message.string == "登录信息有误" {
+            return LoginCheckResult(isValid: false, explicitlyInvalid: true)
+        }
+        if json.data.isObject {
+            let uid = json.data.uid.identifier
+            let token = json.data.token.string
+            let rawName = json.data.username.string
+            let username = rawName.removingPercentEncoding ?? rawName
+            if let expectedUID, !expectedUID.isEmpty, !uid.isEmpty, uid != expectedUID {
+                return LoginCheckResult(isValid: false, explicitlyInvalid: true)
+            }
+            if !token.isEmpty || !uid.isEmpty {
+                return LoginCheckResult(isValid: true, uid: uid, username: username, token: token)
+            }
+        }
+        if json.data.string == "1" || json.data.int == 1 || json.status.int == 1 {
+            return LoginCheckResult(isValid: true)
+        }
+        return LoginCheckResult(isValid: true)
+    }
+
+    public static func checkLogin() async throws -> Bool {
+        let result = try await checkLoginInfo()
+        return result.isValid && !result.explicitlyInvalid
     }
 
     // MARK: - Search

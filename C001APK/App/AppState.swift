@@ -63,14 +63,21 @@ public final class AppState {
             return
         }
         do {
-            let valid = try await API.checkLogin()
-            if !valid {
+            let check = try await API.checkLoginInfo(expectedUID: active.uid)
+            if check.explicitlyInvalid {
                 await accounts.expireCurrent()
                 currentUserProfile = nil
                 badge = NotificationBadge()
                 notifyAccountSessionChanged()
                 showToast("登录状态已过期，请重新登录")
                 return
+            }
+            if !check.token.isEmpty {
+                await accounts.refreshActiveCredentials(
+                    uid: check.uid.isEmpty ? active.uid : check.uid,
+                    username: check.username,
+                    token: check.token
+                )
             }
             async let profileTask = API.userProfile(uid: active.uid)
             async let badgeTask = API.badge()
@@ -81,13 +88,14 @@ public final class AppState {
             if let newBadge = try? await badgeTask {
                 badge = newBadge
             }
-        } catch APIError.expired {
+        } catch APIError.expired, APIError.unauthorized {
             await accounts.expireCurrent()
             currentUserProfile = nil
             badge = NotificationBadge()
             notifyAccountSessionChanged()
+            showToast("登录状态已过期，请重新登录")
         } catch {
-            // Keep existing cached session on transient offline startup.
+            // Keep existing cached session on transient offline startup or captcha challenge.
         }
     }
 
@@ -123,15 +131,15 @@ public final class AppState {
         }
     }
 
-    public func openRawLink(_ raw: String) {
+    public func openRawLink(_ raw: String, transitionID: String? = nil) {
         if raw.hasPrefix("coolapk-internal://route?target="),
            let comp = URLComponents(string: raw),
            let target = comp.queryItems?.first(where: { $0.name == "target" })?.value {
-            openRawLink(target)
+            openRawLink(target, transitionID: transitionID)
             return
         }
         guard let resolved = FeedLink.resolve(raw) else { return }
-        let route = AppRoute.from(feedLink: resolved)
+        let route = AppRoute.from(feedLink: resolved, transitionID: transitionID)
         if case let .web(url) = route, settings.openInBrowser {
             UIApplication.shared.open(url)
             return
@@ -139,9 +147,9 @@ public final class AppState {
         push(route)
     }
 
-    public func openMedia(_ items: [FeedMedia], at index: Int) {
+    public func openMedia(_ items: [FeedMedia], at index: Int, sourcePrefix: String? = nil) {
         guard !items.isEmpty else { return }
-        mediaViewer = MediaViewerPresentation(items: items, initialIndex: index)
+        mediaViewer = MediaViewerPresentation(items: items, initialIndex: index, sourcePrefix: sourcePrefix)
     }
 
     // MARK: - Error & Captcha Handling

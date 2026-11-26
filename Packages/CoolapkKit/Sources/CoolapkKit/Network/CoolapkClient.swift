@@ -155,14 +155,15 @@ public actor CoolapkClient {
         var parts: [String] = []
         if isLoggedIn {
             parts.append("uid=\(uid)")
-            let encodedName = username.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? username
+            let rawUsername = username.removingPercentEncoding ?? username
+            let encodedName = rawUsername.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? rawUsername
             parts.append("username=\(encodedName)")
             parts.append("token=\(token)")
         }
         if !sessid.isEmpty {
             parts.append("SESSID=\(sessid)")
         }
-        for (key, value) in apiSessionCookies.sorted(by: { $0.key < $1.key }) {
+        for (key, value) in apiSessionCookies.sorted(by: { $0.key < $1.key }) where key != "SESSID" {
             parts.append("\(key)=\(value)")
         }
         if url.scheme == "https", let proof = activeCaptchaProof() {
@@ -534,19 +535,37 @@ public actor CoolapkClient {
 
     public func fetchLoginRequestHash() async throws -> String {
         loginSessionCookies.removeAll()
-        guard let url = URL(string: "\(Self.accountBase)/auth/login?type=mobile") else {
-            throw APIError.network("无效的登录地址")
+        var foundHash: String?
+
+        if let mobileURL = URL(string: "\(Self.accountBase)/auth/login?type=mobile") {
+            var request = URLRequest(url: mobileURL)
+            request.httpMethod = "GET"
+            applyAccountHeaders(to: &request, isPost: false)
+            let (data, response) = try await session.data(for: request)
+            if let http = response as? HTTPURLResponse {
+                captureCookies(from: http, target: &loginSessionCookies)
+            }
+            let html = String(data: data, encoding: .utf8) ?? ""
+            foundHash = extractRequestHash(from: html)
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        applyAccountHeaders(to: &request, isPost: false)
-        let (data, response) = try await session.data(for: request)
-        if let http = response as? HTTPURLResponse {
-            captureCookies(from: http, target: &loginSessionCookies)
+
+        if let loginPageURL = URL(string: "\(Self.accountBase)/auth/loginByCoolApk") {
+            var request = URLRequest(url: loginPageURL)
+            request.httpMethod = "GET"
+            applyAccountHeaders(to: &request, isPost: false)
+            if let (data, response) = try? await session.data(for: request) {
+                if let http = response as? HTTPURLResponse {
+                    captureCookies(from: http, target: &loginSessionCookies)
+                }
+                let html = String(data: data, encoding: .utf8) ?? ""
+                if let hash = extractRequestHash(from: html) {
+                    foundHash = hash
+                }
+            }
         }
-        let html = String(data: data, encoding: .utf8) ?? ""
-        if let hash = extractRequestHash(from: html) {
-            return hash
+
+        if let foundHash, !foundHash.isEmpty {
+            return foundHash
         }
         throw APIError.message("未能获取登录参数（requestHash）")
     }
@@ -595,11 +614,14 @@ public actor CoolapkClient {
             captureCookies(from: http, target: &setCookies)
         }
         let json = try JSON(data: data)
+        let rawName = setCookies["username"] ?? loginSessionCookies["username"] ?? ""
+        let decodedName = rawName.removingPercentEncoding ?? rawName
+        let resolvedSessid = (setCookies["SESSID"]?.isEmpty == false ? setCookies["SESSID"] : loginSessionCookies["SESSID"]) ?? ""
         return LoginSubmissionResult(
-            uid: setCookies["uid"] ?? "",
-            username: setCookies["username"] ?? "",
-            token: setCookies["token"] ?? "",
-            sessid: setCookies["SESSID"] ?? "",
+            uid: setCookies["uid"] ?? loginSessionCookies["uid"] ?? "",
+            username: decodedName,
+            token: setCookies["token"] ?? loginSessionCookies["token"] ?? "",
+            sessid: resolvedSessid,
             status: json.status.int,
             message: json.message.string,
             messageStatus: json.messageStatus.string

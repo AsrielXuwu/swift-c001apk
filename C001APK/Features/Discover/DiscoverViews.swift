@@ -20,7 +20,7 @@ public struct TopicDetailView: View {
 
     public var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 10) {
                 if let topic {
                     HStack(spacing: 12) {
                         RemoteImageView(url: topic.logo, maxPixelSize: 180)
@@ -42,21 +42,45 @@ public struct TopicDetailView: View {
                         Button(topic.isFollowed ? "已关注" : "关注") {
                             Task { await toggleFollow(topic) }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(topic.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .foregroundStyle(topic.isFollowed ? Color.primary : Color.accentColor)
                     }
-                    .padding(16)
-                    Divider()
+                    .padding(14)
+                    .c001CardStyle(cornerRadius: 16)
+                    .padding(.horizontal, 12)
                 }
 
-                Picker("排序", selection: $listType) {
-                    Text("最新回复").tag("lastupdate_desc")
-                    Text("最新发布").tag("dateline_desc")
-                    Text("热门").tag("popular")
+                GlassEffectContainer(spacing: 4) {
+                    HStack(spacing: 4) {
+                        ForEach([
+                            ("lastupdate_desc", "最新回复"),
+                            ("dateline_desc", "最新发布"),
+                            ("popular", "热门")
+                        ], id: \.0) { value, label in
+                            let isSelected = listType == value
+                            Button {
+                                withAnimation(.snappy(duration: 0.22)) {
+                                    listType = value
+                                }
+                            } label: {
+                                Text(label)
+                                    .font(.caption.weight(isSelected ? .semibold : .medium))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 7)
+                                    .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
+                                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(5)
+                    .glassEffect(.regular.interactive(), in: .capsule)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 14)
                 .onChange(of: listType) { _, _ in
                     Task { await reloadFeeds() }
                 }
@@ -72,9 +96,12 @@ public struct TopicDetailView: View {
                     }
                 }
             }
+            .padding(.vertical, 10)
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle("#\(tag)#")
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .task {
             topic = try? await API.topicDetail(tag: tag)
             await reloadFeeds()
@@ -132,7 +159,7 @@ public struct ProductDetailView: View {
 
     public var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 10) {
                 if let product {
                     HStack(spacing: 12) {
                         RemoteImageView(url: product.logo, maxPixelSize: 180)
@@ -148,11 +175,16 @@ public struct ProductDetailView: View {
                         Button(product.isFollowed ? "已关注" : "关注") {
                             Task { await toggleFollow(product) }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(product.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .foregroundStyle(product.isFollowed ? Color.primary : Color.accentColor)
                     }
-                    .padding(16)
-                    Divider()
+                    .padding(14)
+                    .c001CardStyle(cornerRadius: 16)
+                    .padding(.horizontal, 12)
                 }
 
                 ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
@@ -162,9 +194,12 @@ public struct ProductDetailView: View {
                         }
                 }
             }
+            .padding(.vertical, 10)
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(product?.title ?? "数码产品")
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .task {
             product = try? await API.productDetail(id: productID)
             let link = (product?.url.isEmpty == false ? product!.url : "#/feed/productFeedList?id=\(productID)")
@@ -203,6 +238,9 @@ public struct ProductDetailView: View {
 public struct AppDetailView: View {
     public let appID: String
 
+    @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
     @State private var app: AppItem?
     @State private var comments: [HomeFeedRow] = []
     @State private var page = 1
@@ -212,7 +250,7 @@ public struct AppDetailView: View {
 
     public var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 10) {
                 if let app {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 12) {
@@ -233,12 +271,20 @@ public struct AppDetailView: View {
                         }
 
                         if !app.screenshots.isEmpty {
+                            let shotPrefix = "appshots-\(transitionSeed)"
+                            let shotMedia = app.screenshots.map { FeedMedia(sourceUrl: $0) }
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack(spacing: 10) {
-                                    ForEach(app.screenshots, id: \.self) { url in
-                                        RemoteImageView(url: url, maxPixelSize: 540)
-                                            .frame(width: 140, height: 240)
-                                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    ForEach(Array(app.screenshots.enumerated()), id: \.offset) { idx, url in
+                                        Button {
+                                            appState.openMedia(shotMedia, at: idx, sourcePrefix: shotPrefix)
+                                        } label: {
+                                            RemoteImageView(url: url, maxPixelSize: 540)
+                                                .frame(width: 140, height: 240)
+                                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                                .applyZoomSource(id: "\(shotPrefix)-\(idx)", in: zoomNamespace)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
                                 }
                             }
@@ -250,8 +296,9 @@ public struct AppDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    .padding(16)
-                    Divider()
+                    .padding(14)
+                    .c001CardStyle(cornerRadius: 16)
+                    .padding(.horizontal, 12)
                 }
 
                 ForEach(Array(comments.enumerated()), id: \.element.id) { idx, row in
@@ -261,9 +308,12 @@ public struct AppDetailView: View {
                         }
                 }
             }
+            .padding(.vertical, 10)
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(app?.title ?? "应用详情")
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .task {
             app = try? await API.appDetail(id: appID)
             comments = (try? await API.appComments(id: appID, page: 1)) ?? []
@@ -299,7 +349,7 @@ public struct DyhDetailView: View {
 
     public var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 10) {
                 if let dyh {
                     HStack(spacing: 12) {
                         RemoteImageView(url: dyh.logo, maxPixelSize: 180)
@@ -313,11 +363,16 @@ public struct DyhDetailView: View {
                         Button(dyh.isFollowed ? "已订阅" : "订阅") {
                             Task { await toggleFollow(dyh) }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(dyh.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .foregroundStyle(dyh.isFollowed ? Color.primary : Color.accentColor)
                     }
-                    .padding(16)
-                    Divider()
+                    .padding(14)
+                    .c001CardStyle(cornerRadius: 16)
+                    .padding(.horizontal, 12)
                 }
 
                 ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
@@ -327,9 +382,12 @@ public struct DyhDetailView: View {
                         }
                 }
             }
+            .padding(.vertical, 10)
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(dyh?.title ?? "看看号")
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .task {
             dyh = try? await API.dyhDetail(id: dyhID)
             rows = (try? await API.dyhArticles(id: dyhID, page: 1)) ?? []
@@ -376,7 +434,7 @@ public struct CollectionDetailView: View {
 
     public var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 10) {
                 if let collection {
                     HStack(spacing: 12) {
                         RemoteImageView(url: collection.logo, maxPixelSize: 180)
@@ -392,11 +450,16 @@ public struct CollectionDetailView: View {
                         Button(collection.isFollowed ? "已关注" : "关注") {
                             Task { await toggleFollow(collection) }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 7)
+                        .background(collection.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .foregroundStyle(collection.isFollowed ? Color.primary : Color.accentColor)
                     }
-                    .padding(16)
-                    Divider()
+                    .padding(14)
+                    .c001CardStyle(cornerRadius: 16)
+                    .padding(.horizontal, 12)
                 }
 
                 ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
@@ -406,9 +469,12 @@ public struct CollectionDetailView: View {
                         }
                 }
             }
+            .padding(.vertical, 10)
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(collection?.title ?? "收藏夹")
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .task {
             collection = try? await API.collectionDetail(id: collectionID)
             rows = (try? await API.collectionItems(id: collectionID, page: 1)) ?? []
@@ -505,7 +571,7 @@ public struct PageFeedView: View {
             if isLoading && rows.isEmpty {
                 ProgressView().padding(.vertical, 60)
             } else {
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: 10) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
                         HomeRowRenderer(row: row)
                             .onAppear {
@@ -513,10 +579,13 @@ public struct PageFeedView: View {
                             }
                     }
                 }
+                .padding(.vertical, 10)
             }
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .task {
             isLoading = true
             defer { isLoading = false }
@@ -563,32 +632,54 @@ public struct CoolPicView: View {
     public init(initialTag: String = "全部") { self.initialTag = initialTag }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            Picker("排序", selection: $sortType) {
-                Text("推荐").tag("recommend")
-                Text("最新").tag("new")
-                Text("最热").tag("hot")
+        ScrollView {
+            LazyVStack(spacing: 10) {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                    HomeRowRenderer(row: row)
+                        .onAppear {
+                            if idx >= rows.count - 4 { Task { await loadMore() } }
+                        }
+                }
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .onChange(of: sortType) { _, _ in
-                Task { await reload() }
-            }
-
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                        HomeRowRenderer(row: row)
-                            .onAppear {
-                                if idx >= rows.count - 4 { Task { await loadMore() } }
+            .padding(.vertical, 10)
+        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .safeAreaInset(edge: .top, spacing: 0) {
+            GlassEffectContainer(spacing: 4) {
+                HStack(spacing: 4) {
+                    ForEach([
+                        ("recommend", "推荐"),
+                        ("new", "最新"),
+                        ("hot", "最热")
+                    ], id: \.0) { value, label in
+                        let isSelected = sortType == value
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                sortType = value
                             }
+                        } label: {
+                            Text(label)
+                                .font(.caption.weight(isSelected ? .semibold : .medium))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 7)
+                                .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
+                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
+                .padding(5)
+                .glassEffect(.regular.interactive(), in: .capsule)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .onChange(of: sortType) { _, _ in
+                Task { await reload() }
             }
         }
         .navigationTitle("酷图")
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .task { await reload() }
     }
 

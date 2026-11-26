@@ -137,7 +137,10 @@ public final class SettingsStore {
             if let data = try? JSONEncoder().encode(protocolParameters) {
                 defaults.set(data, forKey: "settings.protocolParameters")
             }
-            Task { await CoolapkClient.shared.updateParameters(protocolParameters) }
+            Task {
+                await CoolapkClient.shared.updateParameters(protocolParameters)
+                await ImagePipeline.shared.updateUserAgent(protocolParameters.userAgent)
+            }
         }
     }
 
@@ -201,6 +204,7 @@ public final class SettingsStore {
 
     public func syncProtocolToClient() async {
         await CoolapkClient.shared.updateParameters(protocolParameters)
+        await ImagePipeline.shared.updateUserAgent(protocolParameters.userAgent)
     }
 
     public func addSearchHistory(_ keyword: String) {

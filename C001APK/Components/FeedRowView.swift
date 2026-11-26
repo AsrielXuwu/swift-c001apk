@@ -8,6 +8,8 @@ public struct FeedRowView: View {
     public var onLikeChanged: ((Bool, Int) -> Void)?
 
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
     @State private var isLiked: Bool
     @State private var likeCount: Int
     @State private var isLiking = false
@@ -29,9 +31,7 @@ public struct FeedRowView: View {
             authorHeader
             bodyContent
             if !feed.mediaItems.isEmpty {
-                MediaGridView(items: feed.mediaItems) { index in
-                    appState.openMedia(feed.mediaItems, at: index)
-                }
+                MediaGridView(items: feed.mediaItems)
             }
             if let source = feed.sourceFeed {
                 forwardedQuoteCard(source)
@@ -44,14 +44,16 @@ public struct FeedRowView: View {
             }
             actionFooter
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .contentShape(Rectangle())
+        .padding(14)
+        .c001CardStyle(cornerRadius: 16)
+        .padding(.horizontal, 12)
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .applyZoomSource(id: "feed-\(transitionSeed)", in: zoomNamespace)
         .onTapGesture {
             if let onSelectFeed {
                 onSelectFeed()
             } else {
-                appState.push(.feed(id: feed.id, initial: feed))
+                appState.push(.feed(id: feed.id, initial: feed, transitionID: "feed-\(transitionSeed)"))
             }
         }
         .onChange(of: feed.isLiked) { _, newValue in
@@ -67,9 +69,12 @@ public struct FeedRowView: View {
     private var authorHeader: some View {
         HStack(spacing: 10) {
             Button {
-                if !feed.uid.isEmpty { appState.push(.user(uid: feed.uid)) }
+                if !feed.uid.isEmpty {
+                    appState.push(.user(uid: feed.uid, transitionID: "avatar-\(transitionSeed)"))
+                }
             } label: {
                 AvatarView(url: feed.avatar, size: 36)
+                    .applyZoomSource(id: "avatar-\(transitionSeed)", in: zoomNamespace)
             }
             .buttonStyle(.plain)
 
@@ -194,17 +199,16 @@ public struct FeedRowView: View {
                 }
             }
             if !source.mediaItems.isEmpty {
-                MediaGridView(items: source.mediaItems) { index in
-                    appState.openMedia(source.mediaItems, at: index)
-                }
+                MediaGridView(items: source.mediaItems)
             }
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .applyZoomSource(id: "quote-\(transitionSeed)", in: zoomNamespace)
         .onTapGesture {
             if !source.id.isEmpty {
-                appState.push(.feed(id: source.id))
+                appState.push(.feed(id: source.id, transitionID: "quote-\(transitionSeed)"))
             }
         }
     }
@@ -260,60 +264,62 @@ public struct FeedRowView: View {
     }
 
     private var actionFooter: some View {
-        HStack(spacing: 0) {
-            Button {
-                Task { await toggleLike() }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                    Text(likeCount > 0 ? Formatting.count(likeCount) : "赞")
-                        .monospacedDigit()
+        GlassEffectContainer(spacing: 8) {
+            HStack(spacing: 8) {
+                Button {
+                    Task { await toggleLike() }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                        Text(likeCount > 0 ? Formatting.count(likeCount) : "赞")
+                            .monospacedDigit()
+                    }
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(isLiked ? Color.pink : Color.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 32)
+                    .glassEffect(.regular.interactive(), in: .capsule)
                 }
-                .font(.footnote)
-                .foregroundStyle(isLiked ? Color.pink : Color.secondary)
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .leading)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .sensoryFeedback(.impact(flexibility: .soft), trigger: isLiked)
+                .buttonStyle(.plain)
+                .sensoryFeedback(.impact(flexibility: .soft), trigger: isLiked)
 
-            Button {
-                if let onSelectFeed {
-                    onSelectFeed()
-                } else {
-                    appState.push(.feed(id: feed.id, initial: feed))
+                Button {
+                    if let onSelectFeed {
+                        onSelectFeed()
+                    } else {
+                        appState.push(.feed(id: feed.id, initial: feed, transitionID: "feed-\(transitionSeed)"))
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "bubble.right")
+                        Text(feed.replyNum > 0 ? Formatting.count(feed.replyNum) : "评论")
+                            .monospacedDigit()
+                    }
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Color.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 32)
+                    .glassEffect(.regular.interactive(), in: .capsule)
                 }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "bubble.right")
-                    Text(feed.replyNum > 0 ? Formatting.count(feed.replyNum) : "评论")
-                        .monospacedDigit()
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .center)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
+                .buttonStyle(.plain)
 
-            Button {
-                if appState.accounts.isLoggedIn {
-                    appState.composeMode = .forward(feed)
-                } else {
-                    appState.showLoginSheet = true
+                Button {
+                    if appState.accounts.isLoggedIn {
+                        appState.composeMode = .forward(feed)
+                    } else {
+                        appState.showLoginSheet = true
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "arrowshape.turn.up.right")
+                        Text(feed.forwardNum > 0 ? Formatting.count(feed.forwardNum) : "转发")
+                            .monospacedDigit()
+                    }
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Color.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 32)
+                    .glassEffect(.regular.interactive(), in: .capsule)
                 }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrowshape.turn.up.right")
-                    Text(feed.forwardNum > 0 ? Formatting.count(feed.forwardNum) : "转发")
-                        .monospacedDigit()
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .trailing)
-                .contentShape(Rectangle())
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.top, 2)
     }

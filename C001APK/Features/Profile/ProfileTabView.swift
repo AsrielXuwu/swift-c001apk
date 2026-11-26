@@ -128,6 +128,7 @@ public struct ProfileTabView: View {
         }
         .listStyle(.insetGrouped)
         .navigationTitle("我的")
+        .c001NavBarStyle()
         .navigationBarTitleDisplayMode(.large)
     }
 }

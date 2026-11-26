@@ -21,6 +21,7 @@ public struct SearchView: View {
         }
         .navigationTitle("搜索")
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .searchable(text: $state.searchQuery, prompt: "搜索动态、话题、用户、应用")
         .onSubmit(of: .search) {
             Task { await viewModel.submitSearch(appState.searchQuery, appState: appState) }
@@ -95,18 +96,6 @@ public struct SearchView: View {
 
     private var resultsView: some View {
         VStack(spacing: 0) {
-            Picker("分类", selection: $viewModel.category) {
-                ForEach(SearchCategory.allCases) { cat in
-                    Text(cat.label).tag(cat)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            .onChange(of: viewModel.category) { _, _ in
-                Task { await viewModel.submitSearch(appState.searchQuery, appState: appState) }
-            }
-
             if viewModel.isSearching && viewModel.rows.isEmpty && viewModel.dyhResults.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -114,7 +103,7 @@ public struct SearchView: View {
                 ContentUnavailableView.search(text: viewModel.submittedKeyword)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    LazyVStack(spacing: 10) {
                         if viewModel.category == .dyh {
                             ForEach(Array(viewModel.dyhResults.enumerated()), id: \.element.id) { idx, dyh in
                                 Button {
@@ -129,9 +118,13 @@ public struct SearchView: View {
                                             Text(dyh.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                                         }
                                         Spacer()
+                                        Image(systemName: "chevron.right")
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
                                     }
-                                    .padding(.horizontal, 16)
-                                    .padding(.vertical, 10)
+                                    .padding(14)
+                                    .c001CardStyle(cornerRadius: 16)
+                                    .padding(.horizontal, 12)
                                 }
                                 .buttonStyle(.plain)
                                 .onAppear {
@@ -139,7 +132,6 @@ public struct SearchView: View {
                                         Task { await viewModel.loadMore(appState: appState) }
                                     }
                                 }
-                                Divider().padding(.leading, 16)
                             }
                         } else {
                             ForEach(Array(viewModel.rows.enumerated()), id: \.element.id) { idx, row in
@@ -155,7 +147,38 @@ public struct SearchView: View {
                             ProgressView().padding(.vertical, 16)
                         }
                     }
+                    .padding(.vertical, 8)
                 }
+            }
+        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .safeAreaInset(edge: .top, spacing: 0) {
+            GlassEffectContainer(spacing: 4) {
+                HStack(spacing: 4) {
+                    ForEach(SearchCategory.allCases) { cat in
+                        let isSelected = viewModel.category == cat
+                        Button {
+                            withAnimation(.snappy(duration: 0.22)) {
+                                viewModel.category = cat
+                            }
+                        } label: {
+                            Text(cat.label)
+                                .font(.caption.weight(isSelected ? .semibold : .medium))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 7)
+                                .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
+                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(5)
+                .glassEffect(.regular.interactive(), in: .capsule)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .onChange(of: viewModel.category) { _, _ in
+                Task { await viewModel.submitSearch(appState.searchQuery, appState: appState) }
             }
         }
     }

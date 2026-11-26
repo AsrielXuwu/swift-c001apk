@@ -7,7 +7,9 @@ public struct FeedDetailView: View {
 
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.zoomNamespace) private var zoomNamespace
     @State private var viewModel: FeedDetailViewModel
+    @State private var detailSeed = UUID().uuidString
     @State private var selectedReplyForThread: ReplyItem?
     @State private var engagementMode: EngagementSelection?
     @State private var isExporting = false
@@ -75,6 +77,8 @@ public struct FeedDetailView: View {
         }
         .navigationTitle(viewModel.feed?.feedTypeName ?? "动态详情")
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .toolbar {
             if let feed = viewModel.feed {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -174,7 +178,7 @@ public struct FeedDetailView: View {
 
     private func detailScroll(_ feed: FeedItem) -> some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 14) {
                     authorBar(feed)
 
@@ -196,9 +200,7 @@ public struct FeedDetailView: View {
                             }
                         }
                         if !feed.mediaItems.isEmpty {
-                            MediaGridView(items: feed.mediaItems) { index in
-                                appState.openMedia(feed.mediaItems, at: index)
-                            }
+                            MediaGridView(items: feed.mediaItems)
                         }
                     }
 
@@ -222,16 +224,17 @@ public struct FeedDetailView: View {
                                 }
                             }
                             if !source.mediaItems.isEmpty {
-                                MediaGridView(items: source.mediaItems) { idx in
-                                    appState.openMedia(source.mediaItems, at: idx)
-                                }
+                                MediaGridView(items: source.mediaItems)
                             }
                         }
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .applyZoomSource(id: "detail-quote-\(detailSeed)", in: zoomNamespace)
                         .onTapGesture {
-                            if !source.id.isEmpty { appState.push(.feed(id: source.id)) }
+                            if !source.id.isEmpty {
+                                appState.push(.feed(id: source.id, transitionID: "detail-quote-\(detailSeed)"))
+                            }
                         }
                     }
 
@@ -260,7 +263,7 @@ public struct FeedDetailView: View {
                                     .foregroundStyle(.tertiary)
                             }
                             .padding(10)
-                            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                         }
                         .buttonStyle(.plain)
                     }
@@ -268,15 +271,17 @@ public struct FeedDetailView: View {
                     metadataSummary(feed)
                 }
                 .padding(16)
+                .c001CardStyle(cornerRadius: 18)
+                .padding(.horizontal, 12)
                 .frame(maxWidth: 760, alignment: .leading)
                 .frame(maxWidth: .infinity)
-
-                Divider()
 
                 repliesHeader(feed)
 
                 repliesSection(feed)
             }
+            .padding(.top, 10)
+            .padding(.bottom, 20)
         }
         .refreshable {
             await viewModel.loadAll(appState: appState)
@@ -286,9 +291,12 @@ public struct FeedDetailView: View {
     private func authorBar(_ feed: FeedItem) -> some View {
         HStack(spacing: 10) {
             Button {
-                if !feed.uid.isEmpty { appState.push(.user(uid: feed.uid)) }
+                if !feed.uid.isEmpty {
+                    appState.push(.user(uid: feed.uid, transitionID: "detail-author-\(detailSeed)"))
+                }
             } label: {
                 AvatarView(url: feed.avatar, size: 42)
+                    .applyZoomSource(id: "detail-author-\(detailSeed)", in: zoomNamespace)
             }
             .buttonStyle(.plain)
 
@@ -309,12 +317,14 @@ public struct FeedDetailView: View {
     @ViewBuilder
     private func articleContent(_ feed: FeedItem) -> some View {
         if !feed.cover.isEmpty {
+            let coverPrefix = "cover-\(detailSeed)"
             Button {
-                appState.openMedia([FeedMedia(sourceUrl: feed.cover, contentId: feed.id, contentType: .article)], at: 0)
+                appState.openMedia([FeedMedia(sourceUrl: feed.cover, contentId: feed.id, contentType: .article)], at: 0, sourcePrefix: coverPrefix)
             } label: {
                 RemoteImageView(url: feed.cover, maxPixelSize: 1400)
                     .frame(maxWidth: .infinity, maxHeight: 240)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace)
             }
             .buttonStyle(.plain)
         }
@@ -339,13 +349,15 @@ public struct FeedDetailView: View {
                 }
             case "image":
                 if !part.url.isEmpty {
+                    let partPrefix = "art-\(detailSeed)-\(part.id)"
                     VStack(spacing: 4) {
                         Button {
-                            appState.openMedia([FeedMedia(sourceUrl: part.url, contentId: feed.id, contentType: .article)], at: 0)
+                            appState.openMedia([FeedMedia(sourceUrl: part.url, contentId: feed.id, contentType: .article)], at: 0, sourcePrefix: partPrefix)
                         } label: {
                             RemoteImageView(url: part.url, maxPixelSize: 1400, contentMode: .fit)
                                 .frame(maxWidth: .infinity)
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .applyZoomSource(id: "\(partPrefix)-0", in: zoomNamespace)
                         }
                         .buttonStyle(.plain)
                         if !part.description.isEmpty {
@@ -425,36 +437,52 @@ public struct FeedDetailView: View {
     }
 
     private func repliesHeader(_ feed: FeedItem) -> some View {
-        HStack {
+        HStack(spacing: 8) {
             Text("全部评论")
                 .font(.headline)
             Spacer()
-            Toggle("只看楼主", isOn: $viewModel.authorOnly)
-                .toggleStyle(.button)
-                .controlSize(.small)
-                .onChange(of: viewModel.authorOnly) { _, _ in
-                    Task { await viewModel.reloadReplies(appState: appState) }
-                }
-
-            Menu {
-                ForEach(FeedDetailViewModel.ReplySortMode.allCases) { mode in
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
                     Button {
-                        viewModel.sortMode = mode
+                        viewModel.authorOnly.toggle()
                         Task { await viewModel.reloadReplies(appState: appState) }
                     } label: {
-                        HStack {
-                            Text(mode.label)
-                            if viewModel.sortMode == mode { Image(systemName: "checkmark") }
+                        Text("只看楼主")
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(viewModel.authorOnly ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                            .foregroundStyle(viewModel.authorOnly ? Color.accentColor : Color.primary)
+                    }
+                    .buttonStyle(.plain)
+
+                    Menu {
+                        ForEach(FeedDetailViewModel.ReplySortMode.allCases) { mode in
+                            Button {
+                                viewModel.sortMode = mode
+                                Task { await viewModel.reloadReplies(appState: appState) }
+                            } label: {
+                                HStack {
+                                    Text(mode.label)
+                                    if viewModel.sortMode == mode { Image(systemName: "checkmark") }
+                                }
+                            }
                         }
+                    } label: {
+                        Label(viewModel.sortMode.label, systemImage: "arrow.up.arrow.down")
+                            .font(.caption.weight(.medium))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                            .foregroundStyle(.primary)
                     }
                 }
-            } label: {
-                Label(viewModel.sortMode.label, systemImage: "arrow.up.arrow.down")
-                    .font(.caption.weight(.medium))
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
         .frame(maxWidth: 760)
         .frame(maxWidth: .infinity)
     }
@@ -471,17 +499,19 @@ public struct FeedDetailView: View {
         let coinIDs = Set(coinOnlyReplies.map(\.id))
         let normalReplies = visibleReplies.filter { !coinIDs.contains($0.id) }
 
-        LazyVStack(alignment: .leading, spacing: 0) {
+        LazyVStack(alignment: .leading, spacing: 10) {
             if !coinOnlyReplies.isEmpty {
                 DisclosureGroup("已折叠 \(coinOnlyReplies.count) 条酷币表情评论", isExpanded: $viewModel.isCoinRepliesExpanded) {
-                    ForEach(coinOnlyReplies) { reply in
-                        replyRow(reply, feed: feed)
-                        Divider().padding(.leading, 56)
+                    VStack(spacing: 10) {
+                        ForEach(coinOnlyReplies) { reply in
+                            replyRow(reply, feed: feed)
+                        }
                     }
+                    .padding(.top, 8)
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                Divider()
+                .padding(14)
+                .c001CardStyle(cornerRadius: 16)
+                .padding(.horizontal, 12)
             }
 
             if viewModel.isLoadingReplies && visibleReplies.isEmpty {
@@ -499,7 +529,6 @@ public struct FeedDetailView: View {
                                 Task { await viewModel.loadMoreReplies(appState: appState) }
                             }
                         }
-                    Divider().padding(.leading, 56)
                 }
                 if viewModel.isLoadingMoreReplies {
                     ProgressView()
@@ -513,11 +542,15 @@ public struct FeedDetailView: View {
     }
 
     private func replyRow(_ reply: ReplyItem, feed: FeedItem) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        let replyAvatarID = "reply-avatar-\(detailSeed)-\(reply.id)"
+        return HStack(alignment: .top, spacing: 10) {
             Button {
-                if !reply.uid.isEmpty { appState.push(.user(uid: reply.uid)) }
+                if !reply.uid.isEmpty {
+                    appState.push(.user(uid: reply.uid, transitionID: replyAvatarID))
+                }
             } label: {
                 AvatarView(url: reply.avatar, size: 34)
+                    .applyZoomSource(id: replyAvatarID, in: zoomNamespace)
             }
             .buttonStyle(.plain)
 
@@ -535,11 +568,14 @@ public struct FeedDetailView: View {
                     Button {
                         Task { await viewModel.toggleReplyLike(reply, appState: appState) }
                     } label: {
-                        HStack(spacing: 3) {
+                        HStack(spacing: 4) {
                             Image(systemName: reply.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
                             if reply.likeNum > 0 { Text("\(reply.likeNum)").monospacedDigit() }
                         }
-                        .font(.caption)
+                        .font(.caption.weight(.medium))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .glassEffect(.regular.interactive(), in: .capsule)
                         .foregroundStyle(reply.isLiked ? Color.pink : Color.secondary)
                     }
                     .buttonStyle(.plain)
@@ -554,9 +590,7 @@ public struct FeedDetailView: View {
                 }
 
                 if !reply.mediaItems.isEmpty {
-                    MediaGridView(items: reply.mediaItems) { idx in
-                        appState.openMedia(reply.mediaItems, at: idx)
-                    }
+                    MediaGridView(items: reply.mediaItems)
                 }
 
                 if !reply.nested.isEmpty || reply.replyNum > 0 {
@@ -578,7 +612,7 @@ public struct FeedDetailView: View {
                         }
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
@@ -591,9 +625,10 @@ public struct FeedDetailView: View {
                     .foregroundStyle(.tertiary)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .contentShape(Rectangle())
+        .padding(14)
+        .c001CardStyle(cornerRadius: 16)
+        .padding(.horizontal, 12)
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onTapGesture {
             if appState.accounts.isLoggedIn {
                 appState.composeMode = .replyToComment(targetID: reply.id, replyToName: reply.username)
@@ -635,60 +670,74 @@ public struct FeedDetailView: View {
     }
 
     private func bottomInteractionBar(_ feed: FeedItem) -> some View {
-        HStack(spacing: 14) {
-            Button {
-                if appState.accounts.isLoggedIn {
-                    appState.composeMode = .replyToFeed(feedID: feed.id, authorName: feed.username)
-                } else {
-                    appState.showLoginSheet = true
-                }
-            } label: {
-                HStack {
-                    Image(systemName: "bubble.right")
-                    Text("写评论…")
-                    Spacer()
-                }
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 9)
-                .background(Color(.secondarySystemBackground), in: Capsule())
-            }
-            .buttonStyle(.plain)
+        let isBookmarked = appState.accounts.isLoggedIn
+            ? feed.isFavorited
+            : appState.historyAndFav.isLocallyFavorited(id: feed.id)
 
-            Button {
-                Task { await viewModel.toggleLike(appState: appState) }
-            } label: {
-                Image(systemName: feed.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
-                    .font(.title3)
-                    .foregroundStyle(feed.isLiked ? Color.pink : Color.primary)
-            }
-
-            let isBookmarked = appState.accounts.isLoggedIn
-                ? feed.isFavorited
-                : appState.historyAndFav.isLocallyFavorited(id: feed.id)
-            Button {
-                Task { await viewModel.toggleCollect(appState: appState) }
-            } label: {
-                Image(systemName: isBookmarked ? "star.fill" : "star")
-                    .font(.title3)
-                    .foregroundStyle(isBookmarked ? Color.orange : Color.primary)
-            }
-
-            Button {
-                if appState.accounts.isLoggedIn {
-                    appState.composeMode = .forward(feed)
-                } else {
-                    appState.showLoginSheet = true
+        return GlassEffectContainer(spacing: 10) {
+            HStack(spacing: 10) {
+                Button {
+                    if appState.accounts.isLoggedIn {
+                        appState.composeMode = .replyToFeed(feedID: feed.id, authorName: feed.username)
+                    } else {
+                        appState.showLoginSheet = true
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "bubble.right")
+                        Text("写评论…")
+                        Spacer()
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 16)
+                    .frame(height: 44)
+                    .glassEffect(.regular.interactive(), in: .capsule)
                 }
-            } label: {
-                Image(systemName: "arrowshape.turn.up.right")
-                    .font(.title3)
+                .buttonStyle(.plain)
+
+                Button {
+                    Task { await viewModel.toggleLike(appState: appState) }
+                } label: {
+                    Image(systemName: feed.isLiked ? "hand.thumbsup.fill" : "hand.thumbsup")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(feed.isLiked ? Color.pink : Color.primary)
+                        .frame(width: 44, height: 44)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                }
+                .buttonStyle(.plain)
+                .sensoryFeedback(.impact(flexibility: .soft), trigger: feed.isLiked)
+
+                Button {
+                    Task { await viewModel.toggleCollect(appState: appState) }
+                } label: {
+                    Image(systemName: isBookmarked ? "star.fill" : "star")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(isBookmarked ? Color.orange : Color.primary)
+                        .frame(width: 44, height: 44)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    if appState.accounts.isLoggedIn {
+                        appState.composeMode = .forward(feed)
+                    } else {
+                        appState.showLoginSheet = true
+                    }
+                } label: {
+                    Image(systemName: "arrowshape.turn.up.right")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(Color.primary)
+                        .frame(width: 44, height: 44)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                }
+                .buttonStyle(.plain)
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
     }
 
     private func startExport(feed: FeedItem, format: ExportFormat) async {

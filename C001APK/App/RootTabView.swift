@@ -3,6 +3,7 @@ import SwiftUI
 
 public struct RootTabView: View {
     @Environment(AppState.self) private var appState
+    @Namespace private var appZoomNamespace
 
     public init() {}
 
@@ -48,6 +49,7 @@ public struct RootTabView: View {
         }
         .tabViewStyle(.sidebarAdaptable)
         .tabBarMinimizeBehavior(.onScrollDown)
+        .environment(\.zoomNamespace, appZoomNamespace)
         .sheet(isPresented: $state.showOnboarding) {
             OnboardingView()
                 .interactiveDismissDisabled()
@@ -68,6 +70,7 @@ public struct RootTabView: View {
         }
         .fullScreenCover(item: $state.mediaViewer) { presentation in
             MediaViewerView(presentation: presentation)
+                .environment(\.zoomNamespace, appZoomNamespace)
         }
         .overlay(alignment: .bottom) {
             if let toast = appState.toastMessage {
@@ -118,22 +121,30 @@ public struct RootTabView: View {
     @ViewBuilder
     private func destinationView(for route: AppRoute) -> some View {
         switch route {
-        case let .feed(id, initial):
+        case let .feed(id, initial, transitionID):
             FeedDetailView(feedID: id, initialFeed: initial)
-        case let .user(uid):
+                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+        case let .user(uid, transitionID):
             UserDetailView(uid: uid)
-        case let .topic(tag):
+                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+        case let .topic(tag, transitionID):
             TopicDetailView(tag: tag)
-        case let .product(id):
+                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+        case let .product(id, transitionID):
             ProductDetailView(productID: id)
-        case let .app(id):
+                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+        case let .app(id, transitionID):
             AppDetailView(appID: id)
-        case let .collection(id):
+                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+        case let .collection(id, transitionID):
             CollectionDetailView(collectionID: id)
-        case let .dyh(id):
+                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+        case let .dyh(id, transitionID):
             DyhDetailView(dyhID: id)
-        case let .event(id):
+                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+        case let .event(id, transitionID):
             EventDetailView(eventID: id)
+                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
         case let .page(link, title):
             PageFeedView(link: link, title: title)
         case let .coolpic(tag):

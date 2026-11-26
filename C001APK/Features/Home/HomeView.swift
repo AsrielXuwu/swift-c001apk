@@ -14,41 +14,20 @@ public struct HomeView: View {
         let activeTab = visibleTabs.contains(selectedTab) ? selectedTab : .feed
 
         ScrollViewReader { proxy in
-            VStack(spacing: 0) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(visibleTabs) { tab in
-                            let isSelected = tab == activeTab
-                            Button {
-                                if isSelected {
-                                    withAnimation(.snappy) { proxy.scrollTo("home-top-\(tab.rawValue)", anchor: .top) }
-                                } else {
-                                    selectedTab = tab
-                                }
-                            } label: {
-                                Text(tab.label)
-                                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(
-                                        isSelected ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground),
-                                        in: Capsule()
-                                    )
-                                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
+            TabView(selection: $selectedTab) {
+                ForEach(visibleTabs) { tab in
+                    tabContent(for: tab)
+                        .tag(tab)
                 }
-
-                Divider()
-
-                tabContent(for: activeTab)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) {
+                floatingCategoryStrip(visibleTabs: visibleTabs, activeTab: activeTab, proxy: proxy)
             }
             .navigationTitle("酷安")
             .navigationBarTitleDisplayMode(.inline)
+            .c001NavBarStyle()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
@@ -81,6 +60,16 @@ public struct HomeView: View {
             .sheet(isPresented: $showTabEditor) {
                 HomeTabsEditorSheet()
             }
+            .onChange(of: visibleTabs) { _, newTabs in
+                if !newTabs.contains(selectedTab) {
+                    selectedTab = newTabs.first ?? .feed
+                }
+            }
+            .onChange(of: activeTab) { _, newTab in
+                withAnimation(.snappy(duration: 0.25)) {
+                    proxy.scrollTo("tab-chip-\(newTab.rawValue)", anchor: .center)
+                }
+            }
             .task(id: "\(appState.sessionVersion)|\(activeTab.rawValue)") {
                 await viewModel.loadInitial(tab: activeTab, appState: appState)
             }
@@ -92,6 +81,50 @@ public struct HomeView: View {
                     await viewModel.loadInitial(tab: activeTab, appState: appState, force: true)
                 }
             }
+        }
+    }
+
+    private func floatingCategoryStrip(
+        visibleTabs: [HomeTabType],
+        activeTab: HomeTabType,
+        proxy: ScrollViewProxy
+    ) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            GlassEffectContainer(spacing: 6) {
+                HStack(spacing: 6) {
+                    ForEach(visibleTabs) { tab in
+                        let isSelected = tab == activeTab
+                        Button {
+                            if isSelected {
+                                withAnimation(.snappy) {
+                                    proxy.scrollTo("home-top-\(tab.rawValue)", anchor: .top)
+                                }
+                            } else {
+                                withAnimation(.snappy(duration: 0.24)) {
+                                    selectedTab = tab
+                                }
+                            }
+                        } label: {
+                            Text(tab.label)
+                                .font(.subheadline.weight(isSelected ? .semibold : .medium))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .background(
+                                    isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
+                                    in: Capsule()
+                                )
+                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                        .id("tab-chip-\(tab.rawValue)")
+                    }
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 5)
+                .glassEffect(.regular.interactive(), in: .capsule)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
         }
     }
 
@@ -119,7 +152,7 @@ public struct HomeView: View {
         } else {
             ScrollView {
                 Color.clear.frame(height: 0).id("home-top-\(tab.rawValue)")
-                LazyVStack(spacing: 0) {
+                LazyVStack(spacing: 10) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                         HomeRowRenderer(row: row)
                             .onAppear {
@@ -134,6 +167,7 @@ public struct HomeView: View {
                             .padding(.vertical, 16)
                     }
                 }
+                .padding(.vertical, 8)
             }
             .refreshable {
                 await viewModel.loadInitial(tab: tab, appState: appState, force: true)

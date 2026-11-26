@@ -9,47 +9,25 @@ public struct FollowView: View {
 
     public var body: some View {
         ScrollViewReader { proxy in
-            VStack(spacing: 0) {
-                Picker("来源", selection: $viewModel.segment) {
-                    ForEach(FollowSegment.allCases) { seg in
-                        Text(seg.rawValue).tag(seg)
+            TabView(selection: $viewModel.segment) {
+                ForEach(FollowSegment.allCases) { seg in
+                    segmentContent(for: seg)
+                        .tag(seg)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(spacing: 6) {
+                    floatingSegmentStrip
+                    if viewModel.segment == .topics && !viewModel.followedTopics.isEmpty {
+                        topicChipsStrip
                     }
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-
-                if viewModel.segment == .topics && !viewModel.followedTopics.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(viewModel.followedTopics) { topic in
-                                let selected = viewModel.selectedTopicTag == topic.title
-                                Button {
-                                    viewModel.selectedTopicTag = topic.title
-                                    Task { await viewModel.loadInitial(appState: appState, force: true) }
-                                } label: {
-                                    Text("#\(topic.title)")
-                                        .font(.caption.weight(selected ? .semibold : .regular))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(
-                                            selected ? Color.accentColor.opacity(0.16) : Color(.secondarySystemBackground),
-                                            in: Capsule()
-                                        )
-                                        .foregroundStyle(selected ? Color.accentColor : Color.primary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal, 16)
-                        .padding(.bottom, 8)
-                    }
-                }
-
-                contentList
             }
             .navigationTitle("关注")
             .navigationBarTitleDisplayMode(.inline)
+            .c001NavBarStyle()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -63,14 +41,75 @@ public struct FollowView: View {
                 await viewModel.loadInitial(appState: appState, force: true)
             }
             .onChange(of: appState.followDoubleTapTrigger) { _, _ in
-                withAnimation(.snappy) { proxy.scrollTo("follow-top", anchor: .top) }
+                withAnimation(.snappy) { proxy.scrollTo("follow-top-\(viewModel.segment.rawValue)", anchor: .top) }
             }
         }
     }
 
+    private var floatingSegmentStrip: some View {
+        GlassEffectContainer(spacing: 4) {
+            HStack(spacing: 4) {
+                ForEach(FollowSegment.allCases) { seg in
+                    let isSelected = viewModel.segment == seg
+                    Button {
+                        withAnimation(.snappy(duration: 0.24)) {
+                            viewModel.segment = seg
+                        }
+                    } label: {
+                        Text(seg.rawValue)
+                            .font(.subheadline.weight(isSelected ? .semibold : .medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background(
+                                isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
+                                in: Capsule()
+                            )
+                            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(5)
+            .glassEffect(.regular.interactive(), in: .capsule)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, viewModel.segment == .topics && !viewModel.followedTopics.isEmpty ? 0 : 6)
+    }
+
+    private var topicChipsStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            GlassEffectContainer(spacing: 6) {
+                HStack(spacing: 8) {
+                    ForEach(viewModel.followedTopics) { topic in
+                        let selected = viewModel.selectedTopicTag == topic.title
+                        Button {
+                            viewModel.selectedTopicTag = topic.title
+                            Task { await viewModel.loadInitial(appState: appState, force: true) }
+                        } label: {
+                            Text("#\(topic.title)")
+                                .font(.caption.weight(selected ? .semibold : .medium))
+                                .padding(.horizontal, 11)
+                                .padding(.vertical, 6)
+                                .background(
+                                    selected ? Color.accentColor.opacity(0.18) : Color.clear,
+                                    in: Capsule()
+                                )
+                                .glassEffect(.regular.interactive(), in: .capsule)
+                                .foregroundStyle(selected ? Color.accentColor : Color.primary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.bottom, 6)
+        }
+    }
+
     @ViewBuilder
-    private var contentList: some View {
-        if !appState.accounts.isLoggedIn && (viewModel.segment == .users || viewModel.segment == .topics) {
+    private func segmentContent(for seg: FollowSegment) -> some View {
+        if !appState.accounts.isLoggedIn && (seg == .users || seg == .topics) {
             ContentUnavailableView {
                 Label("需要登录酷安账号", systemImage: "person.crop.circle.badge.exclamationmark")
             } description: {
@@ -79,6 +118,8 @@ public struct FollowView: View {
                 Button("立即登录") { appState.showLoginSheet = true }
                     .buttonStyle(.borderedProminent)
             }
+        } else if viewModel.segment != seg {
+            Color.clear
         } else if viewModel.isLoading && viewModel.rows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -95,14 +136,14 @@ public struct FollowView: View {
             ContentUnavailableView {
                 Label("暂无关注动态", systemImage: "person.2")
             } description: {
-                Text(viewModel.segment == .local || !appState.accounts.isLoggedIn
+                Text(seg == .local || !appState.accounts.isLoggedIn
                      ? "可在用户主页点击或长按关注按钮添加到本机关注。"
                      : "关注更多酷友或话题即可在这里查看最新动态。")
             }
         } else {
             ScrollView {
-                Color.clear.frame(height: 0).id("follow-top")
-                LazyVStack(spacing: 0) {
+                Color.clear.frame(height: 0).id("follow-top-\(seg.rawValue)")
+                LazyVStack(spacing: 10) {
                     ForEach(Array(viewModel.rows.enumerated()), id: \.element.id) { index, row in
                         HomeRowRenderer(row: row)
                             .onAppear {
@@ -117,6 +158,7 @@ public struct FollowView: View {
                             .padding(.vertical, 16)
                     }
                 }
+                .padding(.vertical, 8)
             }
             .refreshable {
                 await viewModel.loadInitial(appState: appState, force: true)

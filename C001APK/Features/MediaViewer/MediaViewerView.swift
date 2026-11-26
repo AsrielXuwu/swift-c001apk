@@ -10,10 +10,10 @@ public struct MediaViewerView: View {
 
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.zoomNamespace) private var zoomNamespace
 
     @State private var currentIndex: Int
     @State private var showControls = true
-    @State private var dragOffsetY: CGFloat = 0
     @State private var loopLivePhoto = false
 
     public init(presentation: MediaViewerPresentation) {
@@ -44,28 +44,13 @@ public struct MediaViewerView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-            .offset(y: dragOffsetY)
-            .gesture(
-                DragGesture(minimumDistance: 20)
-                    .onChanged { value in
-                        if abs(value.translation.height) > abs(value.translation.width), value.translation.height > 0 {
-                            dragOffsetY = value.translation.height
-                        }
-                    }
-                    .onEnded { value in
-                        if value.translation.height > 120 {
-                            dismiss()
-                        } else {
-                            withAnimation(.snappy) { dragOffsetY = 0 }
-                        }
-                    }
-            )
 
             if showControls {
                 controlsOverlay
             }
         }
         .statusBarHidden(!showControls)
+        .applyZoomTransition(sourceID: presentation.sourceID(at: currentIndex), in: zoomNamespace)
     }
 
     private var controlsOverlay: some View {

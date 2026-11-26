@@ -1,3 +1,4 @@
+import CoolapkKit
 import CryptoKit
 import Foundation
 import ImageIO
@@ -18,6 +19,12 @@ public actor ImagePipeline {
     private let diskDirectory: URL
     private let maxDiskBytes: Int = 500 * 1024 * 1024
     private var inFlightTasks: [String: Task<LoadedImageResult?, Never>] = [:]
+    private var userAgent: String = CoolapkToken.defaultUserAgent(
+        deviceBrand: CoolapkToken.defaultDeviceBrand,
+        deviceModel: CoolapkToken.defaultDeviceModel,
+        appVersion: CoolapkToken.defaultAppVersion,
+        appCode: CoolapkToken.defaultAppCode
+    )
 
     private init() {
         let cache = NSCache<NSString, UIImage>()
@@ -25,17 +32,24 @@ public actor ImagePipeline {
         cache.totalCostLimit = 120 * 1024 * 1024
         self.memoryCache = cache
 
-        let config = URLSessionConfiguration.default
+        let config = URLSessionConfiguration.ephemeral
+        config.urlCache = nil
         config.timeoutIntervalForRequest = 20
         config.timeoutIntervalForResource = 60
         config.httpMaximumConnectionsPerHost = 8
-        config.requestCachePolicy = .returnCacheDataElseLoad
+        config.requestCachePolicy = .reloadIgnoringLocalCacheData
         self.session = URLSession(configuration: config)
 
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         self.diskDirectory = caches.appendingPathComponent("CoolapkImages", isDirectory: true)
         try? FileManager.default.createDirectory(at: diskDirectory, withIntermediateDirectories: true)
+    }
+
+    public func updateUserAgent(_ value: String) {
+        if !value.isEmpty {
+            userAgent = value
+        }
     }
 
     public func purgeMemory() {
@@ -74,7 +88,9 @@ public actor ImagePipeline {
         }
         do {
             var request = URLRequest(url: url)
-            request.setValue("https://www.coolapk.com/", forHTTPHeaderField: "Referer")
+            request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
+            request.setValue("image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            request.setValue("gzip, deflate", forHTTPHeaderField: "Accept-Encoding")
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse,
                   (200...299).contains(http.statusCode),

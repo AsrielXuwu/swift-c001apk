@@ -5,6 +5,8 @@ public struct UserDetailView: View {
     public let uid: String
 
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
     @State private var profile: UserProfile?
     @State private var rows: [HomeFeedRow] = []
     @State private var likedRows: [HomeFeedRow] = []
@@ -30,28 +32,22 @@ public struct UserDetailView: View {
 
     public var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 10) {
                 headerCard
 
-                Picker("栏目", selection: $tab) {
-                    ForEach(UserTab.allCases) { item in
-                        Text(item.rawValue).tag(item)
+                floatingUserTabs
+                    .onChange(of: tab) { _, _ in
+                        Task { await reloadTab() }
                     }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .onChange(of: tab) { _, _ in
-                    Task { await reloadTab() }
-                }
-
-                Divider()
 
                 tabBody
             }
+            .padding(.vertical, 10)
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(profile?.username ?? "用户主页")
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .toolbar {
             if let profile, uid != appState.accounts.activeUID {
                 ToolbarItemGroup(placement: .topBarTrailing) {
@@ -98,12 +94,53 @@ public struct UserDetailView: View {
         }
     }
 
+    private var floatingUserTabs: some View {
+        GlassEffectContainer(spacing: 4) {
+            HStack(spacing: 4) {
+                ForEach(UserTab.allCases) { item in
+                    let isSelected = (tab == item)
+                    Button {
+                        withAnimation(.snappy(duration: 0.22)) {
+                            tab = item
+                        }
+                    } label: {
+                        Text(item.rawValue)
+                            .font(.caption.weight(isSelected ? .semibold : .medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 7)
+                            .background(
+                                isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
+                                in: Capsule()
+                            )
+                            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(5)
+            .glassEffect(.regular.interactive(), in: .capsule)
+        }
+        .padding(.horizontal, 12)
+    }
+
     @ViewBuilder
     private var headerCard: some View {
         if let profile {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 14) {
-                    AvatarView(url: profile.avatar, size: 64)
+                    Button {
+                        if !profile.avatar.isEmpty {
+                            appState.openMedia(
+                                [FeedMedia(sourceUrl: profile.avatar)],
+                                at: 0,
+                                sourcePrefix: "user-avatar-\(transitionSeed)"
+                            )
+                        }
+                    } label: {
+                        AvatarView(url: profile.avatar, size: 64)
+                            .applyZoomSource(id: "user-avatar-\(transitionSeed)-0", in: zoomNamespace)
+                    }
+                    .buttonStyle(.plain)
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(profile.username)
@@ -151,6 +188,8 @@ public struct UserDetailView: View {
                 .foregroundStyle(.secondary)
             }
             .padding(16)
+            .c001CardStyle(cornerRadius: 18)
+            .padding(.horizontal, 12)
         } else {
             ProgressView()
                 .frame(maxWidth: .infinity)
@@ -172,10 +211,11 @@ public struct UserDetailView: View {
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
             .background(
-                (profile.isFollowed || isLocalFollowed) ? Color(.secondarySystemBackground) : Color.accentColor,
+                (profile.isFollowed || isLocalFollowed) ? Color.clear : Color.accentColor.opacity(0.20),
                 in: Capsule()
             )
-            .foregroundStyle((profile.isFollowed || isLocalFollowed) ? Color.primary : Color.white)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .foregroundStyle((profile.isFollowed || isLocalFollowed) ? Color.primary : Color.accentColor)
             .onTapGesture {
                 Task { await handleFollowTap(profile: profile) }
             }
@@ -201,17 +241,14 @@ public struct UserDetailView: View {
             case .collections:
                 ForEach(userCollections) { item in
                     CollectionRowView(item: item)
-                    Divider().padding(.leading, 16)
                 }
             case .following:
                 ForEach(following) { user in
                     UserRowView(user: user)
-                    Divider().padding(.leading, 16)
                 }
             case .fans:
                 ForEach(followers) { user in
                     UserRowView(user: user)
-                    Divider().padding(.leading, 16)
                 }
             }
         }

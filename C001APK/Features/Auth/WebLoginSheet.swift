@@ -75,7 +75,8 @@ private struct WebLoginRepresentable: UIViewRepresentable {
                 if let uid = map["uid"], !uid.isEmpty,
                    let token = map["token"], !token.isEmpty {
                     self.finished = true
-                    let username = map["username"] ?? uid
+                    let rawName = map["username"] ?? uid
+                    let username = rawName.removingPercentEncoding ?? rawName
                     let sessid = map["SESSID"] ?? ""
                     self.onCapturedCredentials(uid, username, token, sessid)
                 }

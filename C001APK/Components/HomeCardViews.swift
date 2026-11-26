@@ -16,33 +16,22 @@ public struct HomeRowRenderer: View {
         switch row {
         case let .feed(feed):
             if shouldShowFeed(feed) {
-                FeedRowView(feed: feed) {
-                    if let onSelectFeed {
-                        onSelectFeed(feed)
-                    } else {
-                        appState.push(.feed(id: feed.id, initial: feed))
-                    }
-                }
-                Divider().padding(.leading, 16)
+                FeedRowView(feed: feed, onSelectFeed: onSelectFeed.map { callback in { callback(feed) } })
             }
 
         case let .product(product):
             ProductRowView(product: product)
-            Divider().padding(.leading, 16)
 
         case let .topic(topic):
             TopicRowView(topic: topic)
-            Divider().padding(.leading, 16)
 
         case let .user(user):
             if !appState.blacklist.isUserBlocked(user.id) && appState.contentFilter.match(user: user) == nil {
                 UserRowView(user: user)
-                Divider().padding(.leading, 16)
             }
 
         case let .app(app):
             AppRowView(app: app)
-            Divider().padding(.leading, 16)
 
         case let .banners(_, banners):
             BannerCarouselView(banners: banners)
@@ -63,8 +52,11 @@ public struct HomeRowRenderer: View {
             Text(text)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .c001CardStyle(cornerRadius: 14)
+                .padding(.horizontal, 12)
 
         case let .loginPrompt(_, title):
             HStack {
@@ -75,11 +67,15 @@ public struct HomeRowRenderer: View {
                 Button("去登录") {
                     appState.showLoginSheet = true
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .glassEffect(.regular.interactive(), in: .capsule)
+                .foregroundStyle(Color.accentColor)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(14)
+            .c001CardStyle(cornerRadius: 16)
+            .padding(.horizontal, 12)
 
         case let .goods(_, items):
             GoodsStripView(items: items)
@@ -89,11 +85,9 @@ public struct HomeRowRenderer: View {
 
         case let .browse(item):
             BrowseRowView(item: item)
-            Divider().padding(.leading, 16)
 
         case let .collection(item):
             CollectionRowView(item: item)
-            Divider().padding(.leading, 16)
         }
     }
 
@@ -240,12 +234,15 @@ struct SectionHeaderRow: View {
                 Button("更多") {
                     appState.openRawLink(url)
                 }
-                .font(.subheadline)
+                .font(.caption.weight(.medium))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .glassEffect(.regular.interactive(), in: .capsule)
             }
         }
         .padding(.horizontal, 16)
-        .padding(.top, 14)
-        .padding(.bottom, 6)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
     }
 }
 
@@ -255,22 +252,24 @@ struct LinkBarRowView: View {
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(sections) { item in
-                    Button {
-                        if !item.url.isEmpty { appState.openRawLink(item.url) }
-                    } label: {
-                        Text(item.title)
-                            .font(.subheadline)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                            .background(Color(.secondarySystemBackground), in: Capsule())
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    ForEach(sections) { item in
+                        Button {
+                            if !item.url.isEmpty { appState.openRawLink(item.url) }
+                        } label: {
+                            Text(item.title)
+                                .font(.subheadline)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .glassEffect(.regular.interactive(), in: .capsule)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 4)
         }
     }
 }
@@ -355,12 +354,14 @@ struct LivesStripView: View {
 public struct ProductRowView: View {
     public let product: ProductItem
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
 
     public init(product: ProductItem) { self.product = product }
 
     public var body: some View {
         Button {
-            appState.push(.product(id: product.id))
+            appState.push(.product(id: product.id, transitionID: "product-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: product.logo, maxPixelSize: 160)
@@ -383,9 +384,11 @@ public struct ProductRowView: View {
                         .foregroundStyle(Color.accentColor)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .padding(14)
+            .c001CardStyle(cornerRadius: 16)
+            .padding(.horizontal, 12)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .applyZoomSource(id: "product-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)
     }
@@ -394,12 +397,14 @@ public struct ProductRowView: View {
 public struct TopicRowView: View {
     public let topic: TopicItem
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
 
     public init(topic: TopicItem) { self.topic = topic }
 
     public var body: some View {
         Button {
-            appState.push(.topic(tag: topic.title))
+            appState.push(.topic(tag: topic.title, transitionID: "topic-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: topic.logo, maxPixelSize: 144)
@@ -422,9 +427,11 @@ public struct TopicRowView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .padding(14)
+            .c001CardStyle(cornerRadius: 16)
+            .padding(.horizontal, 12)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .applyZoomSource(id: "topic-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)
     }
@@ -433,12 +440,14 @@ public struct TopicRowView: View {
 public struct UserRowView: View {
     public let user: UserBrief
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
 
     public init(user: UserBrief) { self.user = user }
 
     public var body: some View {
         Button {
-            appState.push(.user(uid: user.id))
+            appState.push(.user(uid: user.id, transitionID: "userrow-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 AvatarView(url: user.avatar, size: 42)
@@ -469,9 +478,11 @@ public struct UserRowView: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .padding(14)
+            .c001CardStyle(cornerRadius: 16)
+            .padding(.horizontal, 12)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .applyZoomSource(id: "userrow-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)
     }
@@ -480,12 +491,14 @@ public struct UserRowView: View {
 public struct AppRowView: View {
     public let app: AppItem
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
 
     public init(app: AppItem) { self.app = app }
 
     public var body: some View {
         Button {
-            appState.push(.app(id: app.id))
+            appState.push(.app(id: app.id, transitionID: "app-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: app.logo, maxPixelSize: 160)
@@ -509,9 +522,11 @@ public struct AppRowView: View {
                         .foregroundStyle(.orange)
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .padding(14)
+            .c001CardStyle(cornerRadius: 16)
+            .padding(.horizontal, 12)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .applyZoomSource(id: "app-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)
     }
@@ -544,9 +559,10 @@ public struct BrowseRowView: View {
                 }
                 Spacer()
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .padding(14)
+            .c001CardStyle(cornerRadius: 16)
+            .padding(.horizontal, 12)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
     }
@@ -555,12 +571,14 @@ public struct BrowseRowView: View {
 public struct CollectionRowView: View {
     public let item: CollectionItem
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
 
     public init(item: CollectionItem) { self.item = item }
 
     public var body: some View {
         Button {
-            appState.push(.collection(id: item.id))
+            appState.push(.collection(id: item.id, transitionID: "col-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: item.logo, maxPixelSize: 144)
@@ -577,9 +595,11 @@ public struct CollectionRowView: View {
                 }
                 Spacer()
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
+            .padding(14)
+            .c001CardStyle(cornerRadius: 16)
+            .padding(.horizontal, 12)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .applyZoomSource(id: "col-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)
     }

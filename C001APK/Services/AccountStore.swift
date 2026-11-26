@@ -43,11 +43,13 @@ public final class AccountStore {
         guard !uid.isEmpty, uid.allSatisfy(\.isNumber), !token.isEmpty else {
             throw APIError.message("登录响应缺少有效账号信息")
         }
+        let normalizedName = (username.removingPercentEncoding ?? username)
+        let resolvedName = normalizedName.isEmpty ? uid : normalizedName
         saveCredentials(uid: uid, token: token, sessid: sessid)
         let existing = accounts.first { $0.uid == uid }
         let updated = SavedAccount(
             uid: uid,
-            username: username,
+            username: resolvedName,
             avatar: existing?.avatar ?? "",
             level: existing?.level ?? 0,
             exp: existing?.exp ?? 0,
@@ -58,7 +60,21 @@ public final class AccountStore {
         accounts.insert(updated, at: 0)
         activeUID = uid
         persistMetadata()
-        await CoolapkClient.shared.updateLogin(uid: uid, username: username, token: token, sessid: sessid)
+        await CoolapkClient.shared.updateLogin(uid: uid, username: resolvedName, token: token, sessid: sessid)
+    }
+
+    public func refreshActiveCredentials(uid: String, username: String, token: String) async {
+        guard activeUID == uid, !token.isEmpty else { return }
+        let existingCreds = readCredentials(for: uid)
+        let sessid = existingCreds?.sessid ?? ""
+        saveCredentials(uid: uid, token: token, sessid: sessid)
+        let cleanName = username.removingPercentEncoding ?? username
+        if let index = accounts.firstIndex(where: { $0.uid == uid }), !cleanName.isEmpty {
+            accounts[index].username = cleanName
+            persistMetadata()
+        }
+        let effectiveName = !cleanName.isEmpty ? cleanName : (accounts.first(where: { $0.uid == uid })?.username ?? uid)
+        await CoolapkClient.shared.updateLogin(uid: uid, username: effectiveName, token: token, sessid: sessid)
     }
 
     public func switchTo(uid: String) async throws {

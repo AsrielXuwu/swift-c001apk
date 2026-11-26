@@ -157,6 +157,8 @@ public struct ChatThreadView: View {
     public let peerAvatar: String
 
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var chatSeed = UUID().uuidString
     @State private var viewModel: ChatThreadViewModel
     @State private var draftText = ""
     @State private var selectedPhotoItem: PhotosPickerItem?
@@ -196,8 +198,10 @@ public struct ChatThreadView: View {
                 }
             }
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(peerName.isEmpty ? "私信" : peerName)
         .navigationBarTitleDisplayMode(.inline)
+        .c001NavBarStyle()
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -250,12 +254,14 @@ public struct ChatThreadView: View {
                 VStack(alignment: isMine ? .trailing : .leading, spacing: 4) {
                     let picURL = msg.messagePic.isEmpty ? (viewModel.resolvedImages[msg.id]?.absoluteString ?? "") : msg.messagePic
                     if !picURL.isEmpty {
+                        let chatPicPrefix = "chat-pic-\(chatSeed)-\(msg.id)"
                         Button {
-                            appState.openMedia([FeedMedia(sourceUrl: picURL)], at: 0)
+                            appState.openMedia([FeedMedia(sourceUrl: picURL)], at: 0, sourcePrefix: chatPicPrefix)
                         } label: {
                             RemoteImageView(url: picURL, maxPixelSize: 600)
                                 .frame(maxWidth: 220, maxHeight: 220)
                                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .applyZoomSource(id: "\(chatPicPrefix)-0", in: zoomNamespace)
                         }
                         .buttonStyle(.plain)
                     } else if msg.message.contains("[图片]") || msg.message.isEmpty {
@@ -308,31 +314,48 @@ public struct ChatThreadView: View {
     }
 
     private var composerBar: some View {
-        HStack(spacing: 10) {
-            PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                Image(systemName: "photo")
-                    .font(.title3)
-                    .frame(width: 36, height: 36)
-            }
+        GlassEffectContainer(spacing: 10) {
+            HStack(spacing: 10) {
+                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                    Image(systemName: "photo")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 40, height: 40)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                }
 
-            TextField("发送私信…", text: $draftText, axis: .vertical)
-                .lineLimit(1...4)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                TextField("发送私信…", text: $draftText, axis: .vertical)
+                    .lineLimit(1...4)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .glassEffect(.regular, in: .capsule)
 
-            Button {
-                let text = draftText
-                draftText = ""
-                Task { await viewModel.sendText(text, appState: appState) }
-            } label: {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.title2)
+                Button {
+                    let text = draftText
+                    draftText = ""
+                    Task { await viewModel.sendText(text, appState: appState) }
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.body.weight(.bold))
+                        .frame(width: 40, height: 40)
+                        .background(
+                            draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? Color.clear
+                                : Color.accentColor.opacity(0.22),
+                            in: Circle()
+                        )
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .foregroundStyle(
+                            draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? Color.secondary
+                                : Color.accentColor
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            .disabled(draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
+        .padding(.horizontal, 14)
+        .padding(.top, 6)
+        .padding(.bottom, 8)
     }
 }
