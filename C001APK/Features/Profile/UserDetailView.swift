@@ -170,6 +170,7 @@ public struct UserDetailView: View {
                 startLoadTab(nextTab, force: false)
             }
             .task(id: uid) {
+                guard profile == nil else { return }
                 profile = try? await API.userProfile(uid: uid)
                 await reloadTab(tab, force: true)
             }

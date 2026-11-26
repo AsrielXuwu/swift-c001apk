@@ -226,18 +226,9 @@ public struct FeedDetailView: View {
                                 .font(.system(size: 20 * appState.settings.fontScale, weight: .bold))
                         }
 
-                        let shouldDeferIncompleteBody = viewModel.isRefreshingDetail
-                            && feed.articleParts.isEmpty
-                            && (feed.needsDetailRefresh || feed.kind == .feedArticle)
-
                         Group {
                             if !feed.articleParts.isEmpty {
                                 articleContent(feed)
-                                    .transition(.opacity)
-                            } else if shouldDeferIncompleteBody {
-                                ProgressView("正在加载完整内容…")
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 24)
                                     .transition(.opacity)
                             } else {
                                 VStack(alignment: .leading, spacing: 12) {
@@ -258,9 +249,12 @@ public struct FeedDetailView: View {
                                         }
                                     }
                                 }
+                                .transition(.opacity)
                             }
                         }
-                        .animation((feed.kind == .feedArticle || !feed.articleParts.isEmpty) ? .easeOut(duration: 0.22) : nil, value: !feed.articleParts.isEmpty)
+                        .animation(.easeInOut(duration: 0.25), value: feed.articleParts.count)
+                        .animation(.easeInOut(duration: 0.25), value: feed.message.utf16.count)
+                        .animation(.easeInOut(duration: 0.25), value: feed.mediaItems.count)
 
                     if let vote = feed.vote {
                         voteSection(vote)
@@ -335,8 +329,12 @@ public struct FeedDetailView: View {
             .onScrollGeometryChange(for: CGFloat.self) { geo in
                 geo.contentOffset.y + geo.contentInsets.top
             } action: { _, offset in
-                let progress = min(1, max(0, (offset - 36) / 60))
-                if abs(progress - compactNavProgress) > 0.02 {
+                if offset > 16, !viewModel.didCheckScrollDetail {
+                    Task { await viewModel.checkDetailConsistencyOnScrollIfNeeded(appState: appState) }
+                }
+                let raw = min(1, max(0, (offset - 36) / 60))
+                let progress = raw <= 0.04 ? 0 : (raw >= 0.96 ? 1 : raw)
+                if abs(progress - compactNavProgress) > 0.08 || (progress == 0 && compactNavProgress != 0) || (progress == 1 && compactNavProgress != 1) {
                     withAnimation(.easeOut(duration: 0.16)) {
                         compactNavProgress = progress
                     }

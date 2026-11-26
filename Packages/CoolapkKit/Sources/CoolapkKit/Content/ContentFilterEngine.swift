@@ -1,10 +1,41 @@
 import Foundation
 
+private struct SendableRegex: @unchecked Sendable {
+    let regex: NSRegularExpression?
+    init(_ pattern: String, options: NSRegularExpression.Options = []) {
+        self.regex = try? NSRegularExpression(pattern: pattern, options: options)
+    }
+    func replacingMatches(in input: String, with template: String) -> String {
+        guard let regex else { return input }
+        return regex.stringByReplacingMatches(
+            in: input,
+            range: NSRange(input.startIndex..<input.endIndex, in: input),
+            withTemplate: template
+        )
+    }
+}
+
 public enum ContentFilterNormalizer: Sendable {
     public static let excludedFilterTerms = ["lsp", "手冲", "后入", "性压抑"]
 
+    private static let scriptStyleRegex = SendableRegex(
+        #"<(script|style|template|noscript)\b[^>]*>[\s\S]*?</\1>"#,
+        options: [.caseInsensitive]
+    )
+    private static let openBlockRegex = SendableRegex(
+        #"<(p|div|br|li|blockquote|section|h1|h2|h3)\b[^>]*>"#,
+        options: [.caseInsensitive]
+    )
+    private static let closeBlockRegex = SendableRegex(
+        #"</(p|div|li|blockquote|section|h1|h2|h3)>"#,
+        options: [.caseInsensitive]
+    )
+    private static let anyTagRegex = SendableRegex(#"<[^>]*>"#)
+    private static let whitespaceRegex = SendableRegex(#"\s+"#)
+
     public static func normalize(_ value: String) -> String {
         var scalars = String.UnicodeScalarView()
+        scalars.reserveCapacity(value.unicodeScalars.count)
         for scalar in value.unicodeScalars {
             let v = scalar.value
             if v >= 0xFF01 && v <= 0xFF5E {
@@ -18,17 +49,21 @@ public enum ContentFilterNormalizer: Sendable {
             }
         }
         let lower = String(scalars).lowercased()
-        let collapsed = lower.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        let collapsed = whitespaceRegex.replacingMatches(in: lower, with: " ")
         return collapsed.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public static func visibleText(from html: String) -> String {
         var cleaned = html
-            .replacingOccurrences(of: #"<(script|style|template|noscript)\b[^>]*>[\s\S]*?</\1>"#, with: "", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"<(p|div|br|li|blockquote|section|h1|h2|h3)\b[^>]*>"#, with: "\n", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"</(p|div|li|blockquote|section|h1|h2|h3)>"#, with: "\n", options: [.regularExpression, .caseInsensitive])
-            .replacingOccurrences(of: #"<[^>]*>"#, with: "", options: .regularExpression)
-        cleaned = FeedHTMLParser.decodeEntities(cleaned)
+        if html.contains("<") {
+            cleaned = scriptStyleRegex.replacingMatches(in: cleaned, with: "")
+            cleaned = openBlockRegex.replacingMatches(in: cleaned, with: "\n")
+            cleaned = closeBlockRegex.replacingMatches(in: cleaned, with: "\n")
+            cleaned = anyTagRegex.replacingMatches(in: cleaned, with: "")
+        }
+        if cleaned.contains("&") {
+            cleaned = FeedHTMLParser.decodeEntities(cleaned)
+        }
         return cleaned
             .components(separatedBy: CharacterSet.newlines)
             .map { normalize($0) }
@@ -114,20 +149,18 @@ public struct ContentFilterEngine: Sendable {
                 continue
             }
 
-            let utf16 = Array(sentence.utf16)
             struct Hit { let start: Int; let end: Int; let group: Int }
             var occurrences: [Hit] = []
 
             for (groupIndex, group) in groups.enumerated() {
-                for term in group {
-                    let termUTF16 = Array(term.utf16)
-                    guard !termUTF16.isEmpty, termUTF16.count <= utf16.count else { continue }
-                    var offset = 0
-                    while offset + termUTF16.count <= utf16.count {
-                        if Array(utf16[offset..<(offset + termUTF16.count)]) == termUTF16 {
-                            occurrences.append(Hit(start: offset, end: offset + termUTF16.count, group: groupIndex))
-                        }
-                        offset += 1
+                for term in group where !term.isEmpty {
+                    var searchStart = sentence.startIndex
+                    while searchStart < sentence.endIndex,
+                          let found = sentence.range(of: term, range: searchStart..<sentence.endIndex) {
+                        let startOffset = sentence.utf16.distance(from: sentence.startIndex, to: found.lowerBound)
+                        let endOffset = sentence.utf16.distance(from: sentence.startIndex, to: found.upperBound)
+                        occurrences.append(Hit(start: startOffset, end: endOffset, group: groupIndex))
+                        searchStart = found.upperBound
                     }
                 }
             }

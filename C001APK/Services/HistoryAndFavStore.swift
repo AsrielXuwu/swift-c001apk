@@ -183,6 +183,12 @@ public final class HistoryAndFavStore {
         persistHistory()
     }
 
+    public func removeHistory(ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        history.removeAll { ids.contains($0.id) }
+        persistHistory()
+    }
+
     public func clearHistory() {
         history.removeAll()
         persistHistory()
@@ -241,6 +247,12 @@ public final class HistoryAndFavStore {
 
     public func removeFavorite(id: String) {
         favorites.removeAll { $0.id == id }
+        persistFavorites()
+    }
+
+    public func removeFavorites(ids: Set<String>) {
+        guard !ids.isEmpty else { return }
+        favorites.removeAll { ids.contains($0.id) }
         persistFavorites()
     }
 

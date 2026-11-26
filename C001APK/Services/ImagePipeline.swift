@@ -338,26 +338,48 @@ public actor ImagePipeline {
 
     private func fetchAndDecode(url: URL, cacheKey: String, maxPixelSize: CGFloat?, preferHDR: Bool) async -> LoadedImageResult? {
         guard let data = await fetchRawData(urlString: url.absoluteString) else { return nil }
-        return decode(data: data, urlString: url.absoluteString, cacheKey: cacheKey, maxPixelSize: maxPixelSize, preferHDR: preferHDR)
+        let urlString = url.absoluteString
+        // Decode off the actor executor at utility priority so scrolling stays smooth under burst image loads.
+        return await Task.detached(priority: .utility) {
+            Self.decodeOffActor(
+                data: data,
+                urlString: urlString,
+                cacheKey: cacheKey,
+                maxPixelSize: maxPixelSize,
+                preferHDR: preferHDR
+            )
+        }.value
     }
 
-    private func decode(data: Data, urlString: String, cacheKey: String, maxPixelSize: CGFloat?, preferHDR: Bool) -> LoadedImageResult? {
+    private nonisolated static func decodeOffActor(
+        data: Data,
+        urlString: String,
+        cacheKey: String,
+        maxPixelSize: CGFloat?,
+        preferHDR: Bool
+    ) -> LoadedImageResult? {
         let cfData = data as CFData
         let sourceOptions: [CFString: Any] = [kCGImageSourceShouldCache: false]
         guard let source = CGImageSourceCreateWithData(cfData, sourceOptions as CFDictionary) else {
             return nil
         }
 
-        let prefixBytes = data.prefix(min(data.count, 256 * 1024))
-        let xmpPrefix = String(data: Data(prefixBytes), encoding: .isoLatin1)
-            ?? String(decoding: prefixBytes, as: UTF8.self)
-        let hasGainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
-            source,
-            0,
-            kCGImageAuxiliaryDataTypeHDRGainMap
-        ) != nil || xmpPrefix.range(of: "hdrgm:Version", options: .caseInsensitive) != nil
-        let isMotion = Self.xmpDeclaresMotionPhoto(xmpPrefix)
-        liveFlagCache.setObject(NSNumber(value: isMotion), forKey: urlString as NSString)
+        let skipMetadataScan = (maxPixelSize ?? 0) > 0 && (maxPixelSize ?? 0) <= 180 && !preferHDR
+        var hasGainMap = false
+        var isMotion = false
+        if !skipMetadataScan {
+            let prefixLimit = (preferHDR || maxPixelSize == nil) ? 256 * 1024 : 64 * 1024
+            let prefixBytes = data.prefix(min(data.count, prefixLimit))
+            let xmpPrefix = String(data: Data(prefixBytes), encoding: .isoLatin1)
+                ?? String(decoding: prefixBytes, as: UTF8.self)
+            hasGainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
+                source,
+                0,
+                kCGImageAuxiliaryDataTypeHDRGainMap
+            ) != nil || xmpPrefix.range(of: "hdrgm:Version", options: .caseInsensitive) != nil
+            isMotion = Self.xmpDeclaresMotionPhoto(xmpPrefix)
+            Self.memoryStore.liveFlags.setObject(NSNumber(value: isMotion), forKey: urlString as NSString)
+        }
 
         var uiImage: UIImage?
         var resolvedHDR = hasGainMap
@@ -377,7 +399,9 @@ public actor ImagePipeline {
             }
         }
 
-        hdrFlagCache.setObject(NSNumber(value: resolvedHDR), forKey: urlString as NSString)
+        if !skipMetadataScan {
+            Self.memoryStore.hdrFlags.setObject(NSNumber(value: resolvedHDR), forKey: urlString as NSString)
+        }
 
         if uiImage == nil {
             let cgImage: CGImage?
@@ -407,11 +431,11 @@ public actor ImagePipeline {
         guard let finalImage = uiImage else { return nil }
         if finalImage.isHighDynamicRange {
             resolvedHDR = true
-            hdrFlagCache.setObject(NSNumber(value: true), forKey: urlString as NSString)
+            Self.memoryStore.hdrFlags.setObject(NSNumber(value: true), forKey: urlString as NSString)
         }
 
         let cost = Int(finalImage.size.width * finalImage.size.height * finalImage.scale * finalImage.scale * 4)
-        memoryCache.setObject(finalImage, forKey: cacheKey as NSString, cost: max(1024, cost))
+        Self.memoryStore.images.setObject(finalImage, forKey: cacheKey as NSString, cost: max(1024, cost))
         return LoadedImageResult(image: finalImage, hasHDRGainMap: resolvedHDR, pixelSize: finalImage.size)
     }
 

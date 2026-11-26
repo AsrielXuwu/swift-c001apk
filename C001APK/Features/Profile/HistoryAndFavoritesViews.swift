@@ -8,6 +8,8 @@ public struct HistoryListView: View {
     @State private var isLoadingCloud = false
     @State private var cloudPage = 1
     @State private var hasMoreCloud = true
+    @State private var isSelecting = false
+    @State private var selectedLocalIDs: Set<String> = []
 
     public init() {}
 
@@ -50,20 +52,31 @@ public struct HistoryListView: View {
                                 .padding(.top, 4)
 
                             ForEach(appState.historyAndFav.history) { entry in
-                                StoredFeedCardRow(
-                                    feedID: entry.id,
-                                    snapshot: entry.feed,
-                                    fallbackTitle: entry.title,
-                                    fallbackPreview: entry.preview,
-                                    fallbackUsername: entry.username,
-                                    fallbackAvatar: entry.avatar,
-                                    fallbackDate: entry.visitedAt,
-                                    badgeIsCloud: false,
-                                    deleteTitle: "删除此条历史",
-                                    onDelete: {
-                                        appState.historyAndFav.removeHistory(id: entry.id)
+                                SelectableCardWrapper(
+                                    isSelecting: isSelecting,
+                                    isSelected: selectedLocalIDs.contains(entry.id)
+                                ) {
+                                    if selectedLocalIDs.contains(entry.id) {
+                                        selectedLocalIDs.remove(entry.id)
+                                    } else {
+                                        selectedLocalIDs.insert(entry.id)
                                     }
-                                )
+                                } content: {
+                                    StoredFeedCardRow(
+                                        feedID: entry.id,
+                                        snapshot: entry.feed,
+                                        fallbackTitle: entry.title,
+                                        fallbackPreview: entry.preview,
+                                        fallbackUsername: entry.username,
+                                        fallbackAvatar: entry.avatar,
+                                        fallbackDate: entry.visitedAt,
+                                        badgeIsCloud: false,
+                                        deleteTitle: "删除此条历史",
+                                        onDelete: {
+                                            appState.historyAndFav.removeHistory(id: entry.id)
+                                        }
+                                    )
+                                }
                             }
                         }
 
@@ -85,24 +98,24 @@ public struct HistoryListView: View {
                                     .padding(.horizontal, 16)
                             } else {
                                 ForEach(Array(mergedCloudRows.enumerated()), id: \.element.id) { idx, row in
-                                    HomeRowRenderer(row: row)
-                                        .overlay(alignment: .topTrailing) {
-                                            SourceOriginBadge(isCloud: true)
-                                                .padding(.top, 12)
-                                                .padding(.trailing, 54)
-                                                .allowsHitTesting(false)
+                                    Group {
+                                        if case let .feed(feed) = row {
+                                            FeedRowView(feed: feed, originBadgeIsCloud: true)
+                                        } else {
+                                            HomeRowRenderer(row: row)
                                         }
-                                        .onAppear {
-                                            if idx >= mergedCloudRows.count - 3 {
-                                                Task { await loadMoreCloud() }
-                                            }
+                                    }
+                                    .onAppear {
+                                        if idx >= mergedCloudRows.count - 3 {
+                                            Task { await loadMoreCloud() }
                                         }
+                                    }
                                 }
                             }
                         }
                     }
                     .padding(.vertical, 10)
-                    .padding(.bottom, 32)
+                    .padding(.bottom, isSelecting ? 84 : 32)
                 }
                 .refreshable {
                     await syncCloudHistory(force: true)
@@ -115,15 +128,49 @@ public struct HistoryListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             if !appState.historyAndFav.history.isEmpty {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("清空本机", role: .destructive) {
-                        appState.historyAndFav.clearHistory()
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button(isSelecting ? "完成" : "多选") {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            isSelecting.toggle()
+                            if !isSelecting { selectedLocalIDs.removeAll() }
+                        }
+                    }
+                    if !isSelecting {
+                        Button("清空本机", role: .destructive) {
+                            appState.historyAndFav.clearHistory()
+                        }
                     }
                 }
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting {
+                let allLocalIDs = Set(appState.historyAndFav.history.map(\.id))
+                let allSelected = !allLocalIDs.isEmpty && selectedLocalIDs.isSuperset(of: allLocalIDs)
+                BatchSelectionBottomBar(
+                    selectedCount: selectedLocalIDs.count,
+                    allSelected: allSelected,
+                    deleteLabel: "删除历史",
+                    isBusy: false,
+                    onToggleSelectAll: {
+                        if allSelected {
+                            selectedLocalIDs.removeAll()
+                        } else {
+                            selectedLocalIDs = allLocalIDs
+                        }
+                    },
+                    onDelete: {
+                        let count = selectedLocalIDs.count
+                        appState.historyAndFav.removeHistory(ids: selectedLocalIDs)
+                        selectedLocalIDs.removeAll()
+                        isSelecting = false
+                        appState.showToast("已删除 \(count) 条本机历史")
+                    }
+                )
+            }
+        }
         .task(id: "\(appState.sessionVersion)|\(appState.settings.enableCloudHistoryLoad)") {
-            await syncCloudHistory(force: true)
+            await syncCloudHistory(force: false)
         }
     }
 
@@ -178,6 +225,9 @@ public struct FavoritesListView: View {
     @State private var cloudEntries: [CloudFavoriteEntry] = []
     @State private var selectedFolderID: String? = nil
     @State private var isSyncingCloud = false
+    @State private var isSelecting = false
+    @State private var selectedKeys: Set<String> = []
+    @State private var isBatchDeleting = false
 
     public init() {}
 
@@ -327,6 +377,9 @@ public struct FavoritesListView: View {
                                     .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1.5)
                             }
                         }
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
                         .padding(.horizontal, 12)
                     }
                 }
@@ -359,35 +412,60 @@ public struct FavoritesListView: View {
                     }
                 } else {
                     ForEach(visibleLocalFavorites) { entry in
-                        StoredFeedCardRow(
-                            feedID: entry.id,
-                            snapshot: entry.feed,
-                            fallbackTitle: entry.title,
-                            fallbackPreview: entry.preview,
-                            fallbackUsername: entry.username,
-                            fallbackAvatar: entry.avatar,
-                            fallbackDate: entry.savedAt,
-                            badgeIsCloud: entry.resolvedIsCloudSynced,
-                            deleteTitle: "移除收藏",
-                            onDelete: {
-                                appState.historyAndFav.removeFavorite(id: entry.id)
+                        let key = "local:\(entry.id)"
+                        SelectableCardWrapper(
+                            isSelecting: isSelecting,
+                            isSelected: selectedKeys.contains(key)
+                        ) {
+                            if selectedKeys.contains(key) {
+                                selectedKeys.remove(key)
+                            } else {
+                                selectedKeys.insert(key)
                             }
-                        )
+                        } content: {
+                            StoredFeedCardRow(
+                                feedID: entry.id,
+                                snapshot: entry.feed,
+                                fallbackTitle: entry.title,
+                                fallbackPreview: entry.preview,
+                                fallbackUsername: entry.username,
+                                fallbackAvatar: entry.avatar,
+                                fallbackDate: entry.savedAt,
+                                badgeIsCloud: entry.resolvedIsCloudSynced,
+                                deleteTitle: "移除收藏",
+                                onDelete: {
+                                    appState.historyAndFav.removeFavorite(id: entry.id)
+                                }
+                            )
+                        }
                     }
 
                     ForEach(visibleCloudFavorites) { entry in
-                        FeedRowView(feed: entry.feed)
-                            .overlay(alignment: .topTrailing) {
-                                SourceOriginBadge(isCloud: true)
-                                    .padding(.top, 12)
-                                    .padding(.trailing, 54)
-                                    .allowsHitTesting(false)
+                        let key = "cloud:\(entry.collectionID):\(entry.feed.id)"
+                        SelectableCardWrapper(
+                            isSelecting: isSelecting,
+                            isSelected: selectedKeys.contains(key)
+                        ) {
+                            if selectedKeys.contains(key) {
+                                selectedKeys.remove(key)
+                            } else {
+                                selectedKeys.insert(key)
                             }
+                        } content: {
+                            FeedRowView(
+                                feed: entry.feed,
+                                originBadgeIsCloud: true,
+                                contextDeleteTitle: "移出云端收藏",
+                                onContextDelete: {
+                                    Task { await removeCloudFavorites([entry]) }
+                                }
+                            )
+                        }
                     }
                 }
             }
             .padding(.vertical, 10)
-            .padding(.bottom, 32)
+            .padding(.bottom, isSelecting ? 84 : 32)
         }
         .refreshable {
             await syncCloudFavorites(force: true)
@@ -397,7 +475,16 @@ public struct FavoritesListView: View {
         .navigationTitle("收藏")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                if !visibleLocalFavorites.isEmpty || !visibleCloudFavorites.isEmpty {
+                    Button(isSelecting ? "完成" : "多选") {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            isSelecting.toggle()
+                            if !isSelecting { selectedKeys.removeAll() }
+                        }
+                    }
+                }
+
                 Menu {
                     if appState.settings.enableCloudFavoritesLoad && appState.accounts.isLoggedIn {
                         Button {
@@ -433,8 +520,75 @@ public struct FavoritesListView: View {
                 }
             }
         }
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting {
+                let allVisibleKeys = Set(visibleLocalFavorites.map { "local:\($0.id)" })
+                    .union(visibleCloudFavorites.map { "cloud:\($0.collectionID):\($0.feed.id)" })
+                let allSelected = !allVisibleKeys.isEmpty && selectedKeys.isSuperset(of: allVisibleKeys)
+                BatchSelectionBottomBar(
+                    selectedCount: selectedKeys.count,
+                    allSelected: allSelected,
+                    deleteLabel: "删除收藏",
+                    isBusy: isBatchDeleting,
+                    onToggleSelectAll: {
+                        if allSelected {
+                            selectedKeys.removeAll()
+                        } else {
+                            selectedKeys = allVisibleKeys
+                        }
+                    },
+                    onDelete: {
+                        Task { await deleteSelectedFavorites() }
+                    }
+                )
+            }
+        }
         .task(id: "\(appState.sessionVersion)|\(appState.settings.enableCloudFavoritesLoad)") {
-            await syncCloudFavorites(force: true)
+            await syncCloudFavorites(force: false)
+        }
+    }
+
+    private func deleteSelectedFavorites() async {
+        guard !selectedKeys.isEmpty, !isBatchDeleting else { return }
+        isBatchDeleting = true
+        defer { isBatchDeleting = false }
+
+        let localIDs = Set(selectedKeys.compactMap { key -> String? in
+            key.hasPrefix("local:") ? String(key.dropFirst("local:".count)) : nil
+        })
+        let cloudToDelete = visibleCloudFavorites.filter { selectedKeys.contains("cloud:\($0.collectionID):\($0.feed.id)") }
+
+        if !localIDs.isEmpty {
+            appState.historyAndFav.removeFavorites(ids: localIDs)
+        }
+        if !cloudToDelete.isEmpty {
+            await removeCloudFavorites(cloudToDelete)
+        }
+
+        let removedCount = localIDs.count + cloudToDelete.count
+        selectedKeys.removeAll()
+        isSelecting = false
+        if removedCount > 0 {
+            appState.showToast("已删除 \(removedCount) 条收藏")
+        }
+    }
+
+    private func removeCloudFavorites(_ entries: [CloudFavoriteEntry]) async {
+        var removedIDs = Set<String>()
+        for entry in entries {
+            do {
+                try await API.collectFeedToCollection(
+                    feedID: entry.feed.id,
+                    addCollectionIDs: [],
+                    cancelCollectionIDs: [entry.collectionID]
+                )
+                removedIDs.insert(entry.id)
+            } catch {
+                _ = await appState.handleAPIError(error)
+            }
+        }
+        if !removedIDs.isEmpty {
+            cloudEntries.removeAll { removedIDs.contains($0.id) }
         }
     }
 
@@ -453,15 +607,23 @@ public struct FavoritesListView: View {
         do {
             let cols = try await API.collectionList(uid: uid, page: 1)
             remoteCollections = cols
-            var collected: [CloudFavoriteEntry] = []
-            for col in cols.prefix(6) {
-                if let rows = try? await API.collectionItems(id: col.id, page: 1) {
-                    for row in rows {
-                        if case let .feed(feed) = row {
-                            collected.append(CloudFavoriteEntry(collectionID: col.id, collectionTitle: col.title, feed: feed))
+            let collected = await withTaskGroup(of: [CloudFavoriteEntry].self) { group in
+                for col in cols.prefix(6) {
+                    group.addTask {
+                        let rows = (try? await API.collectionItems(id: col.id, page: 1)) ?? []
+                        return rows.compactMap { row -> CloudFavoriteEntry? in
+                            if case let .feed(feed) = row {
+                                return CloudFavoriteEntry(collectionID: col.id, collectionTitle: col.title, feed: feed)
+                            }
+                            return nil
                         }
                     }
                 }
+                var merged: [CloudFavoriteEntry] = []
+                for await batch in group {
+                    merged.append(contentsOf: batch)
+                }
+                return merged
             }
             cloudEntries = collected
         } catch {
@@ -503,12 +665,19 @@ public struct LocalFollowListView: View {
     @State private var isLoadingCloud = false
     @State private var cloudPage = 1
     @State private var hasMoreCloud = true
+    @State private var isSelecting = false
+    @State private var selectedKeys: Set<String> = []
+    @State private var isBatchDeleting = false
 
     public init() {}
 
     public var body: some View {
         let localEmpty = appState.localFollow.users.isEmpty
         let cloudEmpty = !appState.settings.enableCloudFollowLoad || cloudUsers.isEmpty
+        let localUIDs = Set(appState.localFollow.users.map(\.uid))
+        let uniqueCloudUsers = (appState.settings.enableCloudFollowLoad && appState.accounts.isLoggedIn)
+            ? cloudUsers.filter { !localUIDs.contains($0.id) }
+            : []
 
         Group {
             if localEmpty && cloudEmpty && !isLoadingCloud {
@@ -538,31 +707,36 @@ public struct LocalFollowListView: View {
                                 .padding(.top, 4)
 
                             ForEach(appState.localFollow.users) { user in
-                                UserRowView(
-                                    user: UserBrief(
-                                        id: user.uid,
-                                        username: user.username,
-                                        avatar: user.avatar,
-                                        isFollowed: true,
-                                        bio: "UID: \(user.uid)"
-                                    )
-                                )
-                                .overlay(alignment: .topTrailing) {
-                                    SourceOriginBadge(isCloud: false)
-                                        .padding(.top, 10)
-                                        .padding(.trailing, 34)
-                                }
-                                .contextMenu {
-                                    Button("取消本机关注", role: .destructive) {
-                                        appState.localFollow.unfollow(uid: user.uid)
+                                let key = "local:\(user.uid)"
+                                SelectableCardWrapper(
+                                    isSelecting: isSelecting,
+                                    isSelected: selectedKeys.contains(key)
+                                ) {
+                                    if selectedKeys.contains(key) {
+                                        selectedKeys.remove(key)
+                                    } else {
+                                        selectedKeys.insert(key)
                                     }
+                                } content: {
+                                    UserRowView(
+                                        user: UserBrief(
+                                            id: user.uid,
+                                            username: user.username,
+                                            avatar: user.avatar,
+                                            isFollowed: true,
+                                            bio: "UID: \(user.uid)"
+                                        ),
+                                        originBadgeIsCloud: false,
+                                        contextDeleteTitle: "取消本机关注",
+                                        onContextDelete: {
+                                            appState.localFollow.unfollow(uid: user.uid)
+                                        }
+                                    )
                                 }
                             }
                         }
 
                         if appState.settings.enableCloudFollowLoad && appState.accounts.isLoggedIn {
-                            let localUIDs = Set(appState.localFollow.users.map(\.uid))
-                            let uniqueCloudUsers = cloudUsers.filter { !localUIDs.contains($0.id) }
                             Text("云端关注（\(uniqueCloudUsers.count)）")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
@@ -580,26 +754,40 @@ public struct LocalFollowListView: View {
                                     .padding(.horizontal, 16)
                             } else {
                                 ForEach(Array(uniqueCloudUsers.enumerated()), id: \.element.id) { idx, user in
-                                    UserRowView(user: user)
-                                        .overlay(alignment: .topTrailing) {
-                                            SourceOriginBadge(isCloud: true)
-                                                .padding(.top, 10)
-                                                .padding(.trailing, 34)
+                                    let key = "cloud:\(user.id)"
+                                    SelectableCardWrapper(
+                                        isSelecting: isSelecting,
+                                        isSelected: selectedKeys.contains(key)
+                                    ) {
+                                        if selectedKeys.contains(key) {
+                                            selectedKeys.remove(key)
+                                        } else {
+                                            selectedKeys.insert(key)
                                         }
-                                        .onAppear {
-                                            if idx >= uniqueCloudUsers.count - 4 {
-                                                Task { await loadMoreCloud() }
+                                    } content: {
+                                        UserRowView(
+                                            user: user,
+                                            originBadgeIsCloud: true,
+                                            contextDeleteTitle: "取消云端关注",
+                                            onContextDelete: {
+                                                Task { await unfollowCloudUsers([user.id]) }
                                             }
+                                        )
+                                    }
+                                    .onAppear {
+                                        if idx >= uniqueCloudUsers.count - 4 {
+                                            Task { await loadMoreCloud() }
                                         }
+                                    }
                                 }
                             }
                         }
                     }
                     .padding(.vertical, 10)
-                    .padding(.bottom, 32)
+                    .padding(.bottom, isSelecting ? 84 : 32)
                 }
                 .refreshable {
-                    await syncCloudFollows()
+                    await syncCloudFollows(force: true)
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
             }
@@ -607,18 +795,96 @@ public struct LocalFollowListView: View {
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle("关注列表")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !localEmpty || !uniqueCloudUsers.isEmpty {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(isSelecting ? "完成" : "多选") {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            isSelecting.toggle()
+                            if !isSelecting { selectedKeys.removeAll() }
+                        }
+                    }
+                }
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if isSelecting {
+                let allKeys = Set(appState.localFollow.users.map { "local:\($0.uid)" })
+                    .union(uniqueCloudUsers.map { "cloud:\($0.id)" })
+                let allSelected = !allKeys.isEmpty && selectedKeys.isSuperset(of: allKeys)
+                BatchSelectionBottomBar(
+                    selectedCount: selectedKeys.count,
+                    allSelected: allSelected,
+                    deleteLabel: "取消关注",
+                    isBusy: isBatchDeleting,
+                    onToggleSelectAll: {
+                        if allSelected {
+                            selectedKeys.removeAll()
+                        } else {
+                            selectedKeys = allKeys
+                        }
+                    },
+                    onDelete: {
+                        Task { await deleteSelectedFollows() }
+                    }
+                )
+            }
+        }
         .task(id: "\(appState.sessionVersion)|\(appState.settings.enableCloudFollowLoad)") {
-            await syncCloudFollows()
+            await syncCloudFollows(force: false)
         }
     }
 
-    private func syncCloudFollows() async {
+    private func deleteSelectedFollows() async {
+        guard !selectedKeys.isEmpty, !isBatchDeleting else { return }
+        isBatchDeleting = true
+        defer { isBatchDeleting = false }
+
+        let localToRemove = Set(selectedKeys.compactMap { key -> String? in
+            key.hasPrefix("local:") ? String(key.dropFirst("local:".count)) : nil
+        })
+        let cloudToRemove = selectedKeys.compactMap { key -> String? in
+            key.hasPrefix("cloud:") ? String(key.dropFirst("cloud:".count)) : nil
+        }
+
+        if !localToRemove.isEmpty {
+            appState.localFollow.unfollow(uids: localToRemove)
+        }
+        if !cloudToRemove.isEmpty {
+            await unfollowCloudUsers(cloudToRemove)
+        }
+
+        let removedCount = localToRemove.count + cloudToRemove.count
+        selectedKeys.removeAll()
+        isSelecting = false
+        if removedCount > 0 {
+            appState.showToast("已取消关注 \(removedCount) 位用户")
+        }
+    }
+
+    private func unfollowCloudUsers(_ uids: [String]) async {
+        var unfollowed = Set<String>()
+        for targetUID in uids {
+            do {
+                try await API.followUser(uid: targetUID, follow: false)
+                unfollowed.insert(targetUID)
+            } catch {
+                _ = await appState.handleAPIError(error)
+            }
+        }
+        if !unfollowed.isEmpty {
+            cloudUsers.removeAll { unfollowed.contains($0.id) }
+        }
+    }
+
+    private func syncCloudFollows(force: Bool) async {
         guard appState.settings.enableCloudFollowLoad,
               appState.accounts.isLoggedIn,
               let uid = appState.accounts.activeUID else {
             cloudUsers = []
             return
         }
+        if !force && !cloudUsers.isEmpty { return }
         isLoadingCloud = true
         defer { isLoadingCloud = false }
         cloudPage = 1
@@ -882,22 +1148,14 @@ private struct StoredFeedCardRow: View {
     var body: some View {
         Group {
             if let feed = snapshot ?? hydrated {
-                FeedRowView(feed: feed)
+                FeedRowView(
+                    feed: feed,
+                    originBadgeIsCloud: badgeIsCloud,
+                    contextDeleteTitle: deleteTitle,
+                    onContextDelete: onDelete
+                )
             } else {
                 legacyFallbackCard
-            }
-        }
-        .overlay(alignment: .topTrailing) {
-            if let badgeIsCloud {
-                SourceOriginBadge(isCloud: badgeIsCloud)
-                    .padding(.top, 12)
-                    .padding(.trailing, 54)
-                    .allowsHitTesting(false)
-            }
-        }
-        .contextMenu {
-            Button(deleteTitle, role: .destructive) {
-                onDelete()
             }
         }
         .task(id: feedID) {
@@ -927,6 +1185,9 @@ private struct StoredFeedCardRow: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if let badgeIsCloud {
+                        SourceOriginBadge(isCloud: badgeIsCloud)
+                    }
                 }
 
                 if !fallbackTitle.isEmpty {
@@ -945,10 +1206,97 @@ private struct StoredFeedCardRow: View {
             }
             .padding(14)
             .c001CardStyle(cornerRadius: 20)
-            .padding(.horizontal, 12)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .applyZoomSource(id: tid, in: zoomNamespace)
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .contextMenu {
+                Button(deleteTitle, role: .destructive) {
+                    onDelete()
+                }
+            }
+            .applyZoomSource(id: tid, in: zoomNamespace, cornerRadius: 20)
+            .padding(.horizontal, 12)
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct SelectableCardWrapper<Content: View>: View {
+    let isSelecting: Bool
+    let isSelected: Bool
+    let onToggle: () -> Void
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if isSelecting {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.title3)
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                    .padding(.leading, 14)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+            content()
+                .allowsHitTesting(!isSelecting)
+        }
+        .overlay {
+            if isSelecting {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture(perform: onToggle)
+            }
+        }
+        .animation(.snappy(duration: 0.2), value: isSelecting)
+    }
+}
+
+private struct BatchSelectionBottomBar: View {
+    let selectedCount: Int
+    let allSelected: Bool
+    let deleteLabel: String
+    let isBusy: Bool
+    let onToggleSelectAll: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        GlassEffectContainer(spacing: 12) {
+            HStack(spacing: 12) {
+                Button(allSelected ? "取消全选" : "全选", action: onToggleSelectAll)
+                    .font(.subheadline.weight(.medium))
+                    .buttonStyle(.plain)
+
+                Spacer()
+
+                Text("已选 \(selectedCount) 项")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+
+                Button(role: .destructive, action: onDelete) {
+                    HStack(spacing: 5) {
+                        if isBusy {
+                            ProgressView()
+                                .controlSize(.mini)
+                        }
+                        Text("\(deleteLabel)\(selectedCount > 0 ? " (\(selectedCount))" : "")")
+                            .font(.subheadline.weight(.semibold))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(
+                        selectedCount > 0 ? Color.red.opacity(0.16) : Color.secondary.opacity(0.1),
+                        in: Capsule()
+                    )
+                    .foregroundStyle(selectedCount > 0 ? Color.red : Color.secondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(selectedCount == 0 || isBusy)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .glassEffect(.regular, in: .capsule)
+        }
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
     }
 }

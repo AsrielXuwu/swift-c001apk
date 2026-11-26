@@ -4,6 +4,9 @@ import UIKit
 
 public struct FeedRowView: View {
     public let feed: FeedItem
+    public var originBadgeIsCloud: Bool? = nil
+    public var contextDeleteTitle: String? = nil
+    public var onContextDelete: (() -> Void)? = nil
     public var onSelectFeed: (() -> Void)?
     public var onLikeChanged: ((Bool, Int) -> Void)?
 
@@ -16,10 +19,16 @@ public struct FeedRowView: View {
 
     public init(
         feed: FeedItem,
+        originBadgeIsCloud: Bool? = nil,
+        contextDeleteTitle: String? = nil,
+        onContextDelete: (() -> Void)? = nil,
         onSelectFeed: (() -> Void)? = nil,
         onLikeChanged: ((Bool, Int) -> Void)? = nil
     ) {
         self.feed = feed
+        self.originBadgeIsCloud = originBadgeIsCloud
+        self.contextDeleteTitle = contextDeleteTitle
+        self.onContextDelete = onContextDelete
         self.onSelectFeed = onSelectFeed
         self.onLikeChanged = onLikeChanged
         self._isLiked = State(initialValue: feed.isLiked)
@@ -49,9 +58,12 @@ public struct FeedRowView: View {
         }
         .padding(14)
         .c001CardStyle(cornerRadius: 22)
-        .padding(.horizontal, 12)
+        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .modifier(OptionalDestructiveContextMenu(title: contextDeleteTitle, action: onContextDelete))
         .applyZoomSource(id: "feed-\(transitionSeed)", in: zoomNamespace, cornerRadius: 22)
+        .padding(.horizontal, 12)
         .onTapGesture {
             openFeedDetail()
         }
@@ -126,6 +138,10 @@ public struct FeedRowView: View {
             }
 
             Spacer(minLength: 8)
+
+            if let originBadgeIsCloud {
+                SourceOriginBadge(isCloud: originBadgeIsCloud)
+            }
 
             Menu {
                 Button {
@@ -346,6 +362,21 @@ public struct FeedRowView: View {
             isLiked = prevLiked
             likeCount = prevCount
             _ = await appState.handleAPIError(error)
+        }
+    }
+}
+
+struct OptionalDestructiveContextMenu: ViewModifier {
+    let title: String?
+    let action: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        if let title, let action {
+            content.contextMenu {
+                Button(title, role: .destructive, action: action)
+            }
+        } else {
+            content
         }
     }
 }

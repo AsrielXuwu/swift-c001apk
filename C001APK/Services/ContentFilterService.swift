@@ -27,7 +27,10 @@ public final class ContentFilterService {
     }
 
     public var level: FilterLevel {
-        didSet { defaults.set(level.rawValue, forKey: Self.levelKey) }
+        didSet {
+            defaults.set(level.rawValue, forKey: Self.levelKey)
+            invalidateEvalCache()
+        }
     }
 
     public private(set) var ruleSet: FilterRuleSet
@@ -42,6 +45,16 @@ public final class ContentFilterService {
 
     private var subscriptionEngine: ContentFilterEngine
     private var personalEngine: ContentFilterEngine
+    private final class CachedEvalResult: NSObject {
+        let match: FilterMatch?
+        init(match: FilterMatch?) { self.match = match }
+    }
+    private let evalCache: NSCache<NSString, CachedEvalResult> = {
+        let cache = NSCache<NSString, CachedEvalResult>()
+        cache.countLimit = 800
+        return cache
+    }()
+    private var evalRevision = 0
 
     public init() {
         let isEnabled = defaults.bool(forKey: Self.enabledKey)
@@ -101,17 +114,20 @@ public final class ContentFilterService {
     public func setRuleDisabled(_ id: String, _ disabled: Bool) {
         if disabled { disabledRuleIDs.insert(id) } else { disabledRuleIDs.remove(id) }
         defaults.set(Array(disabledRuleIDs), forKey: Self.disabledRulesKey)
+        invalidateEvalCache()
     }
 
     public func allowAuthor(_ uid: String, allowed: Bool = true) {
         if allowed { allowedAuthorUIDs.insert(uid) } else { allowedAuthorUIDs.remove(uid) }
         defaults.set(Array(allowedAuthorUIDs), forKey: Self.allowedAuthorsKey)
+        invalidateEvalCache()
     }
 
     public func allowContent(scope: FilterScope, id: String, allowed: Bool = true) {
         let key = "\(scope.rawValue):\(id)"
         if allowed { allowedContentKeys.insert(key) } else { allowedContentKeys.remove(key) }
         defaults.set(Array(allowedContentKeys), forKey: Self.allowedContentKey)
+        invalidateEvalCache()
     }
 
     public func addPersonalRule(kind: FilterRuleKind, keyword: String, reason: String) {
@@ -173,7 +189,11 @@ public final class ContentFilterService {
 
     public func evaluate(_ input: FilterInput) -> FilterMatch? {
         guard enabled else { return nil }
-        return personalEngine.evaluate(
+        let cacheKey = "\(evalRevision)|\(input.scope.rawValue)|\(input.contentKey ?? input.authorUID ?? "")|\(input.text.utf16.count)|\(input.text.hashValue)" as NSString
+        if let cached = evalCache.object(forKey: cacheKey) {
+            return cached.match
+        }
+        let matched = personalEngine.evaluate(
             input,
             level: level,
             disabledRuleIDs: disabledRuleIDs,
@@ -186,6 +206,8 @@ public final class ContentFilterService {
             allowedAuthorUIDs: allowedAuthorUIDs,
             allowedContentKeys: allowedContentKeys
         )
+        evalCache.setObject(CachedEvalResult(match: matched), forKey: cacheKey)
+        return matched
     }
 
     public func checkForUpdates() async {
@@ -229,9 +251,15 @@ public final class ContentFilterService {
         }
     }
 
+    private func invalidateEvalCache() {
+        evalRevision += 1
+        evalCache.removeAllObjects()
+    }
+
     private func rebuildEngines() {
         subscriptionEngine = ContentFilterEngine(ruleSet: Self.filteredRuleSet(ruleSet, disabledKinds: disabledListKinds))
         personalEngine = ContentFilterEngine(ruleSet: FilterRuleSet(revision: 1, publishedAt: Date(), rules: personalRules))
+        invalidateEvalCache()
     }
 
     private static func filteredRuleSet(_ set: FilterRuleSet, disabledKinds: Set<FilterRuleKind>) -> FilterRuleSet {

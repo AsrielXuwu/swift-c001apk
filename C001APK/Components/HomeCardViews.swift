@@ -848,11 +848,24 @@ public struct TopicRowView: View {
 
 public struct UserRowView: View {
     public let user: UserBrief
+    public var originBadgeIsCloud: Bool? = nil
+    public var contextDeleteTitle: String? = nil
+    public var onContextDelete: (() -> Void)? = nil
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
     @State private var transitionSeed = UUID().uuidString
 
-    public init(user: UserBrief) { self.user = user }
+    public init(
+        user: UserBrief,
+        originBadgeIsCloud: Bool? = nil,
+        contextDeleteTitle: String? = nil,
+        onContextDelete: (() -> Void)? = nil
+    ) {
+        self.user = user
+        self.originBadgeIsCloud = originBadgeIsCloud
+        self.contextDeleteTitle = contextDeleteTitle
+        self.onContextDelete = onContextDelete
+    }
 
     public var body: some View {
         Button {
@@ -888,15 +901,21 @@ public struct UserRowView: View {
                         .lineLimit(1)
                 }
                 Spacer()
+                if let originBadgeIsCloud {
+                    SourceOriginBadge(isCloud: originBadgeIsCloud)
+                }
                 Image(systemName: "chevron.right")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
             .padding(14)
             .c001CardStyle(cornerRadius: 20)
-            .padding(.horizontal, 12)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .applyZoomSource(id: "userrow-\(transitionSeed)", in: zoomNamespace)
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .modifier(OptionalDestructiveContextMenu(title: contextDeleteTitle, action: onContextDelete))
+            .applyZoomSource(id: "userrow-\(transitionSeed)", in: zoomNamespace, cornerRadius: 20)
+            .padding(.horizontal, 12)
         }
         .buttonStyle(.plain)
     }

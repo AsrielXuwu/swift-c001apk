@@ -253,8 +253,9 @@ public struct TopicDetailView: View {
             geo.contentOffset.y + geo.contentInsets.top
         } action: { _, offset in
             guard tabItem.id == activeTabID else { return }
-            let progress = min(1, max(0, (offset - 36) / 70))
-            if abs(progress - compactNavProgress) > 0.02 {
+            let raw = min(1, max(0, (offset - 36) / 70))
+            let progress = raw <= 0.04 ? 0 : (raw >= 0.96 ? 1 : raw)
+            if abs(progress - compactNavProgress) > 0.08 || (progress == 0 && compactNavProgress != 0) || (progress == 1 && compactNavProgress != 1) {
                 withAnimation(.easeOut(duration: 0.16)) {
                     compactNavProgress = progress
                 }
@@ -581,8 +582,9 @@ public struct ProductDetailView: View {
             geo.contentOffset.y + geo.contentInsets.top
         } action: { _, offset in
             guard chip.id == activeTabID else { return }
-            let progress = min(1, max(0, (offset - 36) / 70))
-            if abs(progress - compactNavProgress) > 0.02 {
+            let raw = min(1, max(0, (offset - 36) / 70))
+            let progress = raw <= 0.04 ? 0 : (raw >= 0.96 ? 1 : raw)
+            if abs(progress - compactNavProgress) > 0.08 || (progress == 0 && compactNavProgress != 0) || (progress == 1 && compactNavProgress != 1) {
                 withAnimation(.easeOut(duration: 0.16)) {
                     compactNavProgress = progress
                 }

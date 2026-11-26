@@ -1,6 +1,7 @@
 import CoolapkKit
 import Foundation
 import Observation
+import SwiftUI
 
 @MainActor
 @Observable
@@ -21,6 +22,7 @@ public final class FeedDetailViewModel {
     public private(set) var isTogglingAuthorFollow = false
     public private(set) var hasMoreReplies = true
     public private(set) var errorMessage: String?
+    public private(set) var didCheckScrollDetail = false
 
     private var currentReplyPage = 1
 
@@ -43,7 +45,7 @@ public final class FeedDetailViewModel {
     public init(feedID: String, initialFeed: FeedItem? = nil) {
         self.feedID = feedID
         self.feed = initialFeed
-        self.isRefreshingDetail = (initialFeed?.needsDetailRefresh == true)
+        self.isRefreshingDetail = false
     }
 
     public func loadAll(appState: AppState, forceRefreshDetail: Bool = false) async {
@@ -59,23 +61,23 @@ public final class FeedDetailViewModel {
 
         let initialFeed = feed
         let hadInitialFeed = (initialFeed != nil)
-        let shouldFetchDetail = forceRefreshDetail || initialFeed == nil || (initialFeed?.needsDetailRefresh == true)
+        let shouldFetchImmediately = forceRefreshDetail || initialFeed == nil
+        didCheckScrollDetail = shouldFetchImmediately
 
         isLoadingFeed = !hadInitialFeed
-        isRefreshingDetail = shouldFetchDetail && hadInitialFeed
+        isRefreshingDetail = false
         isLoadingReplies = replies.isEmpty
         errorMessage = nil
         currentReplyPage = 1
         hasMoreReplies = true
 
-        if let initialFeed, !shouldFetchDetail {
+        if let initialFeed, !shouldFetchImmediately {
             appState.historyAndFav.recordVisit(initialFeed, enabled: appState.settings.recordHistory)
             await fetchReplies(page: 1, append: false, appState: appState)
             isLoadingReplies = false
             if initialFeed.kind == .question, answers.isEmpty {
                 answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
             }
-            isRefreshingDetail = false
             isLoadingFeed = false
             return
         }
@@ -84,7 +86,9 @@ public final class FeedDetailViewModel {
         async let initialReplies: Void = fetchReplies(page: 1, append: false, appState: appState)
 
         if let loaded = await loadedFeed {
-            feed = loaded
+            withAnimation(.easeInOut(duration: 0.25)) {
+                feed = loaded
+            }
             appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
             if loaded.kind == .question {
                 answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
@@ -95,6 +99,37 @@ public final class FeedDetailViewModel {
 
         _ = await initialReplies
         isLoadingReplies = false
+    }
+
+    /// Quietly checks on scroll whether a potentially truncated/collapsed feed needs updating,
+    /// skipping network requests when the initial card is already complete and skipping UI updates if identical.
+    public func checkDetailConsistencyOnScrollIfNeeded(appState: AppState) async {
+        guard !didCheckScrollDetail, let current = feed else { return }
+        didCheckScrollDetail = true
+        guard current.needsDetailRefresh else { return }
+        guard let loaded = await fetchFeedDetail(appState: appState) else { return }
+        guard !Self.isBodyEquivalent(current, loaded) else { return }
+
+        withAnimation(.easeInOut(duration: 0.26)) {
+            feed = loaded
+        }
+        appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
+        if loaded.kind == .question, answers.isEmpty {
+            answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
+        }
+    }
+
+    private static func isBodyEquivalent(_ lhs: FeedItem, _ rhs: FeedItem) -> Bool {
+        lhs.messageTitle == rhs.messageTitle
+            && lhs.message.utf16.count == rhs.message.utf16.count
+            && lhs.message == rhs.message
+            && lhs.articleParts.count == rhs.articleParts.count
+            && lhs.mediaItems.count == rhs.mediaItems.count
+            && lhs.isTruncated == rhs.isTruncated
+            && (lhs.vote == nil) == (rhs.vote == nil)
+            && lhs.priceText == rhs.priceText
+            && lhs.dealStatusText == rhs.dealStatusText
+            && lhs.extraURL == rhs.extraURL
     }
 
     private func fetchFeedDetail(appState: AppState) async -> FeedItem? {

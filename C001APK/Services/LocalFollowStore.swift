@@ -52,6 +52,12 @@ public final class LocalFollowStore {
         persist()
     }
 
+    public func unfollow(uids: Set<String>) {
+        guard !uids.isEmpty else { return }
+        users.removeAll { uids.contains($0.uid) }
+        persist()
+    }
+
     private func persist() {
         if let data = try? JSONEncoder().encode(users) {
             defaults.set(data, forKey: Self.usersKey)
