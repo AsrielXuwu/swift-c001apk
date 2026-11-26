@@ -433,9 +433,10 @@ public struct SecondHandOrExtraCard: View {
 
             let actionURL = !feed.xianyuURL.isEmpty ? feed.xianyuURL : feed.extraURL
             if !actionURL.isEmpty {
-                let isXianyu = FeedItem.isXianyuOrTradeURL(actionURL)
+                let isSpecificXianyu = FeedItem.isSpecificXianyuURL(actionURL)
+                let isTrade = FeedItem.isXianyuOrTradeURL(actionURL)
                 Button {
-                    openLink(actionURL, preferSystemApp: isXianyu)
+                    openLink(actionURL, preferSystemApp: isTrade)
                 } label: {
                     HStack(spacing: 10) {
                         if !feed.extraPic.isEmpty {
@@ -444,12 +445,12 @@ public struct SecondHandOrExtraCard: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                         } else {
                             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill((isXianyu ? Color.yellow : Color.accentColor).opacity(0.18))
+                                .fill((isTrade ? Color.yellow : Color.accentColor).opacity(0.18))
                                 .frame(width: 40, height: 40)
                                 .overlay {
-                                    Image(systemName: isXianyu ? "bag.fill" : "link")
+                                    Image(systemName: isTrade ? "bag.fill" : "link")
                                         .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(isXianyu ? Color.orange : Color.accentColor)
+                                        .foregroundStyle(isTrade ? Color.orange : Color.accentColor)
                                 }
                         }
 
@@ -457,13 +458,13 @@ public struct SecondHandOrExtraCard: View {
                             Text(
                                 !feed.extraTitle.isEmpty
                                     ? feed.extraTitle
-                                    : (isXianyu ? "前往闲鱼查看宝贝详情" : actionURL)
+                                    : (isSpecificXianyu ? "前往闲鱼查看宝贝详情" : (isTrade ? "查看商品详情" : actionURL))
                             )
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)
 
-                            Text(isXianyu ? "点击跳转闲鱼 · \(actionURL)" : actionURL)
+                            Text(isSpecificXianyu ? "点击跳转闲鱼 · \(actionURL)" : (isTrade ? "点击查看商品 · \(actionURL)" : actionURL))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -471,12 +472,12 @@ public struct SecondHandOrExtraCard: View {
 
                         Spacer(minLength: 4)
 
-                        Text(isXianyu ? "去闲鱼" : "打开")
+                        Text(isSpecificXianyu ? "去闲鱼" : (isTrade ? "去看看" : "打开"))
                             .font(.caption.weight(.semibold))
                             .padding(.horizontal, 9)
                             .padding(.vertical, 5)
-                            .background((isXianyu ? Color.orange : Color.accentColor).opacity(0.14), in: Capsule())
-                            .foregroundStyle(isXianyu ? Color.orange : Color.accentColor)
+                            .background((isTrade ? Color.orange : Color.accentColor).opacity(0.14), in: Capsule())
+                            .foregroundStyle(isTrade ? Color.orange : Color.accentColor)
                     }
                     .padding(10)
                     .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))

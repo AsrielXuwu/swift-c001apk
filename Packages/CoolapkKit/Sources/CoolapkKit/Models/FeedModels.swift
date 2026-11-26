@@ -384,7 +384,9 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         kind == .ershou
             || feedType == "ershou"
             || feedTypeName.contains("二手")
-            || (!xianyuURL.isEmpty && !priceText.isEmpty)
+            || feedTypeName.contains("闲置")
+            || !priceText.isEmpty
+            || !xianyuURL.isEmpty
     }
 
     public static func == (lhs: FeedItem, rhs: FeedItem) -> Bool {
@@ -461,12 +463,12 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             contentType: isArticle ? .article : .feed
         )
         pics = mediaItems.map(\.sourceUrl)
-        totalPicCount = max(
-            mediaItems.count,
-            [json.pic_count.int, json.pic_num.int, json.picArr.array.count].max() ?? 0
-        )
+        let declaredPicTotal = [json.pic_count.int, json.pic_num.int].max() ?? 0
+        totalPicCount = declaredPicTotal > max(mediaItems.count, json.picArr.array.count)
+            ? declaredPicTotal
+            : mediaItems.count
         isTruncated = json.is_truncated.bool
-            || json.is_long_feed.bool
+            || json.issummary.int > 0
             || json.message.string.contains("查看更多")
             || (isArticle && outputArray.isEmpty)
 
@@ -474,34 +476,105 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         isFavorited = json.userAction.favorite.int > 0 || json.userAction.collect.int > 0
 
         let resolvedExtraTitle = json.extra_title.string
-        let resolvedExtraURL = json.extra_url.string
+        let resolvedExtraURL = Self.unwrapCoolapkRedirectURL(json.extra_url.string)
         let resolvedExtraPic = coolapkNormalizedURL(json.extra_pic.string)
         let resolvedExtraInfo = json.extra_info.string
-        extraTitle = resolvedExtraTitle
-        extraURL = resolvedExtraURL
-        extraPic = resolvedExtraPic
-        extraInfo = resolvedExtraInfo
 
-        let ershouObj = json.ershou_info.isObject ? json.ershou_info : (json.ershou_info.parsed.isObject ? json.ershou_info.parsed : json.extraData.parsed)
-        let parsedPriceNum = [
+        let rawContainers: [JSON] = [
+            json.ershou_info,
+            json.ershou_info.parsed,
+            json.ershou_data,
+            json.ershou_data.parsed,
+            json.ershou,
+            json.second_hand,
+            json.goods_info,
+            json.goods_info.parsed,
+            json.media_info,
+            json.extraData,
+            json.extraData.parsed,
+            json.extra_data,
+            json.extra_data.parsed,
+            json.extra_info.parsed
+        ]
+        let extraObjects = rawContainers.filter { $0.isObject }
+        let extraTitleFromObj = extraObjects.compactMap { obj in
+            [obj.title.string, obj.extra_title.string, obj.goods_title.string, obj.name.string].first { !$0.isEmpty }
+        }.first ?? ""
+        let extraURLFromObj = extraObjects.compactMap { obj in
+            [obj.xianyu_url.string, obj.goofish_url.string, obj.ershou_url.string, obj.extra_url.string, obj.url.string, obj.link.string, obj.target_url.string]
+                .first { !$0.isEmpty }
+        }.first.map(Self.unwrapCoolapkRedirectURL) ?? ""
+        let extraPicFromObj = extraObjects.compactMap { obj in
+            [obj.pic.string, obj.extra_pic.string, obj.cover.string, obj.logo.string].first { !$0.isEmpty }
+        }.first.map(coolapkNormalizedURL) ?? ""
+        let extraInfoFromObj = extraObjects.compactMap { obj in
+            [obj.info.string, obj.extra_info.string, obj.sub_title.string, obj.status_text.string].first { !$0.isEmpty }
+        }.first ?? ""
+
+        let effectiveExtraTitle = resolvedExtraTitle.isEmpty ? extraTitleFromObj : resolvedExtraTitle
+        let effectiveExtraURL = resolvedExtraURL.isEmpty ? extraURLFromObj : resolvedExtraURL
+        extraTitle = effectiveExtraTitle
+        extraURL = effectiveExtraURL
+        extraPic = resolvedExtraPic.isEmpty ? extraPicFromObj : resolvedExtraPic
+        extraInfo = resolvedExtraInfo.isEmpty ? extraInfoFromObj : resolvedExtraInfo
+
+        let parsedPriceNum = ([
             json.ershou_price.double,
             json.price.double,
-            ershouObj.price.double,
-            ershouObj.ershou_price.double
-        ].first { $0 > 0 } ?? 0
-        let rawPriceString = [
+            json.sell_price.double,
+            json.goods_price.double,
+            json.deal_price.double,
+            json.trade_price.double
+        ] + extraObjects.flatMap { obj in
+            [obj.ershou_price.double, obj.price.double, obj.sell_price.double, obj.goods_price.double, obj.deal_price.double]
+        }).first { $0 > 0 } ?? 0
+
+        let rawPriceString = ([
             json.ershou_price.string,
             json.price.string,
             json.price_text.string,
-            ershouObj.price.string,
-            ershouObj.price_text.string
-        ].first { !$0.isEmpty } ?? ""
+            json.price_str.string,
+            json.sell_price.string
+        ] + extraObjects.flatMap { obj in
+            [obj.ershou_price.string, obj.price.string, obj.price_text.string, obj.price_str.string]
+        }).first { !$0.isEmpty && $0 != "0" && $0 != "0.0" } ?? ""
 
+        let relationURLs = json.relationRows.array.map(\.url.string).filter { !$0.isEmpty }
+        let linkCandidates = ([
+            json.xianyu_url.string,
+            json.goofish_url.string,
+            json.ershou_url.string,
+            json.trade_url.string,
+            effectiveExtraURL,
+            json.media_url.string,
+            json.target_url.string
+        ] + extraObjects.flatMap { obj in
+            [obj.xianyu_url.string, obj.goofish_url.string, obj.ershou_url.string, obj.trade_url.string, obj.url.string, obj.link.string]
+        } + relationURLs)
+        .map(Self.unwrapCoolapkRedirectURL)
+        .filter { !$0.isEmpty }
+
+        let matchedCandidate = linkCandidates.first { Self.isXianyuOrTradeURL($0) }
+        if let matchedCandidate {
+            xianyuURL = matchedCandidate
+        } else {
+            let plainMsg = FeedHTMLParser.plainText(json.message.string)
+            xianyuURL = Self.extractFirstXianyuURL(in: json.message.string + " " + plainMsg + " " + effectiveExtraURL + " " + resolvedExtraInfo) ?? ""
+        }
+
+        let combinedTagString = (json.tags.array.map(\.string) + [json.tags.string, json.ttitle.string, json.targetRow.title.string])
+            .joined(separator: " ")
         let isSecondHandPost = parsedType == "ershou"
             || parsedType.lowercased().contains("second")
             || json.feedTypeName.string.contains("二手")
+            || json.feedTypeName.string.contains("闲置")
+            || combinedTagString.contains("二手")
+            || combinedTagString.contains("闲置")
             || parsedPriceNum > 0
+            || !rawPriceString.isEmpty
             || !json.ershou_info.isNull
+            || !json.ershou_data.isNull
+            || !xianyuURL.isEmpty
 
         if parsedPriceNum > 0 {
             let formatted = parsedPriceNum.truncatingRemainder(dividingBy: 1) == 0
@@ -509,59 +582,53 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
                 : String(format: "%.2f", parsedPriceNum)
             priceText = "¥\(formatted)"
         } else if !rawPriceString.isEmpty {
-            priceText = rawPriceString.hasPrefix("¥") || rawPriceString.hasPrefix("￥") ? rawPriceString : "¥\(rawPriceString)"
-        } else if isSecondHandPost {
-            priceText = Self.extractInferredPrice(from: [json.message_title.string, resolvedExtraTitle, resolvedExtraInfo, json.message.string].joined(separator: " "))
+            priceText = Self.formatRawPrice(rawPriceString)
+        } else if isSecondHandPost || !effectiveExtraURL.isEmpty {
+            let plainBody = FeedHTMLParser.plainText(json.message.string)
+            priceText = Self.extractInferredPrice(from: [
+                json.message_title.string,
+                effectiveExtraTitle,
+                resolvedExtraInfo,
+                extraInfoFromObj,
+                json.info.string,
+                plainBody
+            ].joined(separator: " "))
         } else {
             priceText = ""
         }
 
-        let rawOrigPrice = [
+        let rawOrigPrice = ([
             json.orig_price.double,
             json.origin_price.double,
             json.ershou_origin_price.double,
-            ershouObj.orig_price.double,
-            ershouObj.origin_price.double
-        ].first { $0 > 0 } ?? 0
+            json.old_price.double
+        ] + extraObjects.flatMap { obj in
+            [obj.orig_price.double, obj.origin_price.double, obj.ershou_origin_price.double, obj.old_price.double]
+        }).first { $0 > 0 } ?? 0
         if rawOrigPrice > 0 {
             let formatted = rawOrigPrice.truncatingRemainder(dividingBy: 1) == 0
                 ? String(Int(rawOrigPrice))
                 : String(format: "%.2f", rawOrigPrice)
             originalPriceText = "¥\(formatted)"
         } else {
-            originalPriceText = [json.orig_price.string, json.origin_price.string].first { !$0.isEmpty } ?? ""
+            let rawOrigStr = ([json.orig_price.string, json.origin_price.string]
+                + extraObjects.flatMap { [$0.orig_price.string, $0.origin_price.string] })
+                .first { !$0.isEmpty && $0 != "0" } ?? ""
+            originalPriceText = rawOrigStr.isEmpty ? "" : Self.formatRawPrice(rawOrigStr)
         }
 
-        cityText = [
+        cityText = ([
             json.ershou_city.string,
-            ershouObj.city.string,
             json.city.string,
             json.long_location.string
-        ].first { !$0.isEmpty } ?? ""
-        dealStatusText = [
+        ] + extraObjects.flatMap { [$0.city.string, $0.area.string, $0.location.string] })
+            .first { !$0.isEmpty } ?? ""
+        dealStatusText = ([
             json.ershou_status_text.string,
             json.deal_status_text.string,
-            ershouObj.status_text.string,
-            json.extra_info.string
-        ].first { !$0.isEmpty } ?? ""
-
-        let linkCandidates = [
-            json.xianyu_url.string,
-            json.goofish_url.string,
-            json.ershou_url.string,
-            json.trade_url.string,
-            ershouObj.url.string,
-            ershouObj.xianyu_url.string,
-            resolvedExtraURL,
-            json.media_url.string
-        ].filter { !$0.isEmpty }
-        let matchedCandidate = linkCandidates.first { Self.isXianyuOrTradeURL($0) }
-        if let matchedCandidate {
-            xianyuURL = matchedCandidate
-        } else {
-            let plainMsg = FeedHTMLParser.plainText(json.message.string)
-            xianyuURL = Self.extractFirstXianyuURL(in: json.message.string + " " + plainMsg + " " + resolvedExtraInfo) ?? ""
-        }
+            resolvedExtraInfo,
+            extraInfoFromObj
+        ]).first { !$0.isEmpty } ?? ""
 
         switch feedType {
         case "feedArticle": kind = .feedArticle
@@ -710,14 +777,50 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     }
 
     public static func isXianyuOrTradeURL(_ raw: String) -> Bool {
-        let lower = raw.lowercased()
+        let lower = unwrapCoolapkRedirectURL(raw).lowercased()
         return lower.contains("goofish.com")
             || lower.contains("idlefish")
             || lower.contains("xianyu")
-            || lower.contains("m.tb.cn")
-            || lower.contains("2.taobao.com")
+            || lower.contains("tb.cn")
+            || lower.contains("taobao.com")
+            || lower.contains("tmall.com")
             || lower.contains("fleamarket://")
             || lower.contains("tbopen://")
+            || lower.contains("zhuanzhuan.com")
+            || lower.contains("jd.com")
+            || lower.contains("3.cn")
+            || lower.contains("pinduoduo.com")
+            || lower.contains("yangkeduo.com")
+    }
+
+    public static func isSpecificXianyuURL(_ raw: String) -> Bool {
+        let lower = unwrapCoolapkRedirectURL(raw).lowercased()
+        return lower.contains("goofish.com")
+            || lower.contains("idlefish")
+            || lower.contains("xianyu")
+            || lower.contains("tb.cn")
+            || lower.contains("fleamarket://")
+            || lower.contains("tbopen://")
+            || lower.contains("2.taobao.com")
+    }
+
+    public static func unwrapCoolapkRedirectURL(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if (trimmed.contains("coolapk.com/link") || trimmed.hasPrefix("/link?")),
+           let comps = URLComponents(string: trimmed.hasPrefix("/") ? "https://www.coolapk.com" + trimmed : trimmed),
+           let target = comps.queryItems?.first(where: { $0.name == "url" || $0.name == "target" })?.value,
+           !target.isEmpty {
+            return target
+        }
+        return trimmed
+    }
+
+    private static func formatRawPrice(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        if trimmed.hasPrefix("¥") || trimmed.hasPrefix("￥") { return trimmed }
+        return "¥\(trimmed)"
     }
 
     private static func extractFirstXianyuURL(in text: String) -> String? {
@@ -726,7 +829,9 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
         for match in regex.matches(in: text, range: nsRange) {
             if let range = Range(match.range, in: text) {
-                let candidate = String(text[range]).trimmingCharacters(in: CharacterSet(charactersIn: ".,;)]}>\"'"))
+                let candidate = unwrapCoolapkRedirectURL(
+                    String(text[range]).trimmingCharacters(in: CharacterSet(charactersIn: ".,;)]}>\"'"))
+                )
                 if isXianyuOrTradeURL(candidate) {
                     return candidate
                 }
@@ -738,7 +843,8 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     private static func extractInferredPrice(from text: String) -> String {
         let patterns = [
             #"[¥￥]\s*(\d+(?:\.\d{1,2})?)"#,
-            #"(\d{2,6}(?:\.\d{1,2})?)\s*(?:元|块|r|R)(?:\b|[^\w])"#
+            #"(?:价格|售价|出价|明盘|一口价|实价|现价)\s*[：:=]?\s*(\d+(?:\.\d{1,2})?)"#,
+            #"(\d{1,6}(?:\.\d{1,2})?)\s*(?:元|块|出|包邮|自提|不刀|r|R)(?:\b|[^\w])"#
         ]
         for pattern in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }

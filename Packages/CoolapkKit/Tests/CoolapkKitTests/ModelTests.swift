@@ -162,4 +162,35 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(sections[0].items.first?.value, "骁龙8至尊版")
         XCTAssertEqual(sections[0].items.first?.group, "核心硬件")
     }
+
+    func testSecondHandObjectExtraDataRedirectAndDuplicatePicsDoNotForceReload() throws {
+        let secondHandRaw = Data("""
+        {
+          "entityType": "feed",
+          "id": 991234,
+          "uid": 500,
+          "username": "出闲置用户",
+          "feedType": "ershou",
+          "feedTypeName": "二手交易",
+          "message": "自用平板，成色很新，走平台担保。",
+          "extraData": {
+            "price": 1599,
+            "url": "/link?url=https%3A%2F%2Fm.tb.cn%2Fh.abc123",
+            "title": "闲鱼链接 · 小米平板"
+          },
+          "pic": "http://image.coolapk.com/p1.jpg",
+          "picArr": [
+            "https://image.coolapk.com/p1.jpg",
+            "https://image.coolapk.com/p1.jpg"
+          ],
+          "is_long_feed": 1
+        }
+        """.utf8)
+        let feed = FeedItem(json: try JSON(data: secondHandRaw))
+        XCTAssertTrue(feed.isSecondHand)
+        XCTAssertEqual(feed.priceText, "¥1599")
+        XCTAssertEqual(feed.extraURL, "https://m.tb.cn/h.abc123")
+        XCTAssertTrue(FeedItem.isXianyuOrTradeURL(feed.extraURL))
+        XCTAssertFalse(feed.needsDetailRefresh)
+    }
 }

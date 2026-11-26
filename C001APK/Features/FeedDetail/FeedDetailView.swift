@@ -17,6 +17,8 @@ public struct FeedDetailView: View {
     @State private var showExportWarningAlert = false
     @State private var shareURL: URL?
     @State private var articleShareImageURL: URL?
+    @State private var compactNavProgress: CGFloat = 0
+    @State private var scrollToTopTrigger = 0
 
     private enum EngagementSelection: Identifiable {
         case likes(String)
@@ -76,11 +78,29 @@ public struct FeedDetailView: View {
                 }
             }
         }
-        .navigationTitle("动态详情")
+        .navigationTitle(viewModel.feed.map { $0.username.isEmpty ? "动态详情" : $0.username } ?? "动态详情")
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemGroupedBackground))
         .toolbar {
             if let feed = viewModel.feed {
+                if compactNavProgress > 0.08 {
+                    let isFollowed = appState.accounts.isLoggedIn
+                        ? feed.isAuthorFollowed
+                        : appState.localFollow.contains(uid: feed.uid)
+                    CollapsedNavEntityToolbar(
+                        avatarURL: feed.avatar,
+                        isFollowed: isFollowed,
+                        showFollowButton: !feed.uid.isEmpty && feed.uid != appState.accounts.activeUID,
+                        isDisabled: viewModel.isTogglingAuthorFollow,
+                        onTapAvatar: {
+                            scrollToTopTrigger += 1
+                        },
+                        onTapFollow: {
+                            Task { await viewModel.toggleAuthorFollow(appState: appState) }
+                        }
+                    )
+                }
+
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     if isExporting {
                         ProgressView()
@@ -186,48 +206,50 @@ public struct FeedDetailView: View {
     }
 
     private func detailScroll(_ feed: FeedItem) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 14) {
-                    authorBar(feed)
+        ScrollViewReader { proxy in
+            ScrollView {
+                Color.clear.frame(height: 0).id("feed-detail-top")
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        authorBar(feed)
+                            .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
 
-                    if !feed.messageTitle.isEmpty {
-                        Text(feed.messageTitle)
-                            .font(.system(size: 20 * appState.settings.fontScale, weight: .bold))
-                    }
+                        if !feed.messageTitle.isEmpty {
+                            Text(feed.messageTitle)
+                                .font(.system(size: 20 * appState.settings.fontScale, weight: .bold))
+                        }
 
-                    let shouldDeferTruncatedArticleBody = viewModel.isRefreshingDetail
-                        && feed.articleParts.isEmpty
-                        && feed.needsDetailRefresh
+                        let shouldDeferTruncatedArticleBody = viewModel.isRefreshingDetail
+                            && feed.kind == .feedArticle
+                            && feed.articleParts.isEmpty
 
-                    Group {
-                        if !feed.articleParts.isEmpty {
-                            articleContent(feed)
-                                .transition(.opacity)
-                        } else if shouldDeferTruncatedArticleBody {
-                            ProgressView("正在加载完整内容…")
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 24)
-                                .transition(.opacity)
-                        } else {
-                            VStack(alignment: .leading, spacing: 12) {
-                                if !feed.message.isEmpty {
-                                    RichTextView(
-                                        html: feed.message,
-                                        fontSize: 16 * appState.settings.fontScale,
-                                        showEmoji: appState.settings.showEmoji
-                                    ) { link in
-                                        appState.openRawLink(link)
+                        Group {
+                            if !feed.articleParts.isEmpty {
+                                articleContent(feed)
+                                    .transition(.opacity)
+                            } else if shouldDeferTruncatedArticleBody {
+                                ProgressView("正在加载完整内容…")
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 24)
+                                    .transition(.opacity)
+                            } else {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    if !feed.message.isEmpty {
+                                        RichTextView(
+                                            html: feed.message,
+                                            fontSize: 16 * appState.settings.fontScale,
+                                            showEmoji: appState.settings.showEmoji
+                                        ) { link in
+                                            appState.openRawLink(link)
+                                        }
+                                    }
+                                    if !feed.mediaItems.isEmpty {
+                                        MediaGridView(items: feed.mediaItems)
                                     }
                                 }
-                                if !feed.mediaItems.isEmpty {
-                                    MediaGridView(items: feed.mediaItems)
-                                }
                             }
-                            .transition(.opacity)
                         }
-                    }
-                    .animation(.easeOut(duration: 0.22), value: viewModel.isRefreshingDetail)
+                        .animation(feed.kind == .feedArticle ? .easeOut(duration: 0.22) : nil, value: !feed.articleParts.isEmpty)
 
                     if let vote = feed.vote {
                         voteSection(vote)
@@ -324,11 +346,27 @@ public struct FeedDetailView: View {
             }
             .padding(.top, 10)
             .padding(.bottom, 20)
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top
+            } action: { _, offset in
+                let progress = min(1, max(0, (offset - 36) / 60))
+                if abs(progress - compactNavProgress) > 0.02 {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        compactNavProgress = progress
+                    }
+                }
+            }
+            .onChange(of: scrollToTopTrigger) { _, _ in
+                withAnimation(.snappy) {
+                    proxy.scrollTo("feed-detail-top", anchor: .top)
+                }
+            }
+            .refreshable {
+                await viewModel.loadAll(appState: appState, forceRefreshDetail: true)
+            }
+            .scrollEdgeEffectStyle(.soft, for: .top)
         }
-        .refreshable {
-            await viewModel.loadAll(appState: appState, forceRefreshDetail: true)
-        }
-        .scrollEdgeEffectStyle(.soft, for: .top)
     }
 
     private func authorBar(_ feed: FeedItem) -> some View {

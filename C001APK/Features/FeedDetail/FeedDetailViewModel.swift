@@ -18,6 +18,7 @@ public final class FeedDetailViewModel {
     public private(set) var isRefreshingDetail = false
     public private(set) var isLoadingReplies = false
     public private(set) var isLoadingMoreReplies = false
+    public private(set) var isTogglingAuthorFollow = false
     public private(set) var hasMoreReplies = true
     public private(set) var errorMessage: String?
 
@@ -175,6 +176,34 @@ public final class FeedDetailViewModel {
     public func toggleCollect(appState: AppState) async {
         guard let current = feed else { return }
         appState.favoritePickerFeed = current
+    }
+
+    public func toggleAuthorFollow(appState: AppState) async {
+        guard var current = feed, !current.uid.isEmpty else { return }
+        if !appState.accounts.isLoggedIn {
+            if appState.localFollow.contains(uid: current.uid) {
+                appState.localFollow.unfollow(uid: current.uid)
+                appState.showToast("已取消本机关注")
+            } else {
+                appState.localFollow.follow(uid: current.uid, username: current.username, avatar: current.avatar)
+                appState.showToast("已加入本机关注")
+            }
+            return
+        }
+        guard !isTogglingAuthorFollow else { return }
+        isTogglingAuthorFollow = true
+        defer { isTogglingAuthorFollow = false }
+
+        let target = !current.isAuthorFollowed
+        current.isAuthorFollowed = target
+        feed = current
+        do {
+            try await API.followUser(uid: current.uid, follow: target)
+        } catch {
+            current.isAuthorFollowed = !target
+            feed = current
+            _ = await appState.handleAPIError(error)
+        }
     }
 
     public func toggleReplyLike(_ reply: ReplyItem, appState: AppState) async {

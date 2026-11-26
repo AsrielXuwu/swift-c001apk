@@ -1,7 +1,151 @@
+import AVFoundation
 import Photos
 import PhotosUI
 import SwiftUI
 import UIKit
+
+public final class LiveVideoContainerView: UIView {
+    public override class var layerClass: AnyClass { AVPlayerLayer.self }
+
+    public var playerLayer: AVPlayerLayer {
+        layer as! AVPlayerLayer
+    }
+}
+
+public struct LiveVideoPlayerView: UIViewRepresentable {
+    public let videoURL: URL
+    public let playTrigger: Int
+    public let isLooping: Bool
+    public let isMuted: Bool
+    public let onReadyToDisplay: (() -> Void)?
+    public let onPlaybackEnded: (() -> Void)?
+
+    public init(
+        videoURL: URL,
+        playTrigger: Int,
+        isLooping: Bool,
+        isMuted: Bool = false,
+        onReadyToDisplay: (() -> Void)? = nil,
+        onPlaybackEnded: (() -> Void)? = nil
+    ) {
+        self.videoURL = videoURL
+        self.playTrigger = playTrigger
+        self.isLooping = isLooping
+        self.isMuted = isMuted
+        self.onReadyToDisplay = onReadyToDisplay
+        self.onPlaybackEnded = onPlaybackEnded
+    }
+
+    public func makeCoordinator() -> Coordinator {
+        Coordinator(onReadyToDisplay: onReadyToDisplay, onPlaybackEnded: onPlaybackEnded)
+    }
+
+    public func makeUIView(context: Context) -> LiveVideoContainerView {
+        let view = LiveVideoContainerView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        view.playerLayer.videoGravity = .resizeAspect
+        try? AVAudioSession.sharedInstance().setCategory(.ambient, options: [.mixWithOthers])
+        return view
+    }
+
+    public func updateUIView(_ uiView: LiveVideoContainerView, context: Context) {
+        context.coordinator.onReadyToDisplay = onReadyToDisplay
+        context.coordinator.onPlaybackEnded = onPlaybackEnded
+        context.coordinator.isLooping = isLooping
+
+        if context.coordinator.loadedURL != videoURL {
+            context.coordinator.load(url: videoURL, onto: uiView.playerLayer)
+        }
+        context.coordinator.player?.isMuted = isMuted
+
+        if context.coordinator.lastPlayTrigger != playTrigger {
+            context.coordinator.lastPlayTrigger = playTrigger
+            context.coordinator.restart()
+        } else if isLooping && !context.coordinator.wasLooping {
+            context.coordinator.restart()
+        }
+        context.coordinator.wasLooping = isLooping
+    }
+
+    public static func dismantleUIView(_ uiView: LiveVideoContainerView, coordinator: Coordinator) {
+        coordinator.teardown(layer: uiView.playerLayer)
+    }
+
+    @MainActor
+    public final class Coordinator: NSObject {
+        var player: AVPlayer?
+        var loadedURL: URL?
+        var lastPlayTrigger: Int = -1
+        var isLooping = false
+        var wasLooping = false
+        var onReadyToDisplay: (() -> Void)?
+        var onPlaybackEnded: (() -> Void)?
+        private var endObserver: NSObjectProtocol?
+        private var readyObservation: NSKeyValueObservation?
+
+        init(onReadyToDisplay: (() -> Void)?, onPlaybackEnded: (() -> Void)?) {
+            self.onReadyToDisplay = onReadyToDisplay
+            self.onPlaybackEnded = onPlaybackEnded
+        }
+
+        func load(url: URL, onto layer: AVPlayerLayer) {
+            teardown(layer: layer)
+            loadedURL = url
+            let item = AVPlayerItem(url: url)
+            let newPlayer = AVPlayer(playerItem: item)
+            newPlayer.actionAtItemEnd = .none
+            layer.player = newPlayer
+            player = newPlayer
+
+            readyObservation = layer.observe(\.isReadyForDisplay, options: [.initial, .new]) { [weak self] observedLayer, _ in
+                if observedLayer.isReadyForDisplay {
+                    Task { @MainActor [weak self] in
+                        self?.onReadyToDisplay?()
+                    }
+                }
+            }
+
+            endObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime,
+                object: item,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    if self.isLooping {
+                        self.player?.seek(to: .zero)
+                        self.player?.play()
+                    } else {
+                        self.onPlaybackEnded?()
+                    }
+                }
+            }
+        }
+
+        func restart() {
+            guard let player else { return }
+            player.seek(to: .zero) { _ in
+                Task { @MainActor in
+                    player.play()
+                }
+            }
+        }
+
+        func teardown(layer: AVPlayerLayer) {
+            if let endObserver {
+                NotificationCenter.default.removeObserver(endObserver)
+                self.endObserver = nil
+            }
+            readyObservation?.invalidate()
+            readyObservation = nil
+            player?.pause()
+            layer.player = nil
+            player = nil
+            loadedURL = nil
+        }
+    }
+}
 
 public struct LivePhotoRepresentable: UIViewRepresentable {
     public let livePhoto: PHLivePhoto

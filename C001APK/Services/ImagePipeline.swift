@@ -1,4 +1,6 @@
 import CoolapkKit
+import AVFoundation
+import CoolapkKit
 import CryptoKit
 import Foundation
 import ImageIO
@@ -126,7 +128,7 @@ public actor ImagePipeline {
         do {
             var request = URLRequest(url: url)
             request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-            request.setValue("image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+            request.setValue("image/*,video/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
             request.setValue("gzip, deflate", forHTTPHeaderField: "Accept-Encoding")
             let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse,
@@ -144,7 +146,18 @@ public actor ImagePipeline {
 
     public func downloadToTemporaryFile(urlString: String, defaultExtension: String) async -> URL? {
         guard let data = await fetchRawData(urlString: urlString, maxBytes: 64 * 1024 * 1024) else { return nil }
-        let ext = URL(string: urlString)?.pathExtension.nonEmpty ?? defaultExtension
+        let rawExt = normalizedURL(urlString)?.pathExtension.nonEmpty ?? defaultExtension
+        let ext: String
+        if (defaultExtension == "mp4" || defaultExtension == "mov"), data.count >= 12 {
+            let ftyp = Data([0x66, 0x74, 0x79, 0x70])
+            if data.subdata(in: 4..<8) == ftyp, data.subdata(in: 8..<10) == Data([0x71, 0x74]) {
+                ext = "mov"
+            } else {
+                ext = "mp4"
+            }
+        } else {
+            ext = rawExt
+        }
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension(ext)
@@ -154,6 +167,33 @@ public actor ImagePipeline {
         } catch {
             return nil
         }
+    }
+
+    /// Resolves a playable local MP4/MOV file URL for a Coolapk Live Photo / MotionPhoto if present.
+    public func resolveLiveVideoFile(for item: FeedMedia) async -> URL? {
+        let hasLiveHint = item.isLivePhoto
+            || Self.cachedLiveFlagSync(urlString: item.sourceUrl)
+            || Self.cachedLiveFlagSync(urlString: item.thumbnailUrl)
+
+        if let embedded = await extractEmbeddedMotionVideo(fromImageURL: item.sourceUrl, expectMotionPhoto: hasLiveHint) {
+            return embedded
+        }
+        if let explicit = item.videoUrl, !explicit.isEmpty,
+           let downloaded = await downloadToTemporaryFile(urlString: explicit, defaultExtension: "mp4") {
+            return downloaded
+        }
+        if hasLiveHint {
+            if let remote = await API.resolveLivePhotoVideoURL(imageURL: item.sourceUrl),
+               let downloaded = await downloadToTemporaryFile(urlString: remote, defaultExtension: "mp4") {
+                return downloaded
+            }
+            if let thumb = item.previewUrl, !thumb.isEmpty, thumb != item.sourceUrl,
+               let remote = await API.resolveLivePhotoVideoURL(imageURL: thumb),
+               let downloaded = await downloadToTemporaryFile(urlString: remote, defaultExtension: "mp4") {
+                return downloaded
+            }
+        }
+        return nil
     }
 
     public func diskCacheByteCount() -> Int64 {
@@ -180,7 +220,7 @@ public actor ImagePipeline {
     }
 
     /// Extracts an embedded MotionPhoto MP4 video from JPEG XMP/tail data when present.
-    public func extractEmbeddedMotionVideo(fromImageURL imageURL: String) async -> URL? {
+    public func extractEmbeddedMotionVideo(fromImageURL imageURL: String, expectMotionPhoto: Bool = false) async -> URL? {
         guard let data = await fetchRawData(urlString: imageURL, maxBytes: 64 * 1024 * 1024),
               data.count > 64 else {
             return nil
@@ -189,7 +229,7 @@ public actor ImagePipeline {
         let xmpText = String(data: Data(headerSlice), encoding: .isoLatin1)
             ?? String(decoding: headerSlice, as: UTF8.self)
         let declaresMotion = Self.xmpDeclaresMotionPhoto(xmpText)
-        guard declaresMotion else { return nil }
+        guard declaresMotion || expectMotionPhoto else { return nil }
 
         let declaredLen = Self.extractMotionVideoLength(from: xmpText)
         let ftypMarker = Data([0x66, 0x74, 0x79, 0x70]) // "ftyp"
@@ -202,13 +242,27 @@ public actor ImagePipeline {
         }
         if videoData == nil {
             let scanStart = max(0, data.count - min(data.count, 32 * 1024 * 1024))
-            if let range = data.range(of: ftypMarker, options: [.backwards], in: scanStart..<data.count),
-               range.lowerBound >= 4 {
-                let mp4Start = range.lowerBound - 4
-                videoData = data.subdata(in: mp4Start..<data.count)
+            var searchEnd = data.count
+            while searchEnd > scanStart + 4 {
+                guard let range = data.range(of: ftypMarker, options: [.backwards], in: scanStart..<searchEnd) else {
+                    break
+                }
+                if range.lowerBound >= 4 {
+                    let mp4Start = range.lowerBound - 4
+                    let boxSize = (UInt32(data[mp4Start]) << 24)
+                        | (UInt32(data[mp4Start + 1]) << 16)
+                        | (UInt32(data[mp4Start + 2]) << 8)
+                        | UInt32(data[mp4Start + 3])
+                    if boxSize >= 12, boxSize <= 4096, data.count - mp4Start >= Int(boxSize) {
+                        videoData = data.subdata(in: mp4Start..<data.count)
+                        break
+                    }
+                }
+                searchEnd = range.lowerBound
             }
         }
         guard let extracted = videoData, !extracted.isEmpty else { return nil }
+        liveFlagCache.setObject(NSNumber(value: true), forKey: imageURL as NSString)
         let tempURL = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension("mp4")
@@ -302,9 +356,11 @@ public actor ImagePipeline {
     }
 
     private nonisolated static func xmpDeclaresMotionPhoto(_ xmp: String) -> Bool {
-        xmp.contains("GCamera:MotionPhoto=\"1\"")
-            || xmp.contains("GCamera:MicroVideo=\"1\"")
-            || xmp.contains("OpCamera:OLivePhotoVersion=\"")
+        xmp.contains("MotionPhoto=\"1\"")
+            || xmp.contains("MicroVideo=\"1\"")
+            || xmp.contains("OLivePhotoVersion=\"")
+            || xmp.contains("Item:Semantic=\"MotionPhoto\"")
+            || xmp.contains("MotionPhoto_Data")
     }
 
     private nonisolated static func extractMotionVideoLength(from xmp: String) -> Int? {
