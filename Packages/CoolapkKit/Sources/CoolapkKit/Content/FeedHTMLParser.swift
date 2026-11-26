@@ -232,7 +232,7 @@ public enum FeedHTMLParser: Sendable {
 
     public static func decodeEntities(_ text: String) -> String {
         guard text.contains("&") else { return text }
-        var out = text
+        let out = text
             .replacingOccurrences(of: "&amp;", with: "&")
             .replacingOccurrences(of: "&lt;", with: "<")
             .replacingOccurrences(of: "&gt;", with: ">")

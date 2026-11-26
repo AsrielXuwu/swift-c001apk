@@ -126,11 +126,11 @@ private struct CaptchaWebViewRepresentable: UIViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, WKScriptMessageHandler {
-        let onVerified: @MainActor @Sendable (String) -> Void
+        let onVerified: (String) -> Void
         var lastReload = 0
         private let sentLock = OSAllocatedUnfairLock(initialState: false)
 
-        init(onVerified: @escaping @MainActor @Sendable (String) -> Void) {
+        init(onVerified: @escaping (String) -> Void) {
             self.onVerified = onVerified
         }
 
@@ -144,8 +144,8 @@ private struct CaptchaWebViewRepresentable: UIViewRepresentable {
                 return true
             }
             guard shouldSend else { return }
-            Task { @MainActor in
-                onVerified(token)
+            Task { @MainActor [weak self] in
+                self?.onVerified(token)
             }
         }
     }

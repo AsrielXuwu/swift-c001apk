@@ -57,10 +57,10 @@ private struct WebLoginRepresentable: UIViewRepresentable {
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
-        let onCapturedCredentials: @MainActor @Sendable (String, String, String, String) -> Void
+        let onCapturedCredentials: (String, String, String, String) -> Void
         private var finished = false
 
-        init(onCapturedCredentials: @escaping @MainActor @Sendable (String, String, String, String) -> Void) {
+        init(onCapturedCredentials: @escaping (String, String, String, String) -> Void) {
             self.onCapturedCredentials = onCapturedCredentials
         }
 
