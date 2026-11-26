@@ -243,5 +243,13 @@ final class ModelTests: XCTestCase {
             FeedLink.resolve("/feed/rankList?type=month"),
             .page("/feed/rankList?type=month")
         )
+        XCTAssertEqual(
+            FeedLink.resolve("/feed/123456"),
+            .feed("123456")
+        )
+        XCTAssertEqual(
+            FeedLink.resolve("/product/categoryList"),
+            .page("/product/categoryList")
+        )
     }
 }

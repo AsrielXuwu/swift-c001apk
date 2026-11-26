@@ -20,16 +20,31 @@ public enum FeedLink: Hashable, Sendable {
 
         var normalized = trimmed
         if normalized.hasPrefix("coolmarket://") {
-            normalized = "/" + String(normalized.dropFirst("coolmarket://".count))
+            normalized = String(normalized.dropFirst("coolmarket://".count))
         } else if normalized.hasPrefix("coolapk://") {
-            normalized = "/" + String(normalized.dropFirst("coolapk://".count))
+            normalized = String(normalized.dropFirst("coolapk://".count))
+        }
+        while normalized.hasPrefix("//") {
+            normalized.removeFirst()
         }
         if normalized.hasPrefix("/#/") {
-            normalized = String(normalized.dropFirst())
+            normalized.removeFirst()
+        }
+        if !normalized.hasPrefix("/"),
+           !normalized.hasPrefix("#"),
+           !normalized.hasPrefix("http://"),
+           !normalized.hasPrefix("https://"),
+           !normalized.contains("://"),
+           normalized.contains("/") || normalized.hasPrefix("page?") {
+            normalized = "/" + normalized
         }
         if let url = URL(string: normalized), let host = url.host?.lowercased() {
             if host.contains("coolapk.com") || host.contains("coolapk1s.com") {
-                normalized = url.path + (url.query.map { "?\($0)" } ?? "")
+                if (url.path.isEmpty || url.path == "/"), let frag = url.fragment, !frag.isEmpty {
+                    normalized = "#\(frag)"
+                } else {
+                    normalized = url.path + (url.query.map { "?\($0)" } ?? "")
+                }
             } else if url.scheme == "http" || url.scheme == "https" {
                 return .web(url)
             }
@@ -41,31 +56,32 @@ public enum FeedLink: Hashable, Sendable {
         if let tag = extractSegment(from: normalized, prefix: "/t/") {
             return .topic(tag.removingPercentEncoding ?? tag)
         }
-        if let uid = extractSegment(from: normalized, prefix: "/u/") {
+        if let uid = extractSegment(from: normalized, prefix: "/u/"), isNumericID(uid) {
             return .user(uid)
         }
-        if let fid = extractSegment(from: normalized, prefix: "/feed/") {
+        if let fid = extractSegment(from: normalized, prefix: "/feed/"), isNumericID(fid) {
             return .feed(fid)
         }
-        if let pid = extractSegment(from: normalized, prefix: "/product/") {
+        if let pid = extractSegment(from: normalized, prefix: "/product/"), isNumericID(pid) {
             return .product(pid)
         }
-        if let appID = extractSegment(from: normalized, prefix: "/apk/") ?? extractSegment(from: normalized, prefix: "/game/") {
+        if let appID = extractSegment(from: normalized, prefix: "/apk/") ?? extractSegment(from: normalized, prefix: "/game/"),
+           !["index", "list", "rankList", "categoryList"].contains(appID) {
             return .app(appID)
         }
-        if let cid = extractSegment(from: normalized, prefix: "/collection/") {
+        if let cid = extractSegment(from: normalized, prefix: "/collection/"), isNumericID(cid) {
             return .collection(cid)
         }
-        if let did = extractSegment(from: normalized, prefix: "/dyh/") {
+        if let did = extractSegment(from: normalized, prefix: "/dyh/"), isNumericID(did) {
             return .dyh(did)
         }
-        if let eid = extractSegment(from: normalized, prefix: "/event/") {
+        if let eid = extractSegment(from: normalized, prefix: "/event/"), isNumericID(eid) {
             return .event(eid)
         }
-        if let qid = extractSegment(from: normalized, prefix: "/question/") {
+        if let qid = extractSegment(from: normalized, prefix: "/question/"), isNumericID(qid) {
             return .question(qid)
         }
-        if let vid = extractSegment(from: normalized, prefix: "/vote/") {
+        if let vid = extractSegment(from: normalized, prefix: "/vote/"), isNumericID(vid) {
             return .vote(vid)
         }
         if normalized.hasPrefix("/") || normalized.hasPrefix("#") {
@@ -99,6 +115,10 @@ public enum FeedLink: Hashable, Sendable {
             return nested
         }
         return nil
+    }
+
+    private static func isNumericID(_ raw: String) -> Bool {
+        !raw.isEmpty && raw.allSatisfy(\.isNumber)
     }
 
     private static func extractSegment(from path: String, prefix: String) -> String? {

@@ -601,9 +601,20 @@ public enum API: Sendable {
         default:
             let links = entities.enumerated().map { offset, entity in
                 iconLink(from: entity, keyPrefix: "def-\(index)-\(offset)")
-            }.filter { !$0.image.isEmpty }
-            if !links.isEmpty { return titled([.icons("icons-\(index)", links)]) }
-            if !title.isEmpty, entities.isEmpty { return [.text("text-\(index)", title)] }
+            }.filter { !$0.image.isEmpty || !$0.title.isEmpty }
+            if !links.isEmpty {
+                if links.allSatisfy({ $0.image.isEmpty }) {
+                    let sections = links.map { HomeSection(id: $0.id, title: $0.title, subtitle: $0.subtitle, url: $0.url, style: "") }
+                    return titled([.linkList("linklist-\(index)", sections)])
+                }
+                return titled([.icons("icons-\(index)", links)])
+            }
+            if !title.isEmpty, entities.isEmpty {
+                if !moreURL.isEmpty {
+                    return [.sectionTitle(key: "\(index)", title: title, url: moreURL, subtitle: "")]
+                }
+                return [.text("text-\(index)", title)]
+            }
         }
         return []
     }

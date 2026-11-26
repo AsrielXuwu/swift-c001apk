@@ -143,7 +143,7 @@ public struct MediaGridView: View {
                 MediaContextMenuPreview(item: item, disableHDR: appState.settings.disableHDR)
             }
 
-            badgeStack(for: item, isLong: (ratio < 0.42))
+            badgeStack(for: item, isLong: (ratio < 0.44))
         }
     }
 
@@ -843,7 +843,10 @@ public struct MediaContextMenuPreview: View {
         self.disableHDR = disableHDR
         let initial = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
+            ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
             ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080, preferHDR: false)
+            ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 420, preferHDR: false)
+            ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 320, preferHDR: false)
         self._displayResult = State(initialValue: initial)
     }
 
