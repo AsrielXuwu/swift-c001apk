@@ -618,6 +618,9 @@ public struct FeedDetailView: View {
                         fontSize: 15 * appState.settings.fontScale,
                         showEmoji: appState.settings.showEmoji,
                         isSelectableText: false,
+                        onLinkTap: { link in
+                            appState.openRawLink(link)
+                        },
                         onCardTap: {
                             if appState.accounts.isLoggedIn {
                                 appState.composeMode = .replyToComment(targetID: reply.id, replyToName: reply.username)
@@ -625,9 +628,7 @@ public struct FeedDetailView: View {
                                 appState.showLoginSheet = true
                             }
                         }
-                    ) { link in
-                        appState.openRawLink(link)
-                    }
+                    )
 
                     if !reply.mediaItems.isEmpty {
                         MediaGridView(items: reply.mediaItems)

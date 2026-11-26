@@ -171,7 +171,7 @@ public struct HomeView: View {
                 }
             }
             .padding(.horizontal, isFabCollapsed ? 11 : 16)
-            .frame(minWidth: 44, height: 44)
+            .frame(minWidth: 44, minHeight: 44, maxHeight: 44)
             .clipShape(Capsule())
             .glassEffect(.regular.interactive(), in: .capsule)
             .foregroundStyle(Color.accentColor)

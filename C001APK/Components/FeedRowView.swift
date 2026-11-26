@@ -179,10 +179,11 @@ public struct FeedRowView: View {
                 maxLines: 6,
                 showEmoji: appState.settings.showEmoji,
                 isSelectableText: false,
+                onLinkTap: { link in
+                    appState.openRawLink(link)
+                },
                 onCardTap: { openFeedDetail() }
-            ) { link in
-                appState.openRawLink(link)
-            }
+            )
         }
     }
 
@@ -201,14 +202,15 @@ public struct FeedRowView: View {
                     maxLines: 4,
                     showEmoji: appState.settings.showEmoji,
                     isSelectableText: false,
+                    onLinkTap: { link in
+                        appState.openRawLink(link)
+                    },
                     onCardTap: {
                         if !source.id.isEmpty {
                             appState.push(.feed(id: source.id, transitionID: "quote-\(transitionSeed)"))
                         }
                     }
-                ) { link in
-                    appState.openRawLink(link)
-                }
+                )
             }
             if !source.mediaItems.isEmpty {
                 MediaGridView(items: source.mediaItems)

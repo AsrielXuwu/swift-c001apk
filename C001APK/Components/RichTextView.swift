@@ -8,8 +8,8 @@ public struct RichTextView: UIViewRepresentable {
     public var maxLines: Int = 0
     public var showEmoji: Bool = true
     public var isSelectableText: Bool = true
-    public var onCardTap: (() -> Void)?
     public var onLinkTap: ((String) -> Void)?
+    public var onCardTap: (() -> Void)?
 
     public init(
         html: String,
@@ -18,8 +18,8 @@ public struct RichTextView: UIViewRepresentable {
         maxLines: Int = 0,
         showEmoji: Bool = true,
         isSelectableText: Bool = true,
-        onCardTap: (() -> Void)? = nil,
-        onLinkTap: ((String) -> Void)? = nil
+        onLinkTap: ((String) -> Void)? = nil,
+        onCardTap: (() -> Void)? = nil
     ) {
         self.html = html
         self.fontSize = fontSize
@@ -27,8 +27,8 @@ public struct RichTextView: UIViewRepresentable {
         self.maxLines = maxLines
         self.showEmoji = showEmoji
         self.isSelectableText = isSelectableText
-        self.onCardTap = onCardTap
         self.onLinkTap = onLinkTap
+        self.onCardTap = onCardTap
     }
 
     public func makeCoordinator() -> Coordinator {
