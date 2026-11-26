@@ -186,7 +186,8 @@ public actor ImagePipeline {
             return nil
         }
         let headerSlice = data.prefix(min(data.count, 512 * 1024))
-        let xmpText = String(decoding: headerSlice, as: ISO88591Fallback.self)
+        let xmpText = String(data: Data(headerSlice), encoding: .isoLatin1)
+            ?? String(decoding: headerSlice, as: UTF8.self)
         let declaresMotion = Self.xmpDeclaresMotionPhoto(xmpText)
         guard declaresMotion else { return nil }
 
@@ -234,7 +235,8 @@ public actor ImagePipeline {
         }
 
         let prefixBytes = data.prefix(min(data.count, 256 * 1024))
-        let xmpPrefix = String(decoding: prefixBytes, as: ISO88591Fallback.self)
+        let xmpPrefix = String(data: Data(prefixBytes), encoding: .isoLatin1)
+            ?? String(decoding: prefixBytes, as: UTF8.self)
         let hasGainMap = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
             source,
             0,
@@ -358,17 +360,4 @@ public actor ImagePipeline {
 
 private extension String {
     var nonEmpty: String? { isEmpty ? nil : self }
-}
-
-private enum ISO88591Fallback: Unicode.Codec {
-    typealias CodeUnit = UInt8
-    typealias EncodedScalar = CollectionOfOne<UInt8>
-
-    static var encodedReplacementCharacter: CollectionOfOne<UInt8> { CollectionOfOne(0x3F) }
-    static func decode(_ input: CollectionOfOne<UInt8>) -> Unicode.Scalar {
-        Unicode.Scalar(input.first!)
-    }
-    static func encode(_ input: Unicode.Scalar) -> CollectionOfOne<UInt8>? {
-        CollectionOfOne(UInt8(min(input.value, 255)))
-    }
 }
