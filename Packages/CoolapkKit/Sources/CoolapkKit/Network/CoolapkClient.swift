@@ -66,6 +66,7 @@ public actor CoolapkClient {
     private var tokenDate: Date = .distantPast
     private let tokenLifetime: TimeInterval = 5 * 60
     private var inFlightGETs: [String: Task<JSON, Error>] = [:]
+    private var hasBootstrappedSession = false
 
     private(set) var sessionGeneration: Int = 0
     private(set) var uid: String = ""
@@ -119,9 +120,30 @@ public actor CoolapkClient {
         params.szlmID = id
     }
 
+    public func bootstrapSession(
+        parameters: ProtocolParameters,
+        uid: String,
+        username: String,
+        token: String,
+        sessid: String
+    ) {
+        if parameters.deviceCode != params.deviceCode || parameters.appCode != params.appCode {
+            invalidateToken()
+        }
+        params = parameters
+        self.uid = uid
+        self.username = username
+        self.token = token
+        self.sessid = sessid
+        hasBootstrappedSession = true
+    }
+
     public func updateLogin(uid: String, username: String, token: String, sessid: String = "") {
         let uidChanged = self.uid != uid
-        sessionGeneration += 1
+        if hasBootstrappedSession {
+            sessionGeneration += 1
+        }
+        hasBootstrappedSession = true
         self.uid = uid
         self.username = username
         self.token = token
@@ -135,7 +157,10 @@ public actor CoolapkClient {
     }
 
     public func clearLogin() {
-        sessionGeneration += 1
+        if hasBootstrappedSession {
+            sessionGeneration += 1
+        }
+        hasBootstrappedSession = true
         uid = ""
         username = ""
         token = ""

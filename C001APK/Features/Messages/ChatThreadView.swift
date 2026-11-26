@@ -204,7 +204,7 @@ public struct ChatThreadView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    appState.push(.user(uid: peerUID))
+                    appState.push(.user(uid: peerUID, initialUsername: peerName, initialAvatar: peerAvatar))
                 } label: {
                     AvatarView(url: peerAvatar, size: 28)
                 }

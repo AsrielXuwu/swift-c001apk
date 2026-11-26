@@ -99,7 +99,7 @@ public enum RootTab: Hashable, Sendable {
 
 public enum AppRoute: Hashable, Sendable {
     case feed(id: String, initial: FeedItem? = nil, transitionID: String? = nil)
-    case user(uid: String, transitionID: String? = nil)
+    case user(uid: String, initialUsername: String? = nil, initialAvatar: String? = nil, transitionID: String? = nil)
     case topic(tag: String, transitionID: String? = nil)
     case product(id: String, transitionID: String? = nil)
     case app(id: String, transitionID: String? = nil)
@@ -125,7 +125,7 @@ public enum AppRoute: Hashable, Sendable {
     public var transitionID: String? {
         switch self {
         case let .feed(_, _, id),
-             let .user(_, id),
+             let .user(_, _, _, id),
              let .topic(_, id),
              let .product(_, id),
              let .app(_, id),

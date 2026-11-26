@@ -58,7 +58,12 @@ public struct HomeView: View {
                     let avatarID = "home-nav-avatar-\(navAvatarSeed)"
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
-                            appState.push(.user(uid: active.uid, transitionID: avatarID))
+                            appState.push(.user(
+                                uid: active.uid,
+                                initialUsername: appState.currentUserProfile?.username ?? active.displayName,
+                                initialAvatar: avatarURL,
+                                transitionID: avatarID
+                            ))
                         } label: {
                             AvatarView(url: avatarURL, size: 28)
                         }
@@ -144,7 +149,8 @@ public struct HomeView: View {
                     scrolledTab = appState.homeSelectedTab
                 }
             }
-            .task(id: "\(appState.sessionVersion)|\(activeTab.rawValue)") {
+            .task(id: "\(appState.isSessionBootstrapped)|\(appState.sessionVersion)|\(activeTab.rawValue)") {
+                guard appState.isSessionBootstrapped else { return }
                 await viewModel.loadInitial(tab: activeTab, appState: appState)
             }
             .onChange(of: appState.homeDoubleTapTrigger) { _, _ in

@@ -281,6 +281,7 @@ private struct PhotoStackCardView<MenuContent: View>: View {
     @ViewBuilder let contextMenuBuilder: (FeedMedia, Int) -> MenuContent
 
     @Environment(\.zoomNamespace) private var zoomNamespace
+    @Environment(\.replySwipeLock) private var replySwipeLock
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
     @State private var lastDragEndedAt: Date = .distantPast
@@ -329,11 +330,6 @@ private struct PhotoStackCardView<MenuContent: View>: View {
                               abs(dragProgress) < 0.04,
                               Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
                         onTapCard(itemIndex)
-                    }
-                    .contextMenu {
-                        contextMenuBuilder(item, itemIndex)
-                    } preview: {
-                        MediaContextMenuPreview(item: item, disableHDR: disableHDR)
                     }
             }
             .padding(.leading, visibleLayers > 2 ? 16 : 0)
@@ -390,15 +386,22 @@ private struct PhotoStackCardView<MenuContent: View>: View {
             .padding(.trailing, (visibleLayers > 1 ? 20 : 0) + 10)
         }
         .frame(height: visibleLayers > 1 ? 236 : 218)
-        .contentShape(Rectangle())
+        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contextMenu {
+            contextMenuBuilder(activeItem, activeIdx)
+        } preview: {
+            MediaContextMenuPreview(item: activeItem, disableHDR: disableHDR)
+        }
         .simultaneousGesture(
-            DragGesture(minimumDistance: 12)
+            DragGesture(minimumDistance: 6)
                 .onChanged { value in
                     guard count > 1 else { return }
                     let dx = value.translation.width
                     let dy = value.translation.height
-                    if isHorizontalDragging || abs(dx) > max(12, abs(dy) * 1.15) {
+                    if isHorizontalDragging || abs(dx) > max(6, abs(dy) * 1.1) {
                         isHorizontalDragging = true
+                        replySwipeLock?.setDraggingMedia(true)
                         dragProgress = max(-1.15, min(1.15, -dx / 210.0))
                     }
                 }
@@ -406,11 +409,12 @@ private struct PhotoStackCardView<MenuContent: View>: View {
                     guard count > 1 else { return }
                     let dx = value.translation.width
                     let predicted = value.predictedEndTranslation.width
-                    let wasDragging = isHorizontalDragging || abs(dx) > 10
+                    let wasDragging = isHorizontalDragging || abs(dx) > 6
                     if wasDragging {
                         lastDragEndedAt = Date()
                     }
                     isHorizontalDragging = false
+                    replySwipeLock?.setDraggingMedia(false)
                     guard wasDragging else {
                         withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
                             dragProgress = 0
@@ -638,9 +642,18 @@ private struct MediaContextMenuPreview: View {
     let item: FeedMedia
     let disableHDR: Bool
 
+    @State private var displayResult: LoadedImageResult?
     @State private var livePhoto: PHLivePhoto?
     @State private var playTrigger = 0
     @State private var gifData: Data?
+
+    init(item: FeedMedia, disableHDR: Bool) {
+        self.item = item
+        self.disableHDR = disableHDR
+        let initial = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200)
+            ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080)
+        self._displayResult = State(initialValue: initial)
+    }
 
     var body: some View {
         let ratio = MediaGridView.inferredAspectRatio(from: item.thumbnailUrl) ?? 1.25
@@ -649,12 +662,7 @@ private struct MediaContextMenuPreview: View {
         let height: CGFloat = min(380, max(180, width / clamped))
 
         ZStack {
-            RemoteImageView(
-                url: item.sourceUrl,
-                maxPixelSize: 1200,
-                contentMode: .fit,
-                honorHDR: !disableHDR
-            )
+            Color(.secondarySystemGroupedBackground)
 
             if let gifData, item.isGif {
                 AnimatedGIFView(data: gifData, contentMode: .scaleAspectFit)
@@ -664,11 +672,24 @@ private struct MediaContextMenuPreview: View {
                     autoPlayTrigger: playTrigger,
                     isLooping: true
                 )
+            } else if let displayResult {
+                let imageView = Image(uiImage: displayResult.image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                if !disableHDR && (displayResult.hasHDRGainMap || item.isHdr) {
+                    imageView.allowedDynamicRange(.high)
+                } else {
+                    imageView.allowedDynamicRange(.standard)
+                }
+            } else {
+                ProgressView()
             }
         }
         .frame(width: width, height: height)
-        .background(Color.black.opacity(0.04))
         .task(id: item.id) {
+            if displayResult == nil {
+                displayResult = await ImagePipeline.shared.loadImage(urlString: item.sourceUrl, maxPixelSize: 1200)
+            }
             if item.isGif {
                 gifData = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl)
             } else if item.isLivePhoto, let videoURL = item.videoUrl {
@@ -676,11 +697,12 @@ private struct MediaContextMenuPreview: View {
                       let vidFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: videoURL, defaultExtension: "mov") else {
                     return
                 }
+                let placeholder = displayResult?.image
                 let lock = OSAllocatedUnfairLock(initialState: false)
                 let box: LivePhotoPreviewBox = await withCheckedContinuation { continuation in
                     PHLivePhoto.request(
                         withResourceFileURLs: [imgFile, vidFile],
-                        placeholderImage: nil,
+                        placeholderImage: placeholder,
                         targetSize: .zero,
                         contentMode: .aspectFit
                     ) { photo, info in

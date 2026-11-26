@@ -121,7 +121,7 @@ public struct ReplyThreadSheet: View {
             Button {
                 if !reply.uid.isEmpty {
                     dismiss()
-                    appState.push(.user(uid: reply.uid))
+                    appState.push(.user(uid: reply.uid, initialUsername: reply.username, initialAvatar: reply.avatar))
                 }
             } label: {
                 AvatarView(url: reply.avatar, size: isRoot ? 38 : 34)

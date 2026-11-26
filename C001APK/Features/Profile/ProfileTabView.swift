@@ -11,7 +11,11 @@ public struct ProfileTabView: View {
             Section {
                 if let active = appState.accounts.activeAccount {
                     Button {
-                        appState.push(.user(uid: active.uid))
+                        appState.push(.user(
+                            uid: active.uid,
+                            initialUsername: appState.currentUserProfile?.username ?? active.displayName,
+                            initialAvatar: appState.currentUserProfile?.avatar ?? active.avatar
+                        ))
                     } label: {
                         HStack(spacing: 14) {
                             AvatarView(url: appState.currentUserProfile?.avatar ?? active.avatar, size: 58)

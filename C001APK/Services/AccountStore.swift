@@ -24,19 +24,39 @@ public final class AccountStore {
         loadFromDisk()
     }
 
-    public func restoreActiveSessionIntoClient() async {
+    public func restoreActiveSessionIntoClient(parameters: ProtocolParameters? = nil, isInitialBootstrap: Bool = false) async {
         guard let account = activeAccount,
               let creds = readCredentials(for: account.uid),
               !creds.token.isEmpty else {
-            await CoolapkClient.shared.clearLogin()
+            if isInitialBootstrap, let parameters {
+                await CoolapkClient.shared.bootstrapSession(
+                    parameters: parameters,
+                    uid: "",
+                    username: "",
+                    token: "",
+                    sessid: ""
+                )
+            } else {
+                await CoolapkClient.shared.clearLogin()
+            }
             return
         }
-        await CoolapkClient.shared.updateLogin(
-            uid: account.uid,
-            username: account.username,
-            token: creds.token,
-            sessid: creds.sessid
-        )
+        if isInitialBootstrap, let parameters {
+            await CoolapkClient.shared.bootstrapSession(
+                parameters: parameters,
+                uid: account.uid,
+                username: account.username,
+                token: creds.token,
+                sessid: creds.sessid
+            )
+        } else {
+            await CoolapkClient.shared.updateLogin(
+                uid: account.uid,
+                username: account.username,
+                token: creds.token,
+                sessid: creds.sessid
+            )
+        }
     }
 
     public func saveLogin(uid: String, username: String, token: String, sessid: String = "") async throws {

@@ -162,17 +162,18 @@ public enum SzlmDuidClient: Sendable {
         seed: String? = nil,
         manufacturer: String = CoolapkToken.defaultDeviceBrand,
         model: String = CoolapkToken.defaultDeviceModel,
-        androidVersion: String = "16",
+        androidVersion: String? = nil,
         sdkInt: Int = Int(CoolapkToken.defaultSDKInt) ?? 35
     ) async throws -> String {
         let activeSeed = seed ?? createSeed()
+        let resolvedAndroidVersion = androidVersion ?? CoolapkToken.androidVersion(forSDKInt: sdkInt)
         let ts = String(format: "%.3f", Date().timeIntervalSince1970)
         let report = try buildReport(
             seed: activeSeed,
             timestamp: ts,
             manufacturer: manufacturer,
             model: model,
-            androidVersion: androidVersion,
+            androidVersion: resolvedAndroidVersion,
             sdkInt: sdkInt
         )
         let payload = try encodeReport(report)
@@ -183,13 +184,18 @@ public enum SzlmDuidClient: Sendable {
         let session = URLSession(configuration: config)
         defer { session.invalidateAndCancel() }
 
+        let nonce = Int.random(in: 100_000...999_999)
         var lastError: Error?
         for targetHost in [host, fallbackHost] {
-            guard let url = URL(string: "https://\(targetHost)\(reportPath)") else { continue }
+            guard let url = URL(string: "https://\(targetHost)\(reportPath)&r=\(nonce)&n=0&l=2&h=0") else { continue }
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.httpBody = payload
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+            request.setValue(
+                "Dalvik/2.1.0 (Linux; U; Android \(resolvedAndroidVersion); \(model))",
+                forHTTPHeaderField: "User-Agent"
+            )
             do {
                 let (data, response) = try await session.data(for: request)
                 if let http = response as? HTTPURLResponse, http.statusCode != 200 {

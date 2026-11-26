@@ -758,7 +758,12 @@ public struct UserRowView: View {
 
     public var body: some View {
         Button {
-            appState.push(.user(uid: user.id, transitionID: "userrow-\(transitionSeed)"))
+            appState.push(.user(
+                uid: user.id,
+                initialUsername: user.username,
+                initialAvatar: user.avatar,
+                transitionID: "userrow-\(transitionSeed)"
+            ))
         } label: {
             HStack(spacing: 12) {
                 AvatarView(url: user.avatar, size: 42)

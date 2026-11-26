@@ -205,6 +205,9 @@ public final class SettingsStore {
     public var szlmAcquisitionAttempts: [Date] {
         didSet { defaults.set(szlmAcquisitionAttempts.map(\.timeIntervalSince1970), forKey: "settings.szlmAcquisitionAttempts") }
     }
+    public var ignoreSzlmCooldown: Bool {
+        didSet { defaults.set(ignoreSzlmCooldown, forKey: "settings.ignoreSzlmCooldown") }
+    }
 
     public var accentColor: Color {
         BrandPreset.presets.first { $0.id == brandPresetIndex }?.color ?? BrandPreset.presets[0].color
@@ -264,6 +267,7 @@ public final class SettingsStore {
         }
         let attemptTimes = defaults.array(forKey: "settings.szlmAcquisitionAttempts") as? [TimeInterval] ?? []
         self.szlmAcquisitionAttempts = attemptTimes.map(Date.init(timeIntervalSince1970:))
+        self.ignoreSzlmCooldown = defaults.bool(forKey: "settings.ignoreSzlmCooldown")
     }
 
     public func syncProtocolToClient() async {
@@ -290,6 +294,7 @@ public final class SettingsStore {
     // MARK: - SZLM Acquisition Rate Limiter
 
     public var szlmNextAllowedAt: Date? {
+        guard !ignoreSzlmCooldown else { return nil }
         let now = Date()
         let threshold = now.addingTimeInterval(-86400)
         let recent = szlmAcquisitionAttempts.filter { $0 > threshold }.sorted()
@@ -306,26 +311,51 @@ public final class SettingsStore {
         return candidates.filter { $0 > now }.max()
     }
 
-    public func acquireSzlmID() async throws -> String {
-        if let next = szlmNextAllowedAt {
+    @discardableResult
+    public func randomizeDeviceParameters() -> ProtocolParameters {
+        var updated = protocolParameters
+        let preset = CoolapkToken.randomDevicePreset(
+            appVersion: updated.appVersion,
+            appCode: updated.appCode
+        )
+        updated.deviceBrand = preset.brand
+        updated.deviceModel = preset.model
+        updated.sdkInt = preset.sdkInt
+        updated.userAgent = preset.userAgent
+        updated.deviceCode = preset.deviceCode
+        protocolParameters = updated
+        return updated
+    }
+
+    public func acquireSzlmID(
+        forceBypassCooldown: Bool = false,
+        randomizeDeviceFirst: Bool = false
+    ) async throws -> String {
+        if !forceBypassCooldown, let next = szlmNextAllowedAt {
             let formatter = DateFormatter()
             formatter.dateFormat = "yyyy-MM-dd HH:mm"
             throw SzlmDuidError("可再次获取时间：\(formatter.string(from: next))")
+        }
+        if randomizeDeviceFirst {
+            _ = randomizeDeviceParameters()
         }
         let now = Date()
         let threshold = now.addingTimeInterval(-86400)
         szlmAcquisitionAttempts = szlmAcquisitionAttempts.filter { $0 > threshold } + [now]
         let sdk = Int(protocolParameters.sdkInt) ?? 35
+        let androidVer = CoolapkToken.androidVersion(forSDKInt: sdk)
         let acquired = try await SzlmDuidClient.acquire(
             manufacturer: protocolParameters.deviceBrand,
             model: protocolParameters.deviceModel,
-            androidVersion: "16",
+            androidVersion: androidVer,
             sdkInt: sdk
         )
         szlmLastAcquiredAt = Date()
         var updated = protocolParameters
         updated.szlmID = acquired
         protocolParameters = updated
+        await CoolapkClient.shared.updateParameters(updated)
+        await CoolapkClient.shared.clearCaptchaState()
         return acquired
     }
 }

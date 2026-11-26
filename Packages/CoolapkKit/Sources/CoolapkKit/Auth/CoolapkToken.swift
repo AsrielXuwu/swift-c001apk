@@ -11,14 +11,39 @@ public enum CoolapkToken: Sendable {
     public static let defaultDeviceModel = "M2102J2SC"
     public static let packageName = "com.coolapk.market"
 
+    public static func androidVersion(forSDKInt sdk: Int) -> String {
+        switch sdk {
+        case ...31: return "12"
+        case 32: return "12L"
+        case 33: return "13"
+        case 34: return "14"
+        case 35: return "15"
+        default: return "16"
+        }
+    }
+
+    public static func buildID(forSDKInt sdk: Int) -> String {
+        switch sdk {
+        case ...32: return "SQ3A.220705.004"
+        case 33: return "TKQ1.221114.001"
+        case 34: return "UKQ1.231003.002"
+        case 35: return "AP3A.240905.015.A2"
+        default: return "BP2A.250605.031.A2"
+        }
+    }
+
     public static func defaultUserAgent(
         deviceBrand: String = defaultDeviceBrand,
         deviceModel: String = defaultDeviceModel,
         appVersion: String = defaultAppVersion,
-        appCode: String = defaultAppCode
+        appCode: String = defaultAppCode,
+        sdkInt: String = defaultSDKInt
     ) -> String {
-        "Dalvik/2.1.0 (Linux; U; Android 16; \(deviceModel) Build/TKQ1.221114.001) "
-            + "(#Build; \(deviceBrand); \(deviceModel); TKQ1.221114.001; 16) +CoolMarket/\(appVersion)-\(appCode)-universal"
+        let sdk = Int(sdkInt) ?? 35
+        let androidVer = androidVersion(forSDKInt: sdk)
+        let build = buildID(forSDKInt: sdk)
+        return "Dalvik/2.1.0 (Linux; U; Android \(androidVer); \(deviceModel) Build/\(build)) "
+            + "(#Build; \(deviceBrand); \(deviceModel); \(build); \(androidVer)) +CoolMarket/\(appVersion)-\(appCode)-universal"
     }
 
     // MARK: - Hashing Helpers
@@ -43,15 +68,49 @@ public enum CoolapkToken: Sendable {
         return bytes.map { String(format: "%02X", $0) }.joined()
     }
 
-    /// Generates an `X-App-Device` value: reversed unpadded base64 of `aid; ; ; mac; brand; brand; model; unknown; null`.
+    /// Generates an `X-App-Device` value: reversed unpadded base64 of `aid; ; ; mac; brand; brand; model; build; null`.
     public static func makeDeviceCode(
         brand: String = defaultDeviceBrand,
-        model: String = defaultDeviceModel
+        model: String = defaultDeviceModel,
+        build: String = "AP3A.240905.015.A2"
     ) -> String {
-        let aid = randomHex(8) // 16 hex characters
+        let aid = randomHex(8).lowercased()
         let mac = (0..<6).map { _ in String(format: "%02x", Int.random(in: 0...255)) }.joined(separator: ":")
-        let raw = "\(aid); ; ; \(mac); \(brand); \(brand); \(model); unknown; null"
+        let raw = "\(aid); ; ; \(mac); \(brand); \(brand); \(model); \(build); null"
         return String(base64(raw, padding: false).reversed())
+    }
+
+    public static func randomDevicePreset(
+        appVersion: String = defaultAppVersion,
+        appCode: String = defaultAppCode
+    ) -> (brand: String, model: String, sdkInt: String, buildID: String, userAgent: String, deviceCode: String) {
+        let catalog: [(String, String, Int)] = [
+            ("Xiaomi", "24129PN74C", 35),
+            ("Xiaomi", "23116PN5BC", 34),
+            ("Xiaomi", "2211133C", 33),
+            ("Redmi", "23113RKC6C", 34),
+            ("Redmi", "24117RK2CC", 35),
+            ("OnePlus", "PJZ110", 35),
+            ("OnePlus", "PJD110", 34),
+            ("OPPO", "PHY110", 34),
+            ("vivo", "V2324A", 34),
+            ("iQOO", "V2408A", 35),
+            ("HONOR", "BVLP-AN00", 35),
+            ("samsung", "SM-S9280", 34),
+            ("Google", "Pixel 8 Pro", 35)
+        ]
+        let picked = catalog.randomElement() ?? (defaultDeviceBrand, defaultDeviceModel, 35)
+        let sdkString = String(picked.2)
+        let build = buildID(forSDKInt: picked.2)
+        let ua = defaultUserAgent(
+            deviceBrand: picked.0,
+            deviceModel: picked.1,
+            appVersion: appVersion,
+            appCode: appCode,
+            sdkInt: sdkString
+        )
+        let code = makeDeviceCode(brand: picked.0, model: picked.1, build: build)
+        return (picked.0, picked.1, sdkString, build, ua, code)
     }
 
     public static func createRandomNumber() -> String {

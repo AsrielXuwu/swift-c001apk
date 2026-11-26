@@ -44,8 +44,16 @@ public final class FeedDetailViewModel {
         self.feed = initialFeed
     }
 
+    private func shouldRefreshBodyFirst(_ item: FeedItem) -> Bool {
+        item.kind == .feedArticle
+            || !item.messageTitle.isEmpty
+            || item.message.contains("查看更多")
+            || item.mediaItems.count > 9
+    }
+
     public func loadAll(appState: AppState) async {
         let hadInitialFeed = (feed != nil)
+        let prioritizeDetail = feed.map(shouldRefreshBodyFirst) ?? true
         isLoadingFeed = !hadInitialFeed
         isRefreshingDetail = true
         isLoadingReplies = replies.isEmpty
@@ -53,9 +61,9 @@ public final class FeedDetailViewModel {
         currentReplyPage = 1
         hasMoreReplies = true
 
-        // When entering from a timeline card, serialize replies -> detail refresh to avoid
-        // dual simultaneous hits triggering anti-bot verification on replyList / detail endpoints.
-        if hadInitialFeed {
+        // Keep requests serialized to avoid simultaneous burst anti-bot verification.
+        // For articles/truncated posts, refresh full detail before replies so body renders smoothly.
+        if hadInitialFeed && !prioritizeDetail {
             await fetchReplies(page: 1, append: false, appState: appState)
             isLoadingReplies = false
             if let loaded = await fetchFeedDetail(appState: appState) {

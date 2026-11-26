@@ -10,7 +10,8 @@ public struct DeviceIdentityView: View {
     public init() {}
 
     public var body: some View {
-        let currentID = appState.settings.protocolParameters.szlmID
+        @Bindable var settings = appState.settings
+        let currentID = settings.protocolParameters.szlmID
 
         Form {
             Section {
@@ -22,13 +23,16 @@ public struct DeviceIdentityView: View {
                         .font(.footnote.monospaced())
                         .textSelection(.enabled)
                 }
+                Text("当前模拟机型：\(settings.protocolParameters.deviceBrand) \(settings.protocolParameters.deviceModel) · SDK \(settings.protocolParameters.sdkInt)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             } footer: {
-                Text("不会在启动或回到前台时自动获取设备标识。仅在反复触发人机验证时主动获取或从官方酷安手动导入。")
+                Text("当遇到「系统环境存在异常」或频繁人机验证时，可点击下方随机生成新机型参数并强制重新获取数盟标识。")
             }
 
             Section("自动获取") {
                 Button {
-                    Task { await acquire() }
+                    Task { await acquire(forceBypass: false, randomizeFirst: false) }
                 } label: {
                     HStack {
                         Text("立即向数盟获取设备标识")
@@ -38,8 +42,21 @@ public struct DeviceIdentityView: View {
                 }
                 .disabled(isAcquiring)
 
-                if let next = appState.settings.szlmNextAllowedAt {
-                    Text("冷却至：\(next.formatted(date: .abbreviated, time: .shortened))")
+                Button {
+                    Task { await acquire(forceBypass: true, randomizeFirst: true) }
+                } label: {
+                    HStack {
+                        Text("随机机型参数并强制获取新标识")
+                        Spacer()
+                        if isAcquiring { ProgressView() }
+                    }
+                }
+                .disabled(isAcquiring)
+
+                Toggle("无视冷却冻结时间限制", isOn: $settings.ignoreSzlmCooldown)
+
+                if let next = settings.szlmNextAllowedAt {
+                    Text("默认冷却至：\(next.formatted(date: .abbreviated, time: .shortened))")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -71,12 +88,15 @@ public struct DeviceIdentityView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 
-    private func acquire() async {
+    private func acquire(forceBypass: Bool, randomizeFirst: Bool) async {
         isAcquiring = true
         defer { isAcquiring = false }
         do {
-            _ = try await appState.settings.acquireSzlmID()
-            appState.showToast("已获取并保存数盟设备标识")
+            _ = try await appState.settings.acquireSzlmID(
+                forceBypassCooldown: forceBypass,
+                randomizeDeviceFirst: randomizeFirst
+            )
+            appState.showToast(randomizeFirst ? "已随机机型并更新数盟设备标识" : "已获取并保存数盟设备标识")
         } catch {
             appState.showToast(error.localizedDescription)
         }

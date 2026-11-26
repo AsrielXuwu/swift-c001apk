@@ -27,6 +27,7 @@ public final class AppState {
 
     /// Incremented whenever the active account changes so views/tasks reset cleanly.
     public private(set) var sessionVersion: Int = 0
+    public private(set) var isSessionBootstrapped = false
     public var badge = NotificationBadge()
     public var currentUserProfile: UserProfile?
 
@@ -54,11 +55,18 @@ public final class AppState {
     }
 
     public func bootstrap() async {
-        await settings.syncProtocolToClient()
-        await accounts.restoreActiveSessionIntoClient()
+        await ImagePipeline.shared.updateUserAgent(settings.protocolParameters.userAgent)
+        await accounts.restoreActiveSessionIntoClient(
+            parameters: settings.protocolParameters,
+            isInitialBootstrap: true
+        )
+        isSessionBootstrapped = true
         if settings.autoAcquireSzlmOnLaunch,
            settings.protocolParameters.szlmID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            _ = try? await settings.acquireSzlmID()
+            Task { [weak self] in
+                guard let self else { return }
+                _ = try? await self.settings.acquireSzlmID()
+            }
         }
         await refreshLoginAndBadge()
     }

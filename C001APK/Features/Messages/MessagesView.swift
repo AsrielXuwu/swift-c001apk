@@ -155,7 +155,7 @@ public struct MessagesView: View {
                             if !item.url.isEmpty {
                                 appState.openRawLink(item.url)
                             } else if !item.uid.isEmpty {
-                                appState.push(.user(uid: item.uid))
+                                appState.push(.user(uid: item.uid, initialUsername: item.username, initialAvatar: item.avatar))
                             }
                         } label: {
                             HStack(alignment: .top, spacing: 12) {

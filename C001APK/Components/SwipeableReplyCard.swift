@@ -1,5 +1,35 @@
 import SwiftUI
 
+@MainActor
+public final class ReplySwipeLock {
+    public var isDraggingMedia = false
+    private var lastMediaDragEndedAt: Date = .distantPast
+
+    public init() {}
+
+    public var isBlocked: Bool {
+        isDraggingMedia || Date().timeIntervalSince(lastMediaDragEndedAt) < 0.22
+    }
+
+    public func setDraggingMedia(_ active: Bool) {
+        isDraggingMedia = active
+        if !active {
+            lastMediaDragEndedAt = Date()
+        }
+    }
+}
+
+private struct ReplySwipeLockKey: EnvironmentKey {
+    static let defaultValue: ReplySwipeLock? = nil
+}
+
+public extension EnvironmentValues {
+    var replySwipeLock: ReplySwipeLock? {
+        get { self[ReplySwipeLockKey.self] }
+        set { self[ReplySwipeLockKey.self] = newValue }
+    }
+}
+
 public struct SwipeableReplyCard<Content: View>: View {
     public let onReply: () -> Void
     public var onLike: (() -> Void)?
@@ -11,6 +41,7 @@ public struct SwipeableReplyCard<Content: View>: View {
     @State private var isOpen = false
     @State private var isDraggingHorizontally = false
     @State private var lastSwipeEndedAt: Date = .distantPast
+    @State private var swipeLock = ReplySwipeLock()
 
     public init(
         onReply: @escaping () -> Void,
@@ -83,13 +114,23 @@ public struct SwipeableReplyCard<Content: View>: View {
 
             content()
                 .environment(\.suppressMediaTap, shouldSuppressChildMediaTap)
+                .environment(\.replySwipeLock, swipeLock)
                 .offset(x: offsetX)
                 .simultaneousGesture(
-                    DragGesture(minimumDistance: 16)
+                    DragGesture(minimumDistance: 24)
                         .onChanged { value in
+                            if swipeLock.isBlocked {
+                                isDraggingHorizontally = false
+                                if offsetX != (isOpen ? -revealWidth : 0) {
+                                    withAnimation(.snappy(duration: 0.2)) {
+                                        offsetX = isOpen ? -revealWidth : 0
+                                    }
+                                }
+                                return
+                            }
                             let dx = value.translation.width
                             let dy = value.translation.height
-                            guard isDraggingHorizontally || abs(dx) > max(14, abs(dy) * 1.25) else { return }
+                            guard isDraggingHorizontally || abs(dx) > max(18, abs(dy) * 1.3) else { return }
                             isDraggingHorizontally = true
                             if isOpen {
                                 let next = -revealWidth + dx
@@ -99,9 +140,16 @@ public struct SwipeableReplyCard<Content: View>: View {
                             }
                         }
                         .onEnded { value in
+                            if swipeLock.isBlocked {
+                                isDraggingHorizontally = false
+                                withAnimation(.snappy(duration: 0.2)) {
+                                    offsetX = isOpen ? -revealWidth : 0
+                                }
+                                return
+                            }
                             let dx = value.translation.width
                             let dy = value.translation.height
-                            let wasSwiping = isDraggingHorizontally || abs(dx) > max(14, abs(dy) * 1.25)
+                            let wasSwiping = isDraggingHorizontally || abs(dx) > max(18, abs(dy) * 1.3)
                             isDraggingHorizontally = false
                             guard wasSwiping else {
                                 withAnimation(.snappy(duration: 0.22)) {

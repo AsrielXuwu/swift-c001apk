@@ -3,6 +3,8 @@ import SwiftUI
 
 public struct UserDetailView: View {
     public let uid: String
+    public let initialUsername: String?
+    public let initialAvatar: String?
 
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
@@ -33,7 +35,11 @@ public struct UserDetailView: View {
         var id: String { rawValue }
     }
 
-    public init(uid: String) { self.uid = uid }
+    public init(uid: String, initialUsername: String? = nil, initialAvatar: String? = nil) {
+        self.uid = uid
+        self.initialUsername = initialUsername
+        self.initialAvatar = initialAvatar
+    }
 
     public var body: some View {
         ScrollViewReader { proxy in
@@ -68,14 +74,14 @@ public struct UserDetailView: View {
                     }
                 )
             }
-            .navigationTitle(profile?.username ?? "用户主页")
+            .navigationTitle(profile?.username ?? initialUsername ?? "")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if let profile, compactNavProgress > 0.08 {
+                if compactNavProgress > 0.08, (profile != nil || initialAvatar != nil) {
                     CollapsedNavEntityToolbar(
-                        avatarURL: profile.avatar,
-                        isFollowed: isFollowingUser(profile),
-                        showFollowButton: uid != appState.accounts.activeUID,
+                        avatarURL: profile?.avatar ?? initialAvatar ?? "",
+                        isFollowed: profile.map(isFollowingUser) ?? appState.localFollow.contains(uid: uid),
+                        showFollowButton: profile != nil && uid != appState.accounts.activeUID,
                         isDisabled: isTogglingFollow,
                         onTapAvatar: {
                             withAnimation(.snappy) {
@@ -83,20 +89,22 @@ public struct UserDetailView: View {
                             }
                         },
                         onTapFollow: {
-                            Task { await handleFollowTap(profile: profile) }
+                            if let profile {
+                                Task { await handleFollowTap(profile: profile) }
+                            }
                         }
                     )
                 }
 
-                if let profile, uid != appState.accounts.activeUID {
+                if uid != appState.accounts.activeUID {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         if appState.accounts.isLoggedIn {
                             Button {
                                 appState.push(.chat(
-                                    ukey: profile.id,
-                                    uid: profile.id,
-                                    username: profile.username,
-                                    avatar: profile.avatar
+                                    ukey: profile?.id ?? uid,
+                                    uid: profile?.id ?? uid,
+                                    username: profile?.username ?? initialUsername ?? "",
+                                    avatar: profile?.avatar ?? initialAvatar ?? ""
                                 ))
                             } label: {
                                 Image(systemName: "envelope")
@@ -105,19 +113,33 @@ public struct UserDetailView: View {
 
                         Menu {
                             Button {
-                                toggleLocalFollow(profile: profile)
+                                if let profile {
+                                    toggleLocalFollow(profile: profile)
+                                } else {
+                                    if appState.localFollow.contains(uid: uid) {
+                                        appState.localFollow.unfollow(uid: uid)
+                                        appState.showToast("已取消本机关注")
+                                    } else {
+                                        appState.localFollow.follow(
+                                            uid: uid,
+                                            username: initialUsername ?? uid,
+                                            avatar: initialAvatar ?? ""
+                                        )
+                                        appState.showToast(appState.accounts.isLoggedIn ? "已加入悄悄关注" : "已加入本机关注")
+                                    }
+                                }
                             } label: {
                                 Label(
-                                    appState.localFollow.contains(uid: profile.id) ? "取消本机关注" : "加入本机/悄悄关注",
+                                    appState.localFollow.contains(uid: uid) ? "取消本机关注" : "加入本机/悄悄关注",
                                     systemImage: "eye.slash"
                                 )
                             }
                             Button(role: .destructive) {
-                                appState.blacklist.toggleUser(profile.id)
-                                appState.showToast(appState.blacklist.isUserBlocked(profile.id) ? "已加入黑名单" : "已移出黑名单")
+                                appState.blacklist.toggleUser(uid)
+                                appState.showToast(appState.blacklist.isUserBlocked(uid) ? "已加入黑名单" : "已移出黑名单")
                             } label: {
                                 Label(
-                                    appState.blacklist.isUserBlocked(profile.id) ? "移出黑名单" : "屏蔽此用户",
+                                    appState.blacklist.isUserBlocked(uid) ? "移出黑名单" : "屏蔽此用户",
                                     systemImage: "hand.raised"
                                 )
                             }
@@ -257,9 +279,22 @@ public struct UserDetailView: View {
             .c001CardStyle(cornerRadius: 22)
             .padding(.horizontal, 12)
         } else {
-            ProgressView()
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 32)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 14) {
+                    AvatarView(url: initialAvatar ?? "", size: 64)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(initialUsername ?? "加载中…")
+                            .font(.title3.weight(.bold))
+                        Text("UID: \(uid)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                }
+            }
+            .padding(16)
+            .c001CardStyle(cornerRadius: 22)
+            .padding(.horizontal, 12)
         }
     }
 

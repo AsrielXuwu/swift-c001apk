@@ -58,6 +58,19 @@ public struct ProtocolParamsView: View {
             }
 
             Section {
+                Button("随机拼接机型与参数") {
+                    let preset = CoolapkToken.randomDevicePreset(
+                        appVersion: draft.appVersion,
+                        appCode: draft.appCode
+                    )
+                    draft.deviceBrand = preset.brand
+                    draft.deviceModel = preset.model
+                    draft.sdkInt = preset.sdkInt
+                    draft.userAgent = preset.userAgent
+                    draft.deviceCode = preset.deviceCode
+                    appState.showToast("已随机生成 \(preset.brand) \(preset.model) 参数")
+                }
+
                 Button("保存协议参数") {
                     appState.settings.protocolParameters = draft
                     appState.showToast("已保存协议参数")

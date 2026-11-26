@@ -122,8 +122,8 @@ public struct RootTabView: View {
             FeedDetailView(feedID: id, initialFeed: initial)
                 .c001TransparentTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
-        case let .user(uid, transitionID):
-            UserDetailView(uid: uid)
+        case let .user(uid, initialUsername, initialAvatar, transitionID):
+            UserDetailView(uid: uid, initialUsername: initialUsername, initialAvatar: initialAvatar)
                 .c001TransparentTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
         case let .topic(tag, transitionID):

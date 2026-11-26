@@ -171,6 +171,18 @@ public final class FollowViewModel {
             }
         } catch {
             guard !Task.isCancelled, expectedSession == appState.sessionVersion else { return }
+            if case APIError.sessionChanged = error {
+                if !append {
+                    await fetchPage(
+                        segment: targetSegment,
+                        page: page,
+                        append: false,
+                        appState: appState,
+                        expectedSession: expectedSession
+                    )
+                }
+                return
+            }
             let retried = await appState.handleAPIError(error)
             if retried && !append {
                 await fetchPage(

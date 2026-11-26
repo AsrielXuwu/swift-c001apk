@@ -74,7 +74,12 @@ public struct FeedRowView: View {
         HStack(spacing: 10) {
             Button {
                 if !feed.uid.isEmpty {
-                    appState.push(.user(uid: feed.uid, transitionID: "avatar-\(transitionSeed)"))
+                    appState.push(.user(
+                        uid: feed.uid,
+                        initialUsername: feed.username,
+                        initialAvatar: feed.avatar,
+                        transitionID: "avatar-\(transitionSeed)"
+                    ))
                 }
             } label: {
                 AvatarView(url: feed.avatar, size: 38)

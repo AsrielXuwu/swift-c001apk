@@ -189,26 +189,41 @@ public struct FeedDetailView: View {
                             .font(.system(size: 20 * appState.settings.fontScale, weight: .bold))
                     }
 
-                    if !feed.articleParts.isEmpty {
-                        articleContent(feed)
-                    } else if feed.kind == .feedArticle && viewModel.isRefreshingDetail {
-                        ProgressView("正在加载图文内容…")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 24)
-                    } else {
-                        if !feed.message.isEmpty {
-                            RichTextView(
-                                html: feed.message,
-                                fontSize: 16 * appState.settings.fontScale,
-                                showEmoji: appState.settings.showEmoji
-                            ) { link in
-                                appState.openRawLink(link)
+                    let shouldDeferTruncatedArticleBody = viewModel.isRefreshingDetail
+                        && feed.articleParts.isEmpty
+                        && (feed.kind == .feedArticle
+                            || !feed.messageTitle.isEmpty
+                            || feed.message.contains("查看更多")
+                            || feed.mediaItems.count > 9)
+
+                    Group {
+                        if !feed.articleParts.isEmpty {
+                            articleContent(feed)
+                                .transition(.opacity)
+                        } else if shouldDeferTruncatedArticleBody {
+                            ProgressView("正在加载完整内容…")
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 24)
+                                .transition(.opacity)
+                        } else {
+                            VStack(alignment: .leading, spacing: 12) {
+                                if !feed.message.isEmpty {
+                                    RichTextView(
+                                        html: feed.message,
+                                        fontSize: 16 * appState.settings.fontScale,
+                                        showEmoji: appState.settings.showEmoji
+                                    ) { link in
+                                        appState.openRawLink(link)
+                                    }
+                                }
+                                if !feed.mediaItems.isEmpty {
+                                    MediaGridView(items: feed.mediaItems)
+                                }
                             }
-                        }
-                        if !feed.mediaItems.isEmpty {
-                            MediaGridView(items: feed.mediaItems)
+                            .transition(.opacity)
                         }
                     }
+                    .animation(.easeOut(duration: 0.22), value: viewModel.isRefreshingDetail)
 
                     if let vote = feed.vote {
                         voteSection(vote)
@@ -312,7 +327,12 @@ public struct FeedDetailView: View {
         HStack(spacing: 10) {
             Button {
                 if !feed.uid.isEmpty {
-                    appState.push(.user(uid: feed.uid, transitionID: "detail-author-\(detailSeed)"))
+                    appState.push(.user(
+                        uid: feed.uid,
+                        initialUsername: feed.username,
+                        initialAvatar: feed.avatar,
+                        transitionID: "detail-author-\(detailSeed)"
+                    ))
                 }
             } label: {
                 AvatarView(url: feed.avatar, size: 42)
@@ -585,7 +605,12 @@ public struct FeedDetailView: View {
             HStack(alignment: .top, spacing: 10) {
                 Button {
                     if !reply.uid.isEmpty {
-                        appState.push(.user(uid: reply.uid, transitionID: replyAvatarID))
+                        appState.push(.user(
+                            uid: reply.uid,
+                            initialUsername: reply.username,
+                            initialAvatar: reply.avatar,
+                            transitionID: replyAvatarID
+                        ))
                     }
                 } label: {
                     AvatarView(url: reply.avatar, size: 36)
