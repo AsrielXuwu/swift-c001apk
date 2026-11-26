@@ -30,13 +30,14 @@ public final class SearchViewModel {
     public var suggestions: [String] = []
     public var submittedKeyword: String = ""
 
-    public private(set) var rows: [HomeFeedRow] = []
+    public private(set) var rowsByCategory: [SearchCategory: [HomeFeedRow]] = [:]
     public private(set) var dyhResults: [DyhItem] = []
-    public private(set) var isSearching = false
-    public private(set) var isLoadingMore = false
-    public private(set) var hasMore = true
+    public private(set) var searchingCategories: Set<SearchCategory> = []
+    public private(set) var loadingMoreCategories: Set<SearchCategory> = []
+    public private(set) var searchedKeywordByCategory: [SearchCategory: String] = [:]
+    public private(set) var hasMoreByCategory: [SearchCategory: Bool] = [:]
 
-    private var currentPage = 1
+    private var pageByCategory: [SearchCategory: Int] = [:]
     private var debounceTask: Task<Void, Never>?
 
     public init() {}
@@ -63,52 +64,75 @@ public final class SearchViewModel {
         }
     }
 
-    public func submitSearch(_ keyword: String, appState: AppState) async {
+    public func submitSearch(_ keyword: String, category targetCategory: SearchCategory? = nil, appState: AppState, force: Bool = false) async {
         let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        submittedKeyword = trimmed
-        appState.settings.addSearchHistory(trimmed)
+        let activeCategory = targetCategory ?? category
+        if submittedKeyword != trimmed {
+            submittedKeyword = trimmed
+            rowsByCategory.removeAll()
+            dyhResults.removeAll()
+            searchedKeywordByCategory.removeAll()
+            pageByCategory.removeAll()
+            hasMoreByCategory.removeAll()
+            appState.settings.addSearchHistory(trimmed)
+        }
         suggestions = []
-        currentPage = 1
-        hasMore = true
-        isSearching = true
-        defer { isSearching = false }
-        await fetch(page: 1, append: false, appState: appState)
+
+        if !force && searchedKeywordByCategory[activeCategory] == trimmed {
+            return
+        }
+
+        pageByCategory[activeCategory] = 1
+        hasMoreByCategory[activeCategory] = true
+        searchingCategories.insert(activeCategory)
+        defer {
+            searchingCategories.remove(activeCategory)
+            searchedKeywordByCategory[activeCategory] = trimmed
+        }
+        await fetch(category: activeCategory, keyword: trimmed, page: 1, append: false, appState: appState)
     }
 
-    public func loadMore(appState: AppState) async {
-        guard !isSearching, !isLoadingMore, hasMore, !submittedKeyword.isEmpty else { return }
-        isLoadingMore = true
-        defer { isLoadingMore = false }
-        await fetch(page: currentPage + 1, append: true, appState: appState)
+    public func loadMore(category targetCategory: SearchCategory, appState: AppState) async {
+        guard !searchingCategories.contains(targetCategory),
+              !loadingMoreCategories.contains(targetCategory),
+              hasMoreByCategory[targetCategory] != false,
+              !submittedKeyword.isEmpty else { return }
+        loadingMoreCategories.insert(targetCategory)
+        defer { loadingMoreCategories.remove(targetCategory) }
+        let nextPage = (pageByCategory[targetCategory] ?? 1) + 1
+        await fetch(category: targetCategory, keyword: submittedKeyword, page: nextPage, append: true, appState: appState)
     }
 
-    private func fetch(page: Int, append: Bool, appState: AppState) async {
+    private func fetch(category targetCategory: SearchCategory, keyword: String, page: Int, append: Bool, appState: AppState) async {
         do {
-            let items = try await API.search(keyword: submittedKeyword, type: category.rawValue, page: page)
-            if category == .dyh {
+            let items = try await API.search(keyword: keyword, type: targetCategory.rawValue, page: page)
+            guard submittedKeyword == keyword else { return }
+            if targetCategory == .dyh {
                 let parsed = items.map { DyhItem(json: $0) }
                 if append {
-                    dyhResults.append(contentsOf: parsed)
+                    var seen = Set(dyhResults.map(\.id))
+                    let unique = parsed.filter { seen.insert($0.id).inserted }
+                    dyhResults.append(contentsOf: unique)
+                    hasMoreByCategory[targetCategory] = !unique.isEmpty
                 } else {
                     dyhResults = parsed
-                    rows = []
+                    hasMoreByCategory[targetCategory] = !parsed.isEmpty
                 }
-                hasMore = !parsed.isEmpty
-                currentPage = page
+                pageByCategory[targetCategory] = page
             } else {
                 let parsed = API.rows(from: items)
                 if append {
-                    var seen = Set(rows.map(\.id))
+                    let existing = rowsByCategory[targetCategory] ?? []
+                    var seen = Set(existing.map(\.id))
                     let unique = parsed.filter { seen.insert($0.id).inserted }
-                    rows.append(contentsOf: unique)
-                    hasMore = !unique.isEmpty
+                    rowsByCategory[targetCategory] = existing + unique
+                    hasMoreByCategory[targetCategory] = !unique.isEmpty
                 } else {
-                    rows = parsed
-                    dyhResults = []
-                    hasMore = !parsed.isEmpty
+                    rowsByCategory[targetCategory] = parsed
+                    hasMoreByCategory[targetCategory] = !parsed.isEmpty
                 }
-                currentPage = page
+                pageByCategory[targetCategory] = page
             }
         } catch {
             _ = await appState.handleAPIError(error)

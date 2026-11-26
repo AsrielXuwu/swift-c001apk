@@ -8,6 +8,7 @@ public final class FeedDetailViewModel {
     public let feedID: String
     public var feed: FeedItem?
     public var replies: [ReplyItem] = []
+    public var answers: [HomeFeedRow] = []
     public var sortMode: ReplySortMode = .lastUpdateDesc
     public var authorOnly = false
     public var isCoinRepliesExpanded = false
@@ -56,6 +57,9 @@ public final class FeedDetailViewModel {
         if let loaded {
             feed = loaded
             appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
+            if loaded.kind == .question {
+                answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
+            }
         }
         isLoadingFeed = false
 

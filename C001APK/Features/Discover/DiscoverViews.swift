@@ -3,6 +3,11 @@ import SwiftUI
 import UIKit
 import WebKit
 
+private struct ChoiceChip: Identifiable, Hashable {
+    let id: String
+    let title: String
+}
+
 // MARK: - Topic Detail
 
 public struct TopicDetailView: View {
@@ -10,21 +15,114 @@ public struct TopicDetailView: View {
 
     @Environment(AppState.self) private var appState
     @State private var topic: TopicItem?
-    @State private var rows: [HomeFeedRow] = []
     @State private var listType = "lastupdate_desc"
-    @State private var page = 1
-    @State private var hasMore = true
-    @State private var isLoading = false
+    @State private var scrolledType: String? = "lastupdate_desc"
+    @State private var rowsBySort: [String: [HomeFeedRow]] = [:]
+    @State private var loadedSorts: Set<String> = []
+    @State private var loadingSorts: Set<String> = []
+    @State private var pageBySort: [String: Int] = [:]
+    @State private var hasMoreBySort: [String: Bool] = [:]
+    @State private var isTogglingFollow = false
+    @State private var compactNavProgress: CGFloat = 0
+
+    private let sortOptions: [ChoiceChip] = [
+        ChoiceChip(id: "lastupdate_desc", title: "最新回复"),
+        ChoiceChip(id: "dateline_desc", title: "最新发布"),
+        ChoiceChip(id: "popular", title: "热门")
+    ]
 
     public init(tag: String) { self.tag = tag }
 
+    private var selectedChoice: ChoiceChip {
+        sortOptions.first { $0.id == listType } ?? sortOptions[0]
+    }
+
     public var body: some View {
-        ScrollView {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 0) {
+                    ForEach(sortOptions) { option in
+                        topicFeedScrollPage(sortType: option.id)
+                            .containerRelativeFrame(.horizontal)
+                            .frame(maxHeight: .infinity)
+                            .id(option.id)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $scrolledType)
+            .scrollClipDisabled()
+            .ignoresSafeArea(.container, edges: .bottom)
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) {
+                FloatingTabStrip(
+                    items: sortOptions,
+                    selection: selectedChoice,
+                    titleProvider: \.title,
+                    onSelect: { option in
+                        listType = option.id
+                    },
+                    onReselect: { option in
+                        withAnimation(.snappy) {
+                            proxy.scrollTo("topic-top-\(option.id)", anchor: .top)
+                        }
+                    }
+                )
+            }
+            .navigationTitle(topic?.title.isEmpty == false ? "#\(topic!.title)#" : "#\(tag)#")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let topic, compactNavProgress > 0.08 {
+                    CollapsedNavEntityToolbar(
+                        avatarURL: topic.logo,
+                        isFollowed: topic.isFollowed,
+                        showFollowButton: true,
+                        isDisabled: isTogglingFollow,
+                        onTapAvatar: {
+                            withAnimation(.snappy) {
+                                proxy.scrollTo("topic-top-\(listType)", anchor: .top)
+                            }
+                        },
+                        onTapFollow: {
+                            Task { await toggleFollow(topic) }
+                        }
+                    )
+                }
+            }
+            .onChange(of: scrolledType) { _, newValue in
+                if let newValue, newValue != listType {
+                    listType = newValue
+                }
+            }
+            .onChange(of: listType) { _, newValue in
+                if scrolledType != newValue {
+                    withAnimation(.snappy(duration: 0.24)) {
+                        scrolledType = newValue
+                    }
+                }
+                Task { await reloadFeeds(for: newValue, force: false) }
+            }
+            .task(id: tag) {
+                topic = try? await API.topicDetail(tag: tag)
+                await reloadFeeds(for: listType, force: true)
+            }
+        }
+    }
+
+    private func topicFeedScrollPage(sortType: String) -> some View {
+        let rows = rowsBySort[sortType] ?? []
+        let isLoadingSort = loadingSorts.contains(sortType)
+        let hasLoaded = loadedSorts.contains(sortType)
+
+        return ScrollView {
+            Color.clear.frame(height: 0).id("topic-top-\(sortType)")
             LazyVStack(alignment: .leading, spacing: 10) {
                 if let topic {
                     HStack(spacing: 12) {
                         RemoteImageView(url: topic.logo, maxPixelSize: 180)
                             .frame(width: 56, height: 56)
+                            .clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         VStack(alignment: .leading, spacing: 4) {
                             Text("#\(topic.title)#").font(.headline)
@@ -48,16 +146,18 @@ public struct TopicDetailView: View {
                         .background(topic.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
                         .glassEffect(.regular.interactive(), in: .capsule)
                         .foregroundStyle(topic.isFollowed ? Color.primary : Color.accentColor)
+                        .disabled(isTogglingFollow)
                     }
                     .padding(14)
-                    .c001CardStyle(cornerRadius: 16)
+                    .c001CardStyle(cornerRadius: 18)
                     .padding(.horizontal, 12)
+                    .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
                 }
 
-                if isLoading && rows.isEmpty {
+                if (!hasLoaded || isLoadingSort) && rows.isEmpty {
                     ProgressView()
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 40)
+                        .padding(.vertical, 48)
                 } else if rows.isEmpty {
                     ContentUnavailableView("暂无话题动态", systemImage: "number")
                         .frame(maxWidth: .infinity, minHeight: 200)
@@ -65,91 +165,74 @@ public struct TopicDetailView: View {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
                         HomeRowRenderer(row: row)
                             .onAppear {
-                                if idx >= rows.count - 4 { Task { await loadMore() } }
+                                if idx >= rows.count - 4 { Task { await loadMore(for: sortType) } }
                             }
                     }
                 }
             }
-            .padding(.vertical, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 88)
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geo in
+            geo.contentOffset.y + geo.contentInsets.top
+        } action: { _, offset in
+            guard sortType == listType else { return }
+            let progress = min(1, max(0, (offset - 36) / 70))
+            if abs(progress - compactNavProgress) > 0.02 {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    compactNavProgress = progress
+                }
+            }
         }
         .refreshable {
-            await reloadFeeds()
-        }
-        .scrollClipDisabled()
-        .ignoresSafeArea(.container, edges: .bottom)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .safeAreaInset(edge: .top, spacing: 0) {
-            GlassEffectContainer(spacing: 4) {
-                HStack(spacing: 4) {
-                    ForEach([
-                        ("lastupdate_desc", "最新回复"),
-                        ("dateline_desc", "最新发布"),
-                        ("popular", "热门")
-                    ], id: \.0) { value, label in
-                        let isSelected = listType == value
-                        Button {
-                            withAnimation(.snappy(duration: 0.22)) {
-                                listType = value
-                            }
-                        } label: {
-                            Text(label)
-                                .font(.caption.weight(isSelected ? .semibold : .medium))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 7)
-                                .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
-                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(5)
-                .glassEffect(.regular.interactive(), in: .capsule)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .onChange(of: listType) { _, _ in
-                Task { await reloadFeeds() }
-            }
-        }
-        .navigationTitle("#\(tag)#")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
             topic = try? await API.topicDetail(tag: tag)
-            await reloadFeeds()
+            await reloadFeeds(for: sortType, force: true)
         }
     }
 
-    private func reloadFeeds() async {
-        isLoading = true
-        defer { isLoading = false }
-        page = 1
+    private func reloadFeeds(for sort: String, force: Bool) async {
+        if !force && loadedSorts.contains(sort) { return }
+        loadingSorts.insert(sort)
+        defer {
+            loadingSorts.remove(sort)
+            loadedSorts.insert(sort)
+        }
+        pageBySort[sort] = 1
+        hasMoreBySort[sort] = true
         do {
-            rows = try await API.topicFeeds(tag: tag, page: 1, listType: listType)
-            hasMore = !rows.isEmpty
+            let fetched = try await API.topicFeeds(tag: tag, page: 1, listType: sort)
+            rowsBySort[sort] = fetched
+            hasMoreBySort[sort] = !fetched.isEmpty
         } catch {
             _ = await appState.handleAPIError(error)
         }
     }
 
-    private func loadMore() async {
-        guard hasMore, !isLoading else { return }
-        let next = page + 1
-        if let fetched = try? await API.topicFeeds(tag: tag, page: next, listType: listType) {
-            var seen = Set(rows.map(\.id))
+    private func loadMore(for sort: String) async {
+        guard hasMoreBySort[sort] != false, !loadingSorts.contains(sort) else { return }
+        let next = (pageBySort[sort] ?? 1) + 1
+        if let fetched = try? await API.topicFeeds(tag: tag, page: next, listType: sort) {
+            let current = rowsBySort[sort] ?? []
+            var seen = Set(current.map(\.id))
             let unique = fetched.filter { seen.insert($0.id).inserted }
-            rows.append(contentsOf: unique)
-            hasMore = !unique.isEmpty
-            if hasMore { page = next }
+            rowsBySort[sort] = current + unique
+            hasMoreBySort[sort] = !unique.isEmpty
+            if !unique.isEmpty { pageBySort[sort] = next }
         }
     }
 
     private func toggleFollow(_ current: TopicItem) async {
         guard appState.accounts.isLoggedIn else { appState.showLoginSheet = true; return }
+        guard !isTogglingFollow else { return }
+        isTogglingFollow = true
+        defer { isTogglingFollow = false }
         let next = !current.isFollowed
+        topic?.isFollowed = next
         do {
             try await API.followTopic(tag: tag, follow: next)
-            topic?.isFollowed = next
+            appState.showToast(next ? "已关注话题" : "已取消关注")
         } catch {
+            topic?.isFollowed = !next
             _ = await appState.handleAPIError(error)
         }
     }
@@ -162,31 +245,130 @@ public struct ProductDetailView: View {
 
     @Environment(AppState.self) private var appState
     @State private var product: ProductItem?
-    @State private var tabs: [HomeSection] = []
-    @State private var selectedTabURL: String?
-    @State private var sortType = "lastupdate_desc"
-    @State private var rows: [HomeFeedRow] = []
-    @State private var page = 1
-    @State private var hasMore = true
-    @State private var isLoading = false
+    @State private var apiTabs: [HomeSection] = []
+    @State private var activeTabID = "lastupdate_desc"
+    @State private var scrolledTabID: String? = "lastupdate_desc"
+    @State private var rowsByTab: [String: [HomeFeedRow]] = [:]
+    @State private var loadedTabs: Set<String> = []
+    @State private var loadingTabs: Set<String> = []
+    @State private var pageByTab: [String: Int] = [:]
+    @State private var hasMoreByTab: [String: Bool] = [:]
+    @State private var isLoadingHeader = true
+    @State private var isTogglingFollow = false
+    @State private var compactNavProgress: CGFloat = 0
+
+    private let fallbackTabs: [ChoiceChip] = [
+        ChoiceChip(id: "lastupdate_desc", title: "最新回复"),
+        ChoiceChip(id: "dateline_desc", title: "最新发布"),
+        ChoiceChip(id: "popular", title: "热门讨论")
+    ]
 
     public init(productID: String) { self.productID = productID }
 
+    private var activeChips: [ChoiceChip] {
+        if !apiTabs.isEmpty {
+            return apiTabs.map { ChoiceChip(id: $0.url, title: $0.title) }
+        }
+        return fallbackTabs
+    }
+
+    private var selectedChip: ChoiceChip {
+        activeChips.first { $0.id == activeTabID } ?? activeChips[0]
+    }
+
     public var body: some View {
-        ScrollView {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 0) {
+                    ForEach(activeChips) { chip in
+                        productFeedPage(for: chip)
+                            .containerRelativeFrame(.horizontal)
+                            .frame(maxHeight: .infinity)
+                            .id(chip.id)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $scrolledTabID)
+            .scrollClipDisabled()
+            .ignoresSafeArea(.container, edges: .bottom)
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) {
+                FloatingTabStrip(
+                    items: activeChips,
+                    selection: selectedChip,
+                    titleProvider: \.title,
+                    onSelect: { chip in
+                        activeTabID = chip.id
+                    },
+                    onReselect: { chip in
+                        withAnimation(.snappy) {
+                            proxy.scrollTo("product-top-\(chip.id)", anchor: .top)
+                        }
+                    }
+                )
+            }
+            .navigationTitle(product?.title ?? "数码产品")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let product, compactNavProgress > 0.08 {
+                    CollapsedNavEntityToolbar(
+                        avatarURL: product.logo,
+                        isFollowed: product.isFollowed,
+                        showFollowButton: true,
+                        isDisabled: isTogglingFollow,
+                        onTapAvatar: {
+                            withAnimation(.snappy) {
+                                proxy.scrollTo("product-top-\(activeTabID)", anchor: .top)
+                            }
+                        },
+                        onTapFollow: {
+                            Task { await toggleFollow(product) }
+                        }
+                    )
+                }
+            }
+            .onChange(of: scrolledTabID) { _, newValue in
+                if let newValue, newValue != activeTabID {
+                    activeTabID = newValue
+                }
+            }
+            .onChange(of: activeTabID) { _, newValue in
+                if scrolledTabID != newValue {
+                    withAnimation(.snappy(duration: 0.24)) {
+                        scrolledTabID = newValue
+                    }
+                }
+                Task { await reloadFeeds(for: newValue, force: false) }
+            }
+            .task(id: productID) {
+                await reloadAll()
+            }
+        }
+    }
+
+    private func productFeedPage(for chip: ChoiceChip) -> some View {
+        let rows = rowsByTab[chip.id] ?? []
+        let isLoadingTab = loadingTabs.contains(chip.id)
+        let hasLoaded = loadedTabs.contains(chip.id)
+
+        return ScrollView {
+            Color.clear.frame(height: 0).id("product-top-\(chip.id)")
             LazyVStack(alignment: .leading, spacing: 10) {
                 if let product {
                     productHeaderCard(product)
-                } else if isLoading {
+                        .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
+                } else if isLoadingHeader {
                     ProgressView()
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 30)
                 }
 
-                if isLoading && rows.isEmpty {
+                if (!hasLoaded || isLoadingTab) && rows.isEmpty {
                     ProgressView()
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 40)
+                        .padding(.vertical, 48)
                 } else if rows.isEmpty {
                     ContentUnavailableView("暂无该机型动态", systemImage: "iphone")
                         .frame(maxWidth: .infinity, minHeight: 200)
@@ -194,89 +376,27 @@ public struct ProductDetailView: View {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
                         HomeRowRenderer(row: row)
                             .onAppear {
-                                if idx >= rows.count - 4 { Task { await loadMore() } }
+                                if idx >= rows.count - 4 { Task { await loadMore(for: chip.id) } }
                             }
                     }
                 }
             }
-            .padding(.vertical, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 88)
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geo in
+            geo.contentOffset.y + geo.contentInsets.top
+        } action: { _, offset in
+            guard chip.id == activeTabID else { return }
+            let progress = min(1, max(0, (offset - 36) / 70))
+            if abs(progress - compactNavProgress) > 0.02 {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    compactNavProgress = progress
+                }
+            }
         }
         .refreshable {
             await reloadAll()
-        }
-        .scrollClipDisabled()
-        .ignoresSafeArea(.container, edges: .bottom)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .safeAreaInset(edge: .top, spacing: 0) {
-            productTabBar
-        }
-        .navigationTitle(product?.title ?? "数码产品")
-        .navigationBarTitleDisplayMode(.inline)
-        .task(id: productID) {
-            await reloadAll()
-        }
-    }
-
-    @ViewBuilder
-    private var productTabBar: some View {
-        if !tabs.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                GlassEffectContainer(spacing: 4) {
-                    HStack(spacing: 4) {
-                        ForEach(tabs) { item in
-                            let isSelected = selectedTabURL == item.url
-                            Button {
-                                withAnimation(.snappy(duration: 0.22)) {
-                                    selectedTabURL = item.url
-                                }
-                                Task { await reloadFeeds() }
-                            } label: {
-                                Text(item.title)
-                                    .font(.caption.weight(isSelected ? .semibold : .medium))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 7)
-                                    .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
-                                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(5)
-                    .glassEffect(.regular.interactive(), in: .capsule)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-            }
-        } else {
-            GlassEffectContainer(spacing: 4) {
-                HStack(spacing: 4) {
-                    ForEach([
-                        ("lastupdate_desc", "最新回复"),
-                        ("dateline_desc", "最新发布"),
-                        ("popular", "热门讨论")
-                    ], id: \.0) { value, label in
-                        let isSelected = sortType == value
-                        Button {
-                            withAnimation(.snappy(duration: 0.22)) {
-                                sortType = value
-                            }
-                            Task { await reloadFeeds() }
-                        } label: {
-                            Text(label)
-                                .font(.caption.weight(isSelected ? .semibold : .medium))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 7)
-                                .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
-                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(5)
-                .glassEffect(.regular.interactive(), in: .capsule)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
         }
     }
 
@@ -285,6 +405,7 @@ public struct ProductDetailView: View {
             HStack(spacing: 12) {
                 RemoteImageView(url: product.logo, maxPixelSize: 180)
                     .frame(width: 60, height: 60)
+                    .clipped()
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 VStack(alignment: .leading, spacing: 4) {
                     Text(product.title).font(.headline)
@@ -313,6 +434,7 @@ public struct ProductDetailView: View {
                 .background(product.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
                 .glassEffect(.regular.interactive(), in: .capsule)
                 .foregroundStyle(product.isFollowed ? Color.primary : Color.accentColor)
+                .disabled(isTogglingFollow)
             }
 
             if !product.recommendReason.isEmpty {
@@ -333,62 +455,79 @@ public struct ProductDetailView: View {
     }
 
     private func reloadAll() async {
-        isLoading = true
-        defer { isLoading = false }
+        isLoadingHeader = true
         let detail = try? await API.productDetail(id: productID)
         product = detail
+        isLoadingHeader = false
         if let detail, !detail.tabs.isEmpty {
-            tabs = detail.tabs
-            if selectedTabURL == nil || !detail.tabs.contains(where: { $0.url == selectedTabURL }) {
-                selectedTabURL = detail.tabs.first?.url
+            apiTabs = detail.tabs
+            if !detail.tabs.contains(where: { $0.url == activeTabID }), let first = detail.tabs.first?.url {
+                activeTabID = first
+                scrolledTabID = first
             }
         }
-        await reloadFeeds()
+        await reloadFeeds(for: activeTabID, force: true)
     }
 
-    private func reloadFeeds() async {
-        isLoading = true
-        defer { isLoading = false }
-        page = 1
+    private func reloadFeeds(for tabID: String, force: Bool) async {
+        if !force && loadedTabs.contains(tabID) { return }
+        loadingTabs.insert(tabID)
+        defer {
+            loadingTabs.remove(tabID)
+            loadedTabs.insert(tabID)
+        }
+        pageByTab[tabID] = 1
+        hasMoreByTab[tabID] = true
+        let tabURL: String? = apiTabs.isEmpty ? nil : tabID
+        let sort = apiTabs.isEmpty ? tabID : "lastupdate_desc"
         do {
-            rows = try await API.productFeeds(
+            let fetched = try await API.productFeeds(
                 productID: productID,
                 title: product?.title ?? "",
-                tabURL: selectedTabURL,
-                listType: sortType,
+                tabURL: tabURL,
+                listType: sort,
                 page: 1
             )
-            hasMore = !rows.isEmpty
+            rowsByTab[tabID] = fetched
+            hasMoreByTab[tabID] = !fetched.isEmpty
         } catch {
             _ = await appState.handleAPIError(error)
         }
     }
 
-    private func loadMore() async {
-        guard hasMore, !isLoading else { return }
-        let next = page + 1
+    private func loadMore(for tabID: String) async {
+        guard hasMoreByTab[tabID] != false, !loadingTabs.contains(tabID) else { return }
+        let next = (pageByTab[tabID] ?? 1) + 1
+        let tabURL: String? = apiTabs.isEmpty ? nil : tabID
+        let sort = apiTabs.isEmpty ? tabID : "lastupdate_desc"
         if let fetched = try? await API.productFeeds(
             productID: productID,
             title: product?.title ?? "",
-            tabURL: selectedTabURL,
-            listType: sortType,
+            tabURL: tabURL,
+            listType: sort,
             page: next
         ) {
-            var seen = Set(rows.map(\.id))
+            let current = rowsByTab[tabID] ?? []
+            var seen = Set(current.map(\.id))
             let unique = fetched.filter { seen.insert($0.id).inserted }
-            rows.append(contentsOf: unique)
-            hasMore = !unique.isEmpty
-            if hasMore { page = next }
+            rowsByTab[tabID] = current + unique
+            hasMoreByTab[tabID] = !unique.isEmpty
+            if !unique.isEmpty { pageByTab[tabID] = next }
         }
     }
 
     private func toggleFollow(_ current: ProductItem) async {
         guard appState.accounts.isLoggedIn else { appState.showLoginSheet = true; return }
+        guard !isTogglingFollow else { return }
+        isTogglingFollow = true
+        defer { isTogglingFollow = false }
         let next = !current.isFollowed
+        product?.isFollowed = next
         do {
             try await API.followProduct(id: current.id, follow: next)
-            product?.isFollowed = next
+            appState.showToast(next ? "已关注机型" : "已取消关注")
         } catch {
+            product?.isFollowed = !next
             _ = await appState.handleAPIError(error)
         }
     }
@@ -404,6 +543,8 @@ public struct AppDetailView: View {
     @State private var transitionSeed = UUID().uuidString
     @State private var app: AppItem?
     @State private var comments: [HomeFeedRow] = []
+    @State private var hasLoaded = false
+    @State private var isLoading = true
     @State private var page = 1
     @State private var hasMore = true
 
@@ -417,6 +558,7 @@ public struct AppDetailView: View {
                         HStack(spacing: 12) {
                             RemoteImageView(url: app.logo, maxPixelSize: 200)
                                 .frame(width: 64, height: 64)
+                                .clipped()
                                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(app.title).font(.title3.weight(.semibold))
@@ -442,7 +584,9 @@ public struct AppDetailView: View {
                                         } label: {
                                             RemoteImageView(url: url, maxPixelSize: 540)
                                                 .frame(width: 140, height: 240)
+                                                .clipped()
                                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                                 .applyZoomSource(id: "\(shotPrefix)-\(idx)", in: zoomNamespace)
                                         }
                                         .buttonStyle(.plain)
@@ -458,39 +602,57 @@ public struct AppDetailView: View {
                         }
                     }
                     .padding(14)
-                    .c001CardStyle(cornerRadius: 16)
+                    .c001CardStyle(cornerRadius: 18)
                     .padding(.horizontal, 12)
                 }
 
-                ForEach(Array(comments.enumerated()), id: \.element.id) { idx, row in
-                    HomeRowRenderer(row: row)
-                        .onAppear {
-                            if idx >= comments.count - 4 { Task { await loadMore() } }
-                        }
+                if (!hasLoaded || isLoading) && comments.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 40)
+                } else if comments.isEmpty {
+                    ContentUnavailableView("暂无应用评价", systemImage: "bubble.right")
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                } else {
+                    ForEach(Array(comments.enumerated()), id: \.element.id) { idx, row in
+                        HomeRowRenderer(row: row)
+                            .onAppear {
+                                if idx >= comments.count - 4 { Task { await loadMore() } }
+                            }
+                    }
                 }
             }
             .padding(.vertical, 10)
         }
         .refreshable {
-            app = try? await API.appDetail(id: appID)
-            comments = (try? await API.appComments(id: appID, page: 1)) ?? []
-            hasMore = !comments.isEmpty
-            page = 1
+            await reload()
         }
         .scrollClipDisabled()
         .ignoresSafeArea(.container, edges: .bottom)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .navigationTitle(app?.title ?? "应用详情")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            app = try? await API.appDetail(id: appID)
-            comments = (try? await API.appComments(id: appID, page: 1)) ?? []
-            hasMore = !comments.isEmpty
+        .task(id: appID) {
+            await reload()
         }
     }
 
+    private func reload() async {
+        isLoading = true
+        defer {
+            isLoading = false
+            hasLoaded = true
+        }
+        page = 1
+        async let detailTask = try? API.appDetail(id: appID)
+        async let commentsTask = (try? API.appComments(id: appID, page: 1)) ?? []
+        app = await detailTask
+        comments = await commentsTask
+        hasMore = !comments.isEmpty
+    }
+
     private func loadMore() async {
-        guard hasMore else { return }
+        guard hasMore, !isLoading else { return }
         let next = page + 1
         if let fetched = try? await API.appComments(id: appID, page: next) {
             var seen = Set(comments.map(\.id))
@@ -510,68 +672,122 @@ public struct DyhDetailView: View {
     @Environment(AppState.self) private var appState
     @State private var dyh: DyhItem?
     @State private var rows: [HomeFeedRow] = []
+    @State private var hasLoaded = false
+    @State private var isLoading = true
+    @State private var isTogglingFollow = false
+    @State private var compactNavProgress: CGFloat = 0
     @State private var page = 1
     @State private var hasMore = true
 
     public init(dyhID: String) { self.dyhID = dyhID }
 
     public var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                if let dyh {
-                    HStack(spacing: 12) {
-                        RemoteImageView(url: dyh.logo, maxPixelSize: 180)
-                            .frame(width: 56, height: 56)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(dyh.title).font(.headline)
-                            Text(dyh.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+        ScrollViewReader { proxy in
+            ScrollView {
+                Color.clear.frame(height: 0).id("dyh-top")
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if let dyh {
+                        HStack(spacing: 12) {
+                            RemoteImageView(url: dyh.logo, maxPixelSize: 180)
+                                .frame(width: 56, height: 56)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(dyh.title).font(.headline)
+                                Text(dyh.description).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            }
+                            Spacer()
+                            Button(dyh.isFollowed ? "已订阅" : "订阅") {
+                                Task { await toggleFollow(dyh) }
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(dyh.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                            .foregroundStyle(dyh.isFollowed ? Color.primary : Color.accentColor)
+                            .disabled(isTogglingFollow)
                         }
-                        Spacer()
-                        Button(dyh.isFollowed ? "已订阅" : "订阅") {
-                            Task { await toggleFollow(dyh) }
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(dyh.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .foregroundStyle(dyh.isFollowed ? Color.primary : Color.accentColor)
+                        .padding(14)
+                        .c001CardStyle(cornerRadius: 18)
+                        .padding(.horizontal, 12)
+                        .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
                     }
-                    .padding(14)
-                    .c001CardStyle(cornerRadius: 16)
-                    .padding(.horizontal, 12)
-                }
 
-                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                    HomeRowRenderer(row: row)
-                        .onAppear {
-                            if idx >= rows.count - 4 { Task { await loadMore() } }
+                    if (!hasLoaded || isLoading) && rows.isEmpty {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 48)
+                    } else if rows.isEmpty {
+                        ContentUnavailableView("暂无看看号文章", systemImage: "newspaper")
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    } else {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= rows.count - 4 { Task { await loadMore() } }
+                                }
                         }
+                    }
+                }
+                .padding(.vertical, 10)
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top
+            } action: { _, offset in
+                let progress = min(1, max(0, (offset - 36) / 70))
+                if abs(progress - compactNavProgress) > 0.02 {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        compactNavProgress = progress
+                    }
                 }
             }
-            .padding(.vertical, 10)
-        }
-        .refreshable {
-            dyh = try? await API.dyhDetail(id: dyhID)
-            rows = (try? await API.dyhArticles(id: dyhID, page: 1)) ?? []
-            hasMore = !rows.isEmpty
-            page = 1
-        }
-        .scrollClipDisabled()
-        .ignoresSafeArea(.container, edges: .bottom)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .navigationTitle(dyh?.title ?? "看看号")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            dyh = try? await API.dyhDetail(id: dyhID)
-            rows = (try? await API.dyhArticles(id: dyhID, page: 1)) ?? []
-            hasMore = !rows.isEmpty
+            .refreshable {
+                await reload()
+            }
+            .scrollClipDisabled()
+            .ignoresSafeArea(.container, edges: .bottom)
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle(dyh?.title ?? "看看号")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let dyh, compactNavProgress > 0.08 {
+                    CollapsedNavEntityToolbar(
+                        avatarURL: dyh.logo,
+                        isFollowed: dyh.isFollowed,
+                        showFollowButton: true,
+                        isDisabled: isTogglingFollow,
+                        onTapAvatar: {
+                            withAnimation(.snappy) { proxy.scrollTo("dyh-top", anchor: .top) }
+                        },
+                        onTapFollow: {
+                            Task { await toggleFollow(dyh) }
+                        }
+                    )
+                }
+            }
+            .task(id: dyhID) {
+                await reload()
+            }
         }
     }
 
+    private func reload() async {
+        isLoading = true
+        defer {
+            isLoading = false
+            hasLoaded = true
+        }
+        page = 1
+        async let detailTask = try? API.dyhDetail(id: dyhID)
+        async let rowsTask = (try? API.dyhArticles(id: dyhID, page: 1)) ?? []
+        dyh = await detailTask
+        rows = await rowsTask
+        hasMore = !rows.isEmpty
+    }
+
     private func loadMore() async {
-        guard hasMore else { return }
+        guard hasMore, !isLoading else { return }
         let next = page + 1
         if let fetched = try? await API.dyhArticles(id: dyhID, page: next) {
             var seen = Set(rows.map(\.id))
@@ -584,11 +800,16 @@ public struct DyhDetailView: View {
 
     private func toggleFollow(_ current: DyhItem) async {
         guard appState.accounts.isLoggedIn else { appState.showLoginSheet = true; return }
+        guard !isTogglingFollow else { return }
+        isTogglingFollow = true
+        defer { isTogglingFollow = false }
         let next = !current.isFollowed
+        dyh?.isFollowed = next
         do {
             try await API.followDyh(id: dyhID, follow: next)
-            dyh?.isFollowed = next
+            appState.showToast(next ? "已订阅" : "已取消订阅")
         } catch {
+            dyh?.isFollowed = !next
             _ = await appState.handleAPIError(error)
         }
     }
@@ -602,70 +823,124 @@ public struct CollectionDetailView: View {
     @Environment(AppState.self) private var appState
     @State private var collection: CollectionItem?
     @State private var rows: [HomeFeedRow] = []
+    @State private var hasLoaded = false
+    @State private var isLoading = true
+    @State private var isTogglingFollow = false
+    @State private var compactNavProgress: CGFloat = 0
     @State private var page = 1
     @State private var hasMore = true
 
     public init(collectionID: String) { self.collectionID = collectionID }
 
     public var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                if let collection {
-                    HStack(spacing: 12) {
-                        RemoteImageView(url: collection.logo, maxPixelSize: 180)
-                            .frame(width: 56, height: 56)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(collection.title).font(.headline)
-                            Text("\(collection.itemNum) 项 · \(Formatting.count(collection.followNum)) 关注")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+        ScrollViewReader { proxy in
+            ScrollView {
+                Color.clear.frame(height: 0).id("col-top")
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if let collection {
+                        HStack(spacing: 12) {
+                            RemoteImageView(url: collection.logo, maxPixelSize: 180)
+                                .frame(width: 56, height: 56)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(collection.title).font(.headline)
+                                Text("\(collection.itemNum) 项 · \(Formatting.count(collection.followNum)) 关注")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Button(collection.isFollowed ? "已关注" : "关注") {
+                                Task { await toggleFollow(collection) }
+                            }
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(collection.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                            .foregroundStyle(collection.isFollowed ? Color.primary : Color.accentColor)
+                            .disabled(isTogglingFollow)
                         }
-                        Spacer()
-                        Button(collection.isFollowed ? "已关注" : "关注") {
-                            Task { await toggleFollow(collection) }
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 7)
-                        .background(collection.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                        .foregroundStyle(collection.isFollowed ? Color.primary : Color.accentColor)
+                        .padding(14)
+                        .c001CardStyle(cornerRadius: 18)
+                        .padding(.horizontal, 12)
+                        .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
                     }
-                    .padding(14)
-                    .c001CardStyle(cornerRadius: 16)
-                    .padding(.horizontal, 12)
-                }
 
-                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                    HomeRowRenderer(row: row)
-                        .onAppear {
-                            if idx >= rows.count - 4 { Task { await loadMore() } }
+                    if (!hasLoaded || isLoading) && rows.isEmpty {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 48)
+                    } else if rows.isEmpty {
+                        ContentUnavailableView("暂无收藏内容", systemImage: "star")
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    } else {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= rows.count - 4 { Task { await loadMore() } }
+                                }
                         }
+                    }
+                }
+                .padding(.vertical, 10)
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top
+            } action: { _, offset in
+                let progress = min(1, max(0, (offset - 36) / 70))
+                if abs(progress - compactNavProgress) > 0.02 {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        compactNavProgress = progress
+                    }
                 }
             }
-            .padding(.vertical, 10)
-        }
-        .refreshable {
-            collection = try? await API.collectionDetail(id: collectionID)
-            rows = (try? await API.collectionItems(id: collectionID, page: 1)) ?? []
-            hasMore = !rows.isEmpty
-            page = 1
-        }
-        .scrollClipDisabled()
-        .ignoresSafeArea(.container, edges: .bottom)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .navigationTitle(collection?.title ?? "收藏夹")
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            collection = try? await API.collectionDetail(id: collectionID)
-            rows = (try? await API.collectionItems(id: collectionID, page: 1)) ?? []
-            hasMore = !rows.isEmpty
+            .refreshable {
+                await reload()
+            }
+            .scrollClipDisabled()
+            .ignoresSafeArea(.container, edges: .bottom)
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle(collection?.title ?? "收藏夹")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let collection, compactNavProgress > 0.08 {
+                    CollapsedNavEntityToolbar(
+                        avatarURL: collection.logo,
+                        isFollowed: collection.isFollowed,
+                        showFollowButton: true,
+                        isDisabled: isTogglingFollow,
+                        onTapAvatar: {
+                            withAnimation(.snappy) { proxy.scrollTo("col-top", anchor: .top) }
+                        },
+                        onTapFollow: {
+                            Task { await toggleFollow(collection) }
+                        }
+                    )
+                }
+            }
+            .task(id: collectionID) {
+                await reload()
+            }
         }
     }
 
+    private func reload() async {
+        isLoading = true
+        defer {
+            isLoading = false
+            hasLoaded = true
+        }
+        page = 1
+        async let detailTask = try? API.collectionDetail(id: collectionID)
+        async let itemsTask = (try? API.collectionItems(id: collectionID, page: 1)) ?? []
+        collection = await detailTask
+        rows = await itemsTask
+        hasMore = !rows.isEmpty
+    }
+
     private func loadMore() async {
-        guard hasMore else { return }
+        guard hasMore, !isLoading else { return }
         let next = page + 1
         if let fetched = try? await API.collectionItems(id: collectionID, page: next) {
             var seen = Set(rows.map(\.id))
@@ -678,11 +953,16 @@ public struct CollectionDetailView: View {
 
     private func toggleFollow(_ current: CollectionItem) async {
         guard appState.accounts.isLoggedIn else { appState.showLoginSheet = true; return }
+        guard !isTogglingFollow else { return }
+        isTogglingFollow = true
+        defer { isTogglingFollow = false }
         let next = !current.isFollowed
+        collection?.isFollowed = next
         do {
             try await API.followCollection(id: collectionID, follow: next)
-            collection?.isFollowed = next
+            appState.showToast(next ? "已关注收藏夹" : "已取消关注")
         } catch {
+            collection?.isFollowed = !next
             _ = await appState.handleAPIError(error)
         }
     }
@@ -692,42 +972,163 @@ public struct CollectionDetailView: View {
 
 public struct EventDetailView: View {
     public let eventID: String
-    @State private var event: EventItem?
-    @State private var isLoading = false
+    public let initialEvent: EventItem?
 
-    public init(eventID: String) { self.eventID = eventID }
+    @Environment(AppState.self) private var appState
+    @State private var event: EventItem?
+    @State private var rows: [HomeFeedRow] = []
+    @State private var hasLoaded = false
+    @State private var isLoading = true
+    @State private var page = 1
+    @State private var hasMore = true
+
+    public init(eventID: String, initialEvent: EventItem? = nil) {
+        self.eventID = eventID
+        self.initialEvent = initialEvent
+        self._event = State(initialValue: initialEvent)
+    }
 
     public var body: some View {
         ScrollView {
-            if isLoading && event == nil {
-                ProgressView().padding(.vertical, 60)
-            } else if let event {
-                VStack(alignment: .leading, spacing: 14) {
-                    if !event.cover.isEmpty {
-                        RemoteImageView(url: event.cover, maxPixelSize: 1200)
-                            .frame(maxWidth: .infinity, maxHeight: 220)
-                            .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            LazyVStack(alignment: .leading, spacing: 12) {
+                if let event {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if !event.cover.isEmpty {
+                            Color.clear
+                                .frame(height: 196)
+                                .overlay {
+                                    RemoteImageView(url: event.cover, maxPixelSize: 1200)
+                                }
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+
+                        HStack(spacing: 8) {
+                            if !event.title.isEmpty {
+                                Text(event.title)
+                                    .font(.title3.weight(.bold))
+                            }
+                            Spacer()
+                            if !event.statusText.isEmpty {
+                                Text(event.statusText)
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(Color.accentColor.opacity(0.16), in: Capsule())
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                        }
+
+                        let meta = [
+                            event.startTimeText,
+                            event.joinNum > 0 ? "\(Formatting.count(event.joinNum)) 人参与" : ""
+                        ].filter { !$0.isEmpty }.joined(separator: " · ")
+                        if !meta.isEmpty {
+                            Text(meta)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if !event.description.isEmpty {
+                            RichTextView(
+                                html: event.description,
+                                fontSize: 15 * appState.settings.fontScale,
+                                showEmoji: appState.settings.showEmoji
+                            ) { link in
+                                appState.openRawLink(link)
+                            }
+                        }
+
+                        if let webURL = resolvedWebURL(from: event) {
+                            Button {
+                                appState.push(.web(url: webURL))
+                            } label: {
+                                Label("在应用内查看完整活动页", systemImage: "safari")
+                                    .font(.subheadline.weight(.semibold))
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(Color.accentColor.opacity(0.14), in: Capsule())
+                                    .glassEffect(.regular.interactive(), in: .capsule)
+                                    .foregroundStyle(Color.accentColor)
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
-                    Text(event.title).font(.title3.weight(.bold))
-                    if !event.startTimeText.isEmpty {
-                        Text(event.startTimeText).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if !event.description.isEmpty {
-                        Text(FeedHTMLParser.plainText(event.description)).font(.body)
-                    }
+                    .padding(14)
+                    .c001CardStyle(cornerRadius: 20)
+                    .padding(.horizontal, 12)
                 }
-                .padding(16)
-            } else {
-                ContentUnavailableView("活动不可用", systemImage: "calendar.badge.exclamationmark")
+
+                if (!hasLoaded || isLoading) && rows.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 48)
+                } else if rows.isEmpty && event == nil {
+                    ContentUnavailableView("暂无活动内容", systemImage: "calendar.badge.exclamationmark")
+                        .frame(maxWidth: .infinity, minHeight: 220)
+                } else if !rows.isEmpty {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                        HomeRowRenderer(row: row)
+                            .onAppear {
+                                if idx >= rows.count - 4 { Task { await loadMore() } }
+                            }
+                    }
+                } else {
+                    ContentUnavailableView("暂无更多活动动态", systemImage: "sparkles")
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                }
             }
+            .padding(.vertical, 12)
         }
-        .navigationTitle(event?.title ?? "活动")
+        .refreshable {
+            await reload()
+        }
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle(event?.title.isEmpty == false ? event!.title : "活动详情")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            isLoading = true
-            event = try? await API.eventDetail(id: eventID)
+        .task(id: eventID) {
+            await reload()
+        }
+    }
+
+    private func resolvedWebURL(from event: EventItem) -> URL? {
+        if let direct = URL(string: event.url), direct.scheme == "http" || direct.scheme == "https" {
+            return direct
+        }
+        if !event.id.isEmpty, event.id.allSatisfy(\.isNumber) {
+            return URL(string: "https://www.coolapk.com/event/\(event.id)")
+        }
+        return nil
+    }
+
+    private func reload() async {
+        isLoading = true
+        defer {
             isLoading = false
+            hasLoaded = true
+        }
+        page = 1
+        async let detailTask = try? API.eventDetail(id: eventID)
+        async let feedsTask = (try? API.eventFeeds(id: eventID, page: 1)) ?? []
+        if let fetched = await detailTask, (!fetched.title.isEmpty || !fetched.description.isEmpty || !fetched.cover.isEmpty) {
+            event = fetched
+        }
+        rows = await feedsTask
+        hasMore = !rows.isEmpty
+    }
+
+    private func loadMore() async {
+        guard hasMore, !isLoading else { return }
+        let next = page + 1
+        if let fetched = try? await API.eventFeeds(id: eventID, page: next) {
+            var seen = Set(rows.map(\.id))
+            let unique = fetched.filter { seen.insert($0.id).inserted }
+            rows.append(contentsOf: unique)
+            hasMore = !unique.isEmpty
+            if hasMore { page = next }
         }
     }
 }
@@ -739,86 +1140,122 @@ public struct PageFeedView: View {
     public let title: String
 
     @Environment(AppState.self) private var appState
-    @State private var rows: [HomeFeedRow] = []
     @State private var subTabs: [HomeSection] = []
-    @State private var selectedSubURL: String?
-    @State private var page = 1
-    @State private var hasMore = true
-    @State private var isLoading = false
+    @State private var selectedTabID: String = ""
+    @State private var scrolledTabID: String?
+    @State private var rowsByTab: [String: [HomeFeedRow]] = [:]
+    @State private var loadedTabs: Set<String> = []
+    @State private var loadingTabs: Set<String> = []
+    @State private var pageByTab: [String: Int] = [:]
+    @State private var hasMoreByTab: [String: Bool] = [:]
 
     public init(link: String, title: String) {
         self.link = link
         self.title = title
     }
 
+    private var activeTab: HomeSection {
+        subTabs.first { $0.id == selectedTabID }
+            ?? subTabs.first
+            ?? HomeSection(id: link, title: title, subtitle: "", url: link, style: "")
+    }
+
     public var body: some View {
         Group {
-            if isLoading && rows.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if rows.isEmpty && subTabs.isEmpty {
-                ContentUnavailableView("暂无内容", systemImage: "tray")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if subTabs.isEmpty {
+                singlePageScrollView(tabID: link, tabURL: link)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                            HomeRowRenderer(row: row)
-                                .onAppear {
-                                    if idx >= rows.count - 4 { Task { await loadMore() } }
-                                }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 0) {
+                        ForEach(subTabs) { item in
+                            singlePageScrollView(tabID: item.id, tabURL: item.url)
+                                .containerRelativeFrame(.horizontal)
+                                .frame(maxHeight: .infinity)
+                                .id(item.id)
                         }
                     }
-                    .padding(.vertical, 12)
+                    .scrollTargetLayout()
                 }
-                .refreshable {
-                    await loadInitial()
+                .scrollTargetBehavior(.paging)
+                .scrollPosition(id: $scrolledTabID)
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    FloatingTabStrip(
+                        items: subTabs,
+                        selection: activeTab,
+                        titleProvider: \.title,
+                        onSelect: { item in
+                            selectedTabID = item.id
+                        }
+                    )
                 }
             }
         }
         .scrollClipDisabled()
         .ignoresSafeArea(.container, edges: .bottom)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if !subTabs.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    GlassEffectContainer(spacing: 6) {
-                        HStack(spacing: 6) {
-                            ForEach(subTabs) { item in
-                                let isSelected = selectedSubURL == item.url
-                                Button {
-                                    selectedSubURL = item.url
-                                    Task { await loadSubTab(url: item.url) }
-                                } label: {
-                                    Text(item.title)
-                                        .font(.caption.weight(isSelected ? .semibold : .medium))
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 6)
-                                        .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
-                                        .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(5)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                    }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
-                }
-            }
-        }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .task {
+        .onChange(of: scrolledTabID) { _, newValue in
+            if let newValue, newValue != selectedTabID {
+                selectedTabID = newValue
+            }
+        }
+        .onChange(of: selectedTabID) { _, newID in
+            if scrolledTabID != newID {
+                withAnimation(.snappy(duration: 0.24)) {
+                    scrolledTabID = newID
+                }
+            }
+            if let tab = subTabs.first(where: { $0.id == newID }) {
+                Task { await loadSubTab(tabID: tab.id, url: tab.url, force: false) }
+            }
+        }
+        .task(id: link) {
             await loadInitial()
         }
     }
 
+    @ViewBuilder
+    private func singlePageScrollView(tabID: String, tabURL: String) -> some View {
+        let rows = rowsByTab[tabID] ?? []
+        let hasLoaded = loadedTabs.contains(tabID)
+        let isLoadingTab = loadingTabs.contains(tabID)
+
+        if (!hasLoaded || isLoadingTab) && rows.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if rows.isEmpty {
+            ContentUnavailableView("暂无内容", systemImage: "tray")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                        HomeRowRenderer(row: row)
+                            .onAppear {
+                                if idx >= rows.count - 4 { Task { await loadMore(tabID: tabID, url: tabURL) } }
+                            }
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.bottom, 88)
+            }
+            .refreshable {
+                if subTabs.isEmpty || tabURL == link {
+                    await loadInitial()
+                } else {
+                    await loadSubTab(tabID: tabID, url: tabURL, force: true)
+                }
+            }
+        }
+    }
+
     private func loadInitial() async {
-        isLoading = true
-        defer { isLoading = false }
-        page = 1
+        loadingTabs.insert(link)
+        defer {
+            loadingTabs.remove(link)
+            loadedTabs.insert(link)
+        }
         do {
             let initial: [HomeFeedRow]
             if link == "/main/headline" {
@@ -828,55 +1265,103 @@ public struct PageFeedView: View {
             }
             let extractedTabs = extractSubTabs(from: initial)
             if !extractedTabs.isEmpty {
-                subTabs = extractedTabs
                 let contentOnly = filterNonTabRows(initial)
-                if contentOnly.isEmpty, let firstURL = extractedTabs.first?.url {
-                    selectedSubURL = firstURL
-                    rows = (try? await API.linkFeed(link: firstURL, page: 1)) ?? []
+                var resolvedTabs = extractedTabs
+                if !contentOnly.isEmpty {
+                    let existingIdx = resolvedTabs.firstIndex { tab in
+                        normalizedComparisonKey(tab.url) == normalizedComparisonKey(link)
+                    }
+                    if let existingIdx {
+                        let firstTab = resolvedTabs[existingIdx]
+                        subTabs = resolvedTabs
+                        selectedTabID = firstTab.id
+                        scrolledTabID = firstTab.id
+                        rowsByTab[firstTab.id] = contentOnly
+                        loadedTabs.insert(firstTab.id)
+                        pageByTab[firstTab.id] = 1
+                        hasMoreByTab[firstTab.id] = true
+                    } else {
+                        let originTab = HomeSection(
+                            id: "origin-\(link)",
+                            title: title.isEmpty ? "默认" : title,
+                            subtitle: "",
+                            url: link,
+                            style: ""
+                        )
+                        resolvedTabs.insert(originTab, at: 0)
+                        subTabs = resolvedTabs
+                        selectedTabID = originTab.id
+                        scrolledTabID = originTab.id
+                        rowsByTab[originTab.id] = contentOnly
+                        loadedTabs.insert(originTab.id)
+                        pageByTab[originTab.id] = 1
+                        hasMoreByTab[originTab.id] = true
+                    }
                 } else {
-                    rows = contentOnly
+                    subTabs = resolvedTabs
+                    if let first = resolvedTabs.first {
+                        selectedTabID = first.id
+                        scrolledTabID = first.id
+                        await loadSubTab(tabID: first.id, url: first.url, force: true)
+                    }
                 }
             } else {
-                rows = initial
+                subTabs = []
+                selectedTabID = link
+                rowsByTab[link] = initial
+                pageByTab[link] = 1
+                hasMoreByTab[link] = !initial.isEmpty
             }
-            hasMore = !rows.isEmpty
         } catch {
             _ = await appState.handleAPIError(error)
         }
     }
 
-    private func loadSubTab(url: String) async {
-        isLoading = true
-        defer { isLoading = false }
-        page = 1
-        rows = []
+    private func loadSubTab(tabID: String, url: String, force: Bool) async {
+        if !force && loadedTabs.contains(tabID) { return }
+        loadingTabs.insert(tabID)
+        defer {
+            loadingTabs.remove(tabID)
+            loadedTabs.insert(tabID)
+        }
+        pageByTab[tabID] = 1
         do {
-            let fetched = try await API.linkFeed(link: url, page: 1)
-            rows = filterNonTabRows(fetched)
-            hasMore = !rows.isEmpty
+            let fetched: [HomeFeedRow]
+            if url == "/main/headline" {
+                fetched = try await API.headlineFeed(page: 1)
+            } else {
+                fetched = try await API.linkFeed(link: url, page: 1)
+            }
+            let filtered = filterNonTabRows(fetched)
+            rowsByTab[tabID] = filtered
+            hasMoreByTab[tabID] = !filtered.isEmpty
         } catch {
             _ = await appState.handleAPIError(error)
         }
     }
 
-    private func loadMore() async {
-        guard hasMore, !isLoading else { return }
-        let next = page + 1
-        let activeLink = selectedSubURL ?? link
+    private func loadMore(tabID: String, url: String) async {
+        guard hasMoreByTab[tabID] != false, !loadingTabs.contains(tabID) else { return }
+        let next = (pageByTab[tabID] ?? 1) + 1
         let fetched: [HomeFeedRow]?
-        if activeLink == "/main/headline" {
+        if url == "/main/headline" {
             fetched = try? await API.headlineFeed(page: next)
         } else {
-            fetched = try? await API.linkFeed(link: activeLink, page: next)
+            fetched = try? await API.linkFeed(link: url, page: next)
         }
         if let fetched {
             let filtered = subTabs.isEmpty ? fetched : filterNonTabRows(fetched)
-            var seen = Set(rows.map(\.id))
+            let current = rowsByTab[tabID] ?? []
+            var seen = Set(current.map(\.id))
             let unique = filtered.filter { seen.insert($0.id).inserted }
-            rows.append(contentsOf: unique)
-            hasMore = !unique.isEmpty
-            if hasMore { page = next }
+            rowsByTab[tabID] = current + unique
+            hasMoreByTab[tabID] = !unique.isEmpty
+            if !unique.isEmpty { pageByTab[tabID] = next }
         }
+    }
+
+    private func normalizedComparisonKey(_ raw: String) -> String {
+        API.pageTarget(from: raw).trimmingCharacters(in: CharacterSet(charactersIn: "/# "))
     }
 
     private func extractSubTabs(from items: [HomeFeedRow]) -> [HomeSection] {
@@ -904,111 +1389,149 @@ public struct PageFeedView: View {
 public struct CoolPicView: View {
     public let initialTag: String
 
-    @State private var rows: [HomeFeedRow] = []
     @State private var sortType = "recommend"
-    @State private var page = 1
-    @State private var hasMore = true
-    @State private var isLoading = false
+    @State private var scrolledSort: String? = "recommend"
+    @State private var rowsBySort: [String: [HomeFeedRow]] = [:]
+    @State private var loadedSorts: Set<String> = []
+    @State private var loadingSorts: Set<String> = []
+    @State private var pageBySort: [String: Int] = [:]
+    @State private var hasMoreBySort: [String: Bool] = [:]
+
+    private let sortOptions: [ChoiceChip] = [
+        ChoiceChip(id: "recommend", title: "推荐"),
+        ChoiceChip(id: "new", title: "最新"),
+        ChoiceChip(id: "hot", title: "最热")
+    ]
 
     public init(initialTag: String = "全部") { self.initialTag = initialTag }
 
-    public var body: some View {
-        Group {
-            if isLoading && rows.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if rows.isEmpty {
-                ContentUnavailableView("暂无酷图内容", systemImage: "photo.on.rectangle.angled")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                            HomeRowRenderer(row: row)
-                                .onAppear {
-                                    if idx >= rows.count - 4 { Task { await loadMore() } }
-                                }
-                        }
-                    }
-                    .padding(.vertical, 12)
-                }
-                .refreshable {
-                    await reload()
-                }
-            }
-        }
-        .scrollClipDisabled()
-        .ignoresSafeArea(.container, edges: .bottom)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .safeAreaInset(edge: .top, spacing: 0) {
-            GlassEffectContainer(spacing: 4) {
-                HStack(spacing: 4) {
-                    ForEach([
-                        ("recommend", "推荐"),
-                        ("new", "最新"),
-                        ("hot", "最热")
-                    ], id: \.0) { value, label in
-                        let isSelected = sortType == value
-                        Button {
-                            withAnimation(.snappy(duration: 0.22)) {
-                                sortType = value
-                            }
-                        } label: {
-                            Text(label)
-                                .font(.caption.weight(isSelected ? .semibold : .medium))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 7)
-                                .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
-                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(5)
-                .glassEffect(.regular.interactive(), in: .capsule)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .onChange(of: sortType) { _, _ in
-                Task { await reload() }
-            }
-        }
-        .navigationTitle("酷图")
-        .navigationBarTitleDisplayMode(.inline)
-        .task { await reload() }
+    private var selectedChoice: ChoiceChip {
+        sortOptions.first { $0.id == sortType } ?? sortOptions[0]
     }
 
-    private func reload() async {
-        isLoading = true
-        defer { isLoading = false }
-        page = 1
-        if initialTag == "全部" && sortType == "recommend" {
+    public var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 0) {
+                    ForEach(sortOptions) { option in
+                        coolPicPage(sort: option.id)
+                            .containerRelativeFrame(.horizontal)
+                            .frame(maxHeight: .infinity)
+                            .id(option.id)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $scrolledSort)
+            .scrollClipDisabled()
+            .ignoresSafeArea(.container, edges: .bottom)
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .safeAreaInset(edge: .top, spacing: 0) {
+                FloatingTabStrip(
+                    items: sortOptions,
+                    selection: selectedChoice,
+                    titleProvider: \.title,
+                    onSelect: { option in
+                        sortType = option.id
+                    },
+                    onReselect: { option in
+                        withAnimation(.snappy) {
+                            proxy.scrollTo("coolpic-top-\(option.id)", anchor: .top)
+                        }
+                    }
+                )
+            }
+            .navigationTitle("酷图")
+            .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: scrolledSort) { _, newValue in
+                if let newValue, newValue != sortType {
+                    sortType = newValue
+                }
+            }
+            .onChange(of: sortType) { _, newValue in
+                if scrolledSort != newValue {
+                    withAnimation(.snappy(duration: 0.24)) {
+                        scrolledSort = newValue
+                    }
+                }
+                Task { await reload(sort: newValue, force: false) }
+            }
+            .task(id: initialTag) {
+                await reload(sort: sortType, force: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func coolPicPage(sort: String) -> some View {
+        let rows = rowsBySort[sort] ?? []
+        let hasLoaded = loadedSorts.contains(sort)
+        let isLoadingSort = loadingSorts.contains(sort)
+
+        if (!hasLoaded || isLoadingSort) && rows.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if rows.isEmpty {
+            ContentUnavailableView("暂无酷图内容", systemImage: "photo.on.rectangle.angled")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                Color.clear.frame(height: 0).id("coolpic-top-\(sort)")
+                LazyVStack(spacing: 12) {
+                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                        HomeRowRenderer(row: row)
+                            .onAppear {
+                                if idx >= rows.count - 4 { Task { await loadMore(sort: sort) } }
+                            }
+                    }
+                }
+                .padding(.top, 8)
+                .padding(.bottom, 88)
+            }
+            .refreshable {
+                await reload(sort: sort, force: true)
+            }
+        }
+    }
+
+    private func reload(sort: String, force: Bool) async {
+        if !force && loadedSorts.contains(sort) { return }
+        loadingSorts.insert(sort)
+        defer {
+            loadingSorts.remove(sort)
+            loadedSorts.insert(sort)
+        }
+        pageBySort[sort] = 1
+        if initialTag == "全部" && sort == "recommend" {
             let pageRows = (try? await API.pageFeed(pageName: "V11_FIND_COOLPIC", page: 1)) ?? []
             if !pageRows.isEmpty {
-                rows = pageRows
-                hasMore = true
+                rowsBySort[sort] = pageRows
+                hasMoreBySort[sort] = true
                 return
             }
         }
-        rows = (try? await API.coolPic(tag: initialTag, type: sortType, page: 1)) ?? []
-        hasMore = !rows.isEmpty
+        let fetched = (try? await API.coolPic(tag: initialTag, type: sort, page: 1)) ?? []
+        rowsBySort[sort] = fetched
+        hasMoreBySort[sort] = !fetched.isEmpty
     }
 
-    private func loadMore() async {
-        guard hasMore, !isLoading else { return }
-        let next = page + 1
+    private func loadMore(sort: String) async {
+        guard hasMoreBySort[sort] != false, !loadingSorts.contains(sort) else { return }
+        let next = (pageBySort[sort] ?? 1) + 1
         let fetched: [HomeFeedRow]?
-        if initialTag == "全部" && sortType == "recommend" {
+        if initialTag == "全部" && sort == "recommend" {
             fetched = try? await API.pageFeed(pageName: "V11_FIND_COOLPIC", page: next)
         } else {
-            fetched = try? await API.coolPic(tag: initialTag, type: sortType, page: next)
+            fetched = try? await API.coolPic(tag: initialTag, type: sort, page: next)
         }
         if let fetched {
-            var seen = Set(rows.map(\.id))
+            let current = rowsBySort[sort] ?? []
+            var seen = Set(current.map(\.id))
             let unique = fetched.filter { seen.insert($0.id).inserted }
-            rows.append(contentsOf: unique)
-            hasMore = !unique.isEmpty
-            if hasMore { page = next }
+            rowsBySort[sort] = current + unique
+            hasMoreBySort[sort] = !unique.isEmpty
+            if !unique.isEmpty { pageBySort[sort] = next }
         }
     }
 }

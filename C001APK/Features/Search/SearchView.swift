@@ -4,6 +4,7 @@ import SwiftUI
 public struct SearchView: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel = SearchViewModel()
+    @State private var scrolledCategory: SearchCategory? = .all
 
     public init() {}
 
@@ -23,7 +24,7 @@ public struct SearchView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $state.searchQuery, prompt: "搜索动态、话题、用户、应用")
         .onSubmit(of: .search) {
-            Task { await viewModel.submitSearch(appState.searchQuery, appState: appState) }
+            Task { await viewModel.submitSearch(appState.searchQuery, category: viewModel.category, appState: appState, force: true) }
         }
         .onChange(of: appState.searchQuery) { _, newValue in
             if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -43,7 +44,7 @@ public struct SearchView: View {
                     ForEach(appState.settings.searchHistory, id: \.self) { term in
                         Button {
                             appState.searchQuery = term
-                            Task { await viewModel.submitSearch(term, appState: appState) }
+                            Task { await viewModel.submitSearch(term, category: viewModel.category, appState: appState, force: true) }
                         } label: {
                             Label(term, systemImage: "clock")
                         }
@@ -70,7 +71,7 @@ public struct SearchView: View {
                     ForEach(viewModel.hotWords, id: \.self) { word in
                         Button {
                             appState.searchQuery = word
-                            Task { await viewModel.submitSearch(word, appState: appState) }
+                            Task { await viewModel.submitSearch(word, category: viewModel.category, appState: appState, force: true) }
                         } label: {
                             Label(word, systemImage: "flame")
                         }
@@ -85,7 +86,7 @@ public struct SearchView: View {
         List(viewModel.suggestions, id: \.self) { word in
             Button {
                 appState.searchQuery = word
-                Task { await viewModel.submitSearch(word, appState: appState) }
+                Task { await viewModel.submitSearch(word, category: viewModel.category, appState: appState, force: true) }
             } label: {
                 Label(word, systemImage: "magnifyingglass")
             }
@@ -94,93 +95,113 @@ public struct SearchView: View {
     }
 
     private var resultsView: some View {
-        Group {
-            if viewModel.isSearching && viewModel.rows.isEmpty && viewModel.dyhResults.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if viewModel.rows.isEmpty && viewModel.dyhResults.isEmpty {
-                ContentUnavailableView.search(text: viewModel.submittedKeyword)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        if viewModel.category == .dyh {
-                            ForEach(Array(viewModel.dyhResults.enumerated()), id: \.element.id) { idx, dyh in
-                                Button {
-                                    appState.push(.dyh(id: dyh.id))
-                                } label: {
-                                    HStack(spacing: 12) {
-                                        RemoteImageView(url: dyh.logo, maxPixelSize: 132)
-                                            .frame(width: 44, height: 44)
-                                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                        VStack(alignment: .leading, spacing: 3) {
-                                            Text(dyh.title).font(.body.weight(.medium))
-                                            Text(dyh.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                                        }
-                                        Spacer()
-                                        Image(systemName: "chevron.right")
-                                            .font(.caption)
-                                            .foregroundStyle(.tertiary)
-                                    }
-                                    .padding(14)
-                                    .c001CardStyle(cornerRadius: 16)
-                                    .padding(.horizontal, 12)
-                                }
-                                .buttonStyle(.plain)
-                                .onAppear {
-                                    if idx >= viewModel.dyhResults.count - 4 {
-                                        Task { await viewModel.loadMore(appState: appState) }
-                                    }
-                                }
-                            }
-                        } else {
-                            ForEach(Array(viewModel.rows.enumerated()), id: \.element.id) { idx, row in
-                                HomeRowRenderer(row: row)
-                                    .onAppear {
-                                        if idx >= viewModel.rows.count - 4 {
-                                            Task { await viewModel.loadMore(appState: appState) }
-                                        }
-                                    }
-                            }
-                        }
-                        if viewModel.isLoadingMore {
-                            ProgressView().padding(.vertical, 16)
-                        }
-                    }
-                    .padding(.vertical, 8)
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 0) {
+                ForEach(SearchCategory.allCases) { cat in
+                    categoryResultPage(for: cat)
+                        .containerRelativeFrame(.horizontal)
+                        .frame(maxHeight: .infinity)
+                        .id(cat)
                 }
             }
+            .scrollTargetLayout()
         }
+        .scrollTargetBehavior(.paging)
+        .scrollPosition(id: $scrolledCategory)
         .scrollClipDisabled()
         .ignoresSafeArea(.container, edges: .bottom)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 0) {
-            GlassEffectContainer(spacing: 4) {
-                HStack(spacing: 4) {
-                    ForEach(SearchCategory.allCases) { cat in
-                        let isSelected = viewModel.category == cat
-                        Button {
-                            withAnimation(.snappy(duration: 0.22)) {
-                                viewModel.category = cat
+            FloatingTabStrip(
+                items: SearchCategory.allCases,
+                selection: viewModel.category,
+                titleProvider: { $0.label },
+                onSelect: { cat in
+                    viewModel.category = cat
+                }
+            )
+        }
+        .onChange(of: scrolledCategory) { _, newCat in
+            if let newCat, newCat != viewModel.category {
+                viewModel.category = newCat
+            }
+        }
+        .onChange(of: viewModel.category) { _, newCat in
+            if scrolledCategory != newCat {
+                withAnimation(.snappy(duration: 0.24)) {
+                    scrolledCategory = newCat
+                }
+            }
+            if !viewModel.submittedKeyword.isEmpty {
+                Task { await viewModel.submitSearch(viewModel.submittedKeyword, category: newCat, appState: appState) }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func categoryResultPage(for cat: SearchCategory) -> some View {
+        let isSearching = viewModel.searchingCategories.contains(cat)
+        let hasLoaded = viewModel.searchedKeywordByCategory[cat] == viewModel.submittedKeyword && !viewModel.submittedKeyword.isEmpty
+        let rows = viewModel.rowsByCategory[cat] ?? []
+        let isEmpty = cat == .dyh ? viewModel.dyhResults.isEmpty : rows.isEmpty
+
+        if (!hasLoaded || isSearching) && isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if isEmpty {
+            ContentUnavailableView.search(text: viewModel.submittedKeyword)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    if cat == .dyh {
+                        ForEach(Array(viewModel.dyhResults.enumerated()), id: \.element.id) { idx, dyh in
+                            Button {
+                                appState.push(.dyh(id: dyh.id))
+                            } label: {
+                                HStack(spacing: 12) {
+                                    RemoteImageView(url: dyh.logo, maxPixelSize: 132)
+                                        .frame(width: 44, height: 44)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    VStack(alignment: .leading, spacing: 3) {
+                                        Text(dyh.title).font(.body.weight(.medium))
+                                        Text(dyh.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption)
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(14)
+                                .c001CardStyle(cornerRadius: 16)
+                                .padding(.horizontal, 12)
                             }
-                        } label: {
-                            Text(cat.label)
-                                .font(.caption.weight(isSelected ? .semibold : .medium))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 7)
-                                .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
-                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                            .buttonStyle(.plain)
+                            .onAppear {
+                                if idx >= viewModel.dyhResults.count - 4 {
+                                    Task { await viewModel.loadMore(category: .dyh, appState: appState) }
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
+                    } else {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= rows.count - 4 {
+                                        Task { await viewModel.loadMore(category: cat, appState: appState) }
+                                    }
+                                }
+                        }
+                    }
+                    if viewModel.loadingMoreCategories.contains(cat) {
+                        ProgressView().padding(.vertical, 16)
                     }
                 }
-                .padding(5)
-                .glassEffect(.regular.interactive(), in: .capsule)
+                .padding(.top, 8)
+                .padding(.bottom, 88)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-            .onChange(of: viewModel.category) { _, _ in
-                Task { await viewModel.submitSearch(appState.searchQuery, appState: appState) }
+            .refreshable {
+                await viewModel.submitSearch(viewModel.submittedKeyword, category: cat, appState: appState, force: true)
             }
         }
     }

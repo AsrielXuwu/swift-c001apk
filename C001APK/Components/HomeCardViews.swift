@@ -88,6 +88,9 @@ public struct HomeRowRenderer: View {
 
         case let .collection(item):
             CollectionRowView(item: item)
+
+        case let .event(item):
+            EventRowView(event: item)
         }
     }
 
@@ -106,38 +109,137 @@ public struct HomeRowRenderer: View {
 struct BannerCarouselView: View {
     let banners: [HomeBanner]
     @Environment(AppState.self) private var appState
-    @State private var activeIndex = 0
-    @State private var dragOffset: CGFloat = 0
+    @State private var deckPhase: CGFloat = 0
+    @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
     @State private var lastDragEndedAt: Date = .distantPast
+
+    private var currentNearestIndex: Int {
+        let count = banners.count
+        guard count > 0 else { return 0 }
+        let rounded = Int((deckPhase + dragProgress).rounded())
+        return ((rounded % count) + count) % count
+    }
 
     var body: some View {
         if banners.isEmpty {
             EmptyView()
         } else {
             let count = banners.count
-            let safeActive = ((activeIndex % count) + count) % count
             let visibleLayers = min(count, 3)
+            let activeIdx = currentNearestIndex
 
             ZStack {
-                ForEach((0..<visibleLayers).reversed(), id: \.self) { depth in
-                    let idx = (safeActive + depth) % count
+                OrbitalDeckStage(
+                    phase: deckPhase + dragProgress,
+                    count: count,
+                    cardHeight: 184
+                ) { idx, isFront in
                     let banner = banners[idx]
-                    let isFront = (depth == 0)
+                    Color.clear
+                        .frame(height: 184)
+                        .overlay {
+                            RemoteImageView(url: banner.image, maxPixelSize: 1080)
+                        }
+                        .clipped()
+                        .overlay(alignment: .bottomLeading) {
+                            if !banner.title.isEmpty || !banner.subtitle.isEmpty {
+                                ZStack(alignment: .bottomLeading) {
+                                    LinearGradient(
+                                        colors: [.clear, .black.opacity(0.72)],
+                                        startPoint: .center,
+                                        endPoint: .bottom
+                                    )
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        if !banner.title.isEmpty {
+                                            Text(banner.title)
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(.white)
+                                                .lineLimit(2)
+                                        }
+                                        if !banner.subtitle.isEmpty {
+                                            Text(banner.subtitle)
+                                                .font(.caption)
+                                                .foregroundStyle(.white.opacity(0.85))
+                                                .lineLimit(1)
+                                        }
+                                    }
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 12)
+                                    .padding(.trailing, count > 1 ? 66 : 12)
+                                }
+                                .allowsHitTesting(false)
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
+                        }
+                        .onTapGesture {
+                            guard isFront,
+                                  !isHorizontalDragging,
+                                  abs(dragProgress) < 0.04,
+                                  Date().timeIntervalSince(lastDragEndedAt) > 0.30,
+                                  !banner.url.isEmpty else { return }
+                            appState.openRawLink(banner.url)
+                        }
+                }
+                .padding(.leading, visibleLayers > 2 ? 24 : 12)
+                .padding(.trailing, visibleLayers > 1 ? 24 : 12)
+                .padding(.bottom, visibleLayers > 1 ? 15 : 0)
 
-                    bannerCard(banner: banner, index: idx, count: count, isFront: isFront)
-                        .scaleEffect(scaleFor(depth: depth))
-                        .rotationEffect(.degrees(rotationFor(depth: depth, isFront: isFront)))
-                        .offset(x: xOffsetFor(depth: depth, isFront: isFront), y: yOffsetFor(depth: depth))
-                        .opacity(depth == 2 ? 0.90 : (depth == 1 ? 0.96 : 1.0))
-                        .zIndex(Double(visibleLayers - depth))
-                        .allowsHitTesting(isFront)
+                if count > 1 {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Text("\(activeIdx + 1)/\(count)")
+                                .font(.caption2.weight(.semibold))
+                                .monospacedDigit()
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .glassEffect(.regular, in: .capsule)
+                                .foregroundStyle(.primary)
+                        }
+                        .allowsHitTesting(false)
+
+                        Spacer()
+
+                        HStack {
+                            Spacer()
+                            HStack(spacing: 6) {
+                                Button {
+                                    stepDeck(by: -1)
+                                } label: {
+                                    Image(systemName: "chevron.left")
+                                        .frame(width: 22, height: 22)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
+                                Button {
+                                    stepDeck(by: 1)
+                                } label: {
+                                    Image(systemName: "chevron.right")
+                                        .frame(width: 22, height: 22)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                        }
+                    }
+                    .padding(.top, 10)
+                    .padding(.bottom, (visibleLayers > 1 ? 15 : 0) + 10)
+                    .padding(.leading, visibleLayers > 2 ? 34 : 22)
+                    .padding(.trailing, (visibleLayers > 1 ? 24 : 12) + 10)
                 }
             }
-            .padding(.leading, visibleLayers > 2 ? 26 : 14)
-            .padding(.trailing, visibleLayers > 1 ? 26 : 14)
-            .padding(.bottom, visibleLayers > 1 ? 16 : 0)
-            .frame(height: visibleLayers > 1 ? 204 : 184)
+            .frame(height: visibleLayers > 1 ? 202 : 184)
             .contentShape(Rectangle())
             .simultaneousGesture(
                 DragGesture(minimumDistance: 12)
@@ -147,7 +249,7 @@ struct BannerCarouselView: View {
                         let dy = value.translation.height
                         if isHorizontalDragging || abs(dx) > max(12, abs(dy) * 1.15) {
                             isHorizontalDragging = true
-                            dragOffset = dx
+                            dragProgress = max(-1.15, min(1.15, -dx / 210.0))
                         }
                     }
                     .onEnded { value in
@@ -160,16 +262,25 @@ struct BannerCarouselView: View {
                         }
                         isHorizontalDragging = false
                         guard wasDragging else {
-                            withAnimation(.snappy(duration: 0.22)) { dragOffset = 0 }
+                            withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
+                                dragProgress = 0
+                            }
                             return
                         }
-                        withAnimation(.snappy(duration: 0.28)) {
-                            if dx < -42 || predicted < -90 {
-                                activeIndex = (safeActive + 1) % count
-                            } else if dx > 42 || predicted > 90 {
-                                activeIndex = (safeActive - 1 + count) % count
-                            }
-                            dragOffset = 0
+                        let deltaStep: CGFloat
+                        if dx < -38 || predicted < -85 {
+                            deltaStep = 1
+                        } else if dx > 38 || predicted > 85 {
+                            deltaStep = -1
+                        } else {
+                            deltaStep = 0
+                        }
+                        let combined = deckPhase + dragProgress
+                        let base = deckPhase.rounded()
+                        deckPhase = combined
+                        dragProgress = 0
+                        withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+                            deckPhase = base + deltaStep
                         }
                     }
             )
@@ -177,130 +288,10 @@ struct BannerCarouselView: View {
         }
     }
 
-    private func bannerCard(banner: HomeBanner, index: Int, count: Int, isFront: Bool) -> some View {
-        ZStack(alignment: .bottomTrailing) {
-            Color.clear
-                .frame(height: 184)
-                .overlay {
-                    RemoteImageView(url: banner.image, maxPixelSize: 1080)
-                }
-                .clipped()
-                .overlay(alignment: .bottomLeading) {
-                    if !banner.title.isEmpty || !banner.subtitle.isEmpty {
-                        ZStack(alignment: .bottomLeading) {
-                            LinearGradient(
-                                colors: [.clear, .black.opacity(0.70)],
-                                startPoint: .center,
-                                endPoint: .bottom
-                            )
-                            VStack(alignment: .leading, spacing: 2) {
-                                if !banner.title.isEmpty {
-                                    Text(banner.title)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                        .lineLimit(2)
-                                }
-                                if !banner.subtitle.isEmpty {
-                                    Text(banner.subtitle)
-                                        .font(.caption)
-                                        .foregroundStyle(.white.opacity(0.85))
-                                        .lineLimit(1)
-                                }
-                            }
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
-                            .padding(.trailing, count > 1 ? 66 : 12)
-                        }
-                        .allowsHitTesting(false)
-                    }
-                }
-                .overlay(alignment: .topTrailing) {
-                    if isFront && count > 1 {
-                        Text("\(index + 1)/\(count)")
-                            .font(.caption2.weight(.semibold))
-                            .monospacedDigit()
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .glassEffect(.regular, in: .capsule)
-                            .foregroundStyle(.primary)
-                            .padding(10)
-                            .allowsHitTesting(false)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .onTapGesture {
-                    guard isFront,
-                          !isHorizontalDragging,
-                          abs(dragOffset) < 4,
-                          Date().timeIntervalSince(lastDragEndedAt) > 0.30,
-                          !banner.url.isEmpty else { return }
-                    appState.openRawLink(banner.url)
-                }
-
-            if isFront && count > 1 {
-                HStack(spacing: 6) {
-                    Button {
-                        withAnimation(.snappy(duration: 0.26)) {
-                            activeIndex = (index - 1 + count) % count
-                        }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .frame(width: 22, height: 22)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        withAnimation(.snappy(duration: 0.26)) {
-                            activeIndex = (index + 1) % count
-                        }
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .frame(width: 22, height: 22)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .glassEffect(.regular.interactive(), in: .capsule)
-                .padding(10)
-            }
+    private func stepDeck(by delta: CGFloat) {
+        withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+            deckPhase = deckPhase.rounded() + delta
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color(.systemBackground).opacity(isFront ? 0.92 : 0.80), lineWidth: 1.4)
-        }
-        .shadow(color: .black.opacity(isFront ? 0.14 : 0.08), radius: isFront ? 9 : 5, x: 0, y: 3)
-    }
-
-    private func scaleFor(depth: Int) -> CGFloat {
-        let base: CGFloat = depth == 0 ? 1.0 : (depth == 1 ? 0.95 : 0.91)
-        if depth > 0 {
-            let progress = min(1, abs(dragOffset) / 140)
-            return base + progress * 0.03
-        }
-        return base
-    }
-
-    private func rotationFor(depth: Int, isFront: Bool) -> Double {
-        if isFront {
-            return Double(dragOffset) / 22.0
-        }
-        return depth == 1 ? 4.0 : -4.0
-    }
-
-    private func xOffsetFor(depth: Int, isFront: Bool) -> CGFloat {
-        if isFront {
-            return dragOffset
-        }
-        return depth == 1 ? 14 : -12
-    }
-
-    private func yOffsetFor(depth: Int) -> CGFloat {
-        depth == 0 ? 0 : (depth == 1 ? 8 : 15)
     }
 }
 
@@ -762,6 +753,83 @@ public struct CollectionRowView: View {
             .padding(.horizontal, 12)
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .applyZoomSource(id: "col-\(transitionSeed)", in: zoomNamespace)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+public struct EventRowView: View {
+    public let event: EventItem
+    @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
+
+    public init(event: EventItem) { self.event = event }
+
+    public var body: some View {
+        Button {
+            if !event.id.isEmpty, event.url.contains("/event/") || !event.url.hasPrefix("http") {
+                appState.push(.event(id: event.id, initial: event, transitionID: "event-\(transitionSeed)"))
+            } else if !event.url.isEmpty {
+                appState.openRawLink(event.url, transitionID: "event-\(transitionSeed)")
+            } else if !event.id.isEmpty {
+                appState.push(.event(id: event.id, initial: event, transitionID: "event-\(transitionSeed)"))
+            }
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                if !event.cover.isEmpty {
+                    Color.clear
+                        .frame(height: 168)
+                        .overlay {
+                            RemoteImageView(url: event.cover, maxPixelSize: 960)
+                        }
+                        .clipped()
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        if !event.title.isEmpty {
+                            Text(event.title)
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                                .lineLimit(2)
+                        }
+                        Spacer()
+                        if !event.statusText.isEmpty {
+                            Text(event.statusText)
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor.opacity(0.14), in: Capsule())
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+
+                    if !event.description.isEmpty {
+                        Text(FeedHTMLParser.plainText(event.description))
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    let meta = [
+                        event.startTimeText,
+                        event.joinNum > 0 ? "\(Formatting.count(event.joinNum)) 人参与" : ""
+                    ].filter { !$0.isEmpty }.joined(separator: " · ")
+                    if !meta.isEmpty {
+                        Text(meta)
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .padding(14)
+            .c001CardStyle(cornerRadius: 20)
+            .padding(.horizontal, 12)
+            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .applyZoomSource(id: "event-\(transitionSeed)", in: zoomNamespace)
         }
         .buttonStyle(.plain)
     }

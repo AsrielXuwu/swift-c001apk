@@ -304,6 +304,8 @@ public enum API: Sendable {
                 rows.append(.browse(BrowseItem(json: item)))
             case "collection":
                 rows.append(.collection(CollectionItem(json: item)))
+            case "event", "activity":
+                rows.append(.event(EventItem(json: item)))
             case "product":
                 rows.append(.product(ProductItem(json: item)))
             case "topic":
@@ -353,7 +355,18 @@ public enum API: Sendable {
             return titled([.goods("goods-\(index)", entities.map { PearGoods(json: $0) })])
         }
 
+        if template == "eventCard" || template == "activityCard" {
+            let events = entities.map { EventItem(json: $0) }.filter { !$0.title.isEmpty || !$0.cover.isEmpty }
+            if !events.isEmpty { return titled(events.map { HomeFeedRow.event($0) }) }
+        }
+
         if template == "listCard" || template == "productTimelineListCard" {
+            let eventEntities = entities.filter {
+                $0.entityType.string == "event" || $0.url.string.contains("/event/")
+            }
+            if !eventEntities.isEmpty && eventEntities.count == entities.count {
+                return titled(eventEntities.map { HomeFeedRow.event(EventItem(json: $0)) })
+            }
             let products = entities
                 .filter { !$0.logo.string.isEmpty || $0.price_min.exists }
                 .map { ProductItem(json: $0) }
@@ -374,6 +387,11 @@ public enum API: Sendable {
                 )
             }
             if !banners.isEmpty { return [.banners("banner-\(index)", banners)] }
+        }
+
+        if !entities.isEmpty, entities.allSatisfy({ $0.entityType.string == "event" || $0.url.string.contains("/event/") }) {
+            let events = entities.map { EventItem(json: $0) }.filter { !$0.title.isEmpty || !$0.cover.isEmpty }
+            if !events.isEmpty { return titled(events.map { HomeFeedRow.event($0) }) }
         }
 
         if iconCardTemplates.contains(template) {
@@ -419,6 +437,12 @@ public enum API: Sendable {
             return banners.isEmpty ? [] : [.banners("banner-\(index)", banners)]
 
         case "imageTextScrollCard":
+            let allEvents = !entities.isEmpty && entities.allSatisfy {
+                $0.entityType.string == "event" || $0.url.string.contains("/event/")
+            }
+            if allEvents {
+                return titled(entities.map { HomeFeedRow.event(EventItem(json: $0)) })
+            }
             let sections = entities.enumerated().map { offset, entity in
                 HomeSection(
                     id: "sec-\(index)-\(offset)-\(entity.entityId.identifier)",
@@ -572,8 +596,8 @@ public enum API: Sendable {
     }
 
     public static func collectFeed(id: String, collected: Bool) async throws {
-        let path = collected ? "/v6/feed/collect" : "/v6/feed/unCollect"
-        _ = try await client.post(path, ["id": id])
+        let path = collected ? "/v6/feed/favorite" : "/v6/feed/unFavorite"
+        _ = try await client.post(path, ["id": id], query: ["id": id])
     }
 
     public static func postReply(targetID: String, message: String, isReply: Bool = false, pictures: [String] = []) async throws -> String {
@@ -848,6 +872,24 @@ public enum API: Sendable {
     public static func eventDetail(id: String) async throws -> EventItem {
         let json = try await client.get("/v6/event/detail", ["id": id])
         return EventItem(json: json.data)
+    }
+
+    public static func eventFeeds(id: String, page: Int) async throws -> [HomeFeedRow] {
+        let candidates = [
+            "#/feed/eventFeedList?id=\(id)",
+            "#/event/feedList?id=\(id)"
+        ]
+        for candidate in candidates {
+            let parsed = parsePageLink(candidate)
+            if let items = try? await client.dataList(url: parsed.url, page: page, extra: parsed.extra) {
+                let mapped = rows(from: items)
+                if !mapped.isEmpty { return mapped }
+            }
+        }
+        if let json = try? await client.get("/v6/event/feedList", ["id": id, "page": String(page)]) {
+            return rows(from: json.data.array)
+        }
+        return []
     }
 
     public static func questionAnswers(id: String, page: Int, sort: String = "default") async throws -> [HomeFeedRow] {

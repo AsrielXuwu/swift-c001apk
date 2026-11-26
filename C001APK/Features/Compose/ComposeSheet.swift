@@ -2,28 +2,86 @@ import CoolapkKit
 import PhotosUI
 import SwiftUI
 
+public struct ComposeFloatingOverlayHost: View {
+    @Binding public var composeMode: ComposeMode?
+
+    public init(composeMode: Binding<ComposeMode?>) {
+        self._composeMode = composeMode
+    }
+
+    public var body: some View {
+        ZStack(alignment: .bottom) {
+            if let mode = composeMode {
+                Color.black.opacity(0.26)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.snappy(duration: 0.24)) {
+                            composeMode = nil
+                        }
+                    }
+                    .transition(.opacity)
+
+                ComposeSheet(mode: mode) {
+                    withAnimation(.snappy(duration: 0.24)) {
+                        composeMode = nil
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.snappy(duration: 0.26), value: composeMode != nil)
+    }
+}
+
 public struct ComposeSheet: View {
     public let mode: ComposeMode
+    public var onDismiss: (() -> Void)?
 
     @Environment(AppState.self) private var appState
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismiss) private var envDismiss
     @State private var viewModel = ComposeViewModel()
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showEmojiPanel = false
-    @State private var showMentionUserSheet = false
-    @State private var showMentionTopicSheet = false
+    @State private var activePanel: ActivePanel = .compose
+    @State private var searchKeyword = ""
+    @State private var searchedUsers: [UserBrief] = []
+    @State private var searchedTopics: [TopicItem] = []
+    @State private var isSearchingPicker = false
     @FocusState private var isInputFocused: Bool
+    @FocusState private var isPickerSearchFocused: Bool
 
-    public init(mode: ComposeMode) {
+    private enum ActivePanel {
+        case compose
+        case mentionUser
+        case mentionTopic
+    }
+
+    public init(mode: ComposeMode, onDismiss: (() -> Void)? = nil) {
         self.mode = mode
+        self.onDismiss = onDismiss
+    }
+
+    private func closeSheet() {
+        isInputFocused = false
+        isPickerSearchFocused = false
+        if let onDismiss {
+            onDismiss()
+        } else {
+            envDismiss()
+        }
     }
 
     private var titleText: String {
-        switch mode {
-        case .newFeed: return "发布动态"
-        case .forward: return "转发动态"
-        case let .replyToFeed(_, author): return "评论 @\(author)"
-        case let .replyToComment(_, name): return "回复 @\(name)"
+        switch activePanel {
+        case .mentionUser: return "提及用户"
+        case .mentionTopic: return "插入话题"
+        case .compose:
+            switch mode {
+            case .newFeed: return "发布动态"
+            case .forward: return "转发动态"
+            case let .replyToFeed(_, author): return "评论 @\(author)"
+            case let .replyToComment(_, name): return "回复 @\(name)"
+            }
         }
     }
 
@@ -47,110 +105,31 @@ public struct ComposeSheet: View {
     }
 
     public var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
+        VStack(spacing: 12) {
+            cardHeader
 
-            VStack(spacing: 12) {
-                HStack {
-                    Button {
-                        dismiss()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(width: 34, height: 34)
-                            .glassEffect(.regular.interactive(), in: .circle)
-                            .foregroundStyle(.primary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(viewModel.isSubmitting)
-
-                    Spacer()
-
-                    Text(titleText)
-                        .font(.subheadline.weight(.semibold))
-                        .lineLimit(1)
-
-                    Spacer()
-
-                    if viewModel.isSubmitting {
-                        ProgressView()
-                            .frame(width: 58, height: 34)
-                    } else {
-                        Button {
-                            Task {
-                                if await viewModel.submit(mode: mode, appState: appState) {
-                                    dismiss()
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Image(systemName: "arrow.up")
-                                    .font(.caption.weight(.bold))
-                                Text("发送")
-                                    .font(.subheadline.weight(.semibold))
-                            }
-                            .padding(.horizontal, 12)
-                            .frame(height: 34)
-                            .background(Color.accentColor.opacity(0.18), in: Capsule())
-                            .glassEffect(.regular.interactive(), in: .capsule)
-                            .foregroundStyle(Color.accentColor)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-
-                TextField(placeholderText, text: $viewModel.text, axis: .vertical)
-                    .font(.body)
-                    .lineLimit(isQuickReply ? 3...7 : 5...10)
-                    .focused($isInputFocused)
-                    .padding(12)
-                    .background(
-                        Color(.secondarySystemGroupedBackground).opacity(0.72),
-                        in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    )
-
-                if !viewModel.pickedImages.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(viewModel.pickedImages) { item in
-                                ZStack(alignment: .topTrailing) {
-                                    Image(uiImage: item.image)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 68, height: 68)
-                                        .clipped()
-                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-
-                                    Button {
-                                        viewModel.removeImage(id: item.id)
-                                    } label: {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundStyle(.white, .black.opacity(0.65))
-                                    }
-                                    .padding(3)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if showEmojiPanel {
-                    EmojiPickerView { name in
-                        viewModel.text += name
-                    }
-                    .frame(maxHeight: 180)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-
-                toolbarStrip
+            switch activePanel {
+            case .compose:
+                composeBody
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
+            case .mentionUser:
+                mentionUserPanel
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+            case .mentionTopic:
+                mentionTopicPanel
+                    .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
-            .padding(14)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .padding(.horizontal, 12)
-            .padding(.bottom, 8)
         }
+        .padding(14)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 8)
+        .animation(.snappy(duration: 0.25), value: activePanel)
         .task {
-            isInputFocused = true
+            try? await Task.sleep(nanoseconds: 60_000_000)
+            if activePanel == .compose {
+                isInputFocused = true
+            }
         }
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
@@ -163,15 +142,284 @@ public struct ComposeSheet: View {
                 photoItems.removeAll()
             }
         }
-        .sheet(isPresented: $showMentionUserSheet) {
-            MentionUserPickerSheet { username in
-                viewModel.text += " @\(username) "
+    }
+
+    private var cardHeader: some View {
+        HStack {
+            if activePanel == .compose {
+                Button {
+                    closeSheet()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 34, height: 34)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
+                .disabled(viewModel.isSubmitting)
+            } else {
+                Button {
+                    switchToCompose()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.subheadline.weight(.semibold))
+                        .frame(width: 34, height: 34)
+                        .glassEffect(.regular.interactive(), in: .circle)
+                        .foregroundStyle(.primary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer()
+
+            Text(titleText)
+                .font(.subheadline.weight(.semibold))
+                .lineLimit(1)
+
+            Spacer()
+
+            if activePanel == .compose {
+                if viewModel.isSubmitting {
+                    ProgressView()
+                        .frame(width: 58, height: 34)
+                } else {
+                    Button {
+                        Task {
+                            if await viewModel.submit(mode: mode, appState: appState) {
+                                closeSheet()
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up")
+                                .font(.caption.weight(.bold))
+                            Text("发送")
+                                .font(.subheadline.weight(.semibold))
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(height: 34)
+                        .background(Color.accentColor.opacity(0.18), in: Capsule())
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .foregroundStyle(Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+                }
+            } else {
+                Color.clear.frame(width: 34, height: 34)
             }
         }
-        .sheet(isPresented: $showMentionTopicSheet) {
-            MentionTopicPickerSheet { topic in
-                viewModel.text += " #\(topic)# "
+    }
+
+    @ViewBuilder
+    private var composeBody: some View {
+        TextField(placeholderText, text: $viewModel.text, axis: .vertical)
+            .font(.body)
+            .lineLimit(isQuickReply ? 3...7 : 5...10)
+            .focused($isInputFocused)
+            .padding(12)
+            .background(
+                Color(.secondarySystemGroupedBackground).opacity(0.68),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+
+        if !viewModel.pickedImages.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(viewModel.pickedImages) { item in
+                        ZStack(alignment: .topTrailing) {
+                            Image(uiImage: item.image)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 68, height: 68)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                            Button {
+                                viewModel.removeImage(id: item.id)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.white, .black.opacity(0.65))
+                            }
+                            .padding(3)
+                        }
+                    }
+                }
             }
+        }
+
+        if showEmojiPanel {
+            EmojiPickerView { name in
+                viewModel.text += name
+            }
+            .frame(maxHeight: 175)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+
+        toolbarStrip
+    }
+
+    private var mentionUserPanel: some View {
+        VStack(spacing: 10) {
+            pickerSearchBar(prompt: "搜索用户名") { value in
+                isSearchingPicker = true
+                let results = (try? await API.searchUsers(keyword: value)) ?? []
+                searchedUsers = results
+                isSearchingPicker = false
+            }
+
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    if isSearchingPicker {
+                        ProgressView()
+                            .padding(.vertical, 24)
+                    } else if searchedUsers.isEmpty {
+                        Text(searchKeyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "输入用户名搜索" : "未找到匹配用户")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 24)
+                    } else {
+                        ForEach(searchedUsers) { user in
+                            Button {
+                                viewModel.text += " @\(user.username) "
+                                switchToCompose()
+                            } label: {
+                                HStack(spacing: 10) {
+                                    AvatarView(url: user.avatar, size: 34)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(user.username)
+                                            .font(.subheadline.weight(.medium))
+                                            .foregroundStyle(.primary)
+                                        if user.level > 0 {
+                                            Text("Lv.\(user.level)")
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .c001CardStyle(cornerRadius: 14)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .frame(height: 220)
+        }
+    }
+
+    private var mentionTopicPanel: some View {
+        VStack(spacing: 10) {
+            pickerSearchBar(prompt: "搜索话题标签") { value in
+                isSearchingPicker = true
+                let results = (try? await API.searchTags(keyword: value)) ?? []
+                searchedTopics = results
+                isSearchingPicker = false
+            }
+
+            ScrollView {
+                LazyVStack(spacing: 8) {
+                    if isSearchingPicker {
+                        ProgressView()
+                            .padding(.vertical, 24)
+                    } else if searchedTopics.isEmpty {
+                        Text(searchKeyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "输入话题名称搜索" : "未找到相关话题")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 24)
+                    } else {
+                        ForEach(searchedTopics) { topic in
+                            Button {
+                                viewModel.text += " #\(topic.title)# "
+                                switchToCompose()
+                            } label: {
+                                HStack {
+                                    Text("#\(topic.title)#")
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    Text("\(Formatting.count(topic.feedNum)) 动态")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 10)
+                                .c001CardStyle(cornerRadius: 14)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .frame(height: 220)
+        }
+    }
+
+    private func pickerSearchBar(prompt: String, onSearch: @escaping (String) async -> Void) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField(prompt, text: $searchKeyword)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .focused($isPickerSearchFocused)
+                .onChange(of: searchKeyword) { _, value in
+                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    Task {
+                        guard !trimmed.isEmpty else {
+                            searchedUsers = []
+                            searchedTopics = []
+                            isSearchingPicker = false
+                            return
+                        }
+                        try? await Task.sleep(nanoseconds: 250_000_000)
+                        guard searchKeyword.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
+                        await onSearch(trimmed)
+                    }
+                }
+            if !searchKeyword.isEmpty {
+                Button {
+                    searchKeyword = ""
+                    searchedUsers = []
+                    searchedTopics = []
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .background(
+            Color(.secondarySystemGroupedBackground).opacity(0.68),
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
+    }
+
+    private func switchToPanel(_ panel: ActivePanel) {
+        searchKeyword = ""
+        searchedUsers = []
+        searchedTopics = []
+        isSearchingPicker = false
+        showEmojiPanel = false
+        isInputFocused = false
+        activePanel = panel
+        Task {
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            isPickerSearchFocused = true
+        }
+    }
+
+    private func switchToCompose() {
+        isPickerSearchFocused = false
+        activePanel = .compose
+        Task {
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            isInputFocused = true
         }
     }
 
@@ -207,7 +455,7 @@ public struct ComposeSheet: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    showMentionUserSheet = true
+                    switchToPanel(.mentionUser)
                 } label: {
                     Image(systemName: "at")
                         .font(.subheadline.weight(.semibold))
@@ -218,7 +466,7 @@ public struct ComposeSheet: View {
                 .buttonStyle(.plain)
 
                 Button {
-                    showMentionTopicSheet = true
+                    switchToPanel(.mentionTopic)
                 } label: {
                     Image(systemName: "number")
                         .font(.subheadline.weight(.semibold))
@@ -229,79 +477,6 @@ public struct ComposeSheet: View {
                 .buttonStyle(.plain)
 
                 Spacer()
-            }
-        }
-    }
-}
-
-struct MentionUserPickerSheet: View {
-    let onSelect: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var keyword = ""
-    @State private var users: [UserBrief] = []
-
-    var body: some View {
-        NavigationStack {
-            List(users) { user in
-                Button {
-                    onSelect(user.username)
-                    dismiss()
-                } label: {
-                    HStack(spacing: 10) {
-                        AvatarView(url: user.avatar, size: 32)
-                        Text(user.username)
-                    }
-                }
-            }
-            .navigationTitle("提及用户")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $keyword, prompt: "搜索用户名")
-            .onChange(of: keyword) { _, value in
-                Task {
-                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { users = []; return }
-                    users = (try? await API.searchUsers(keyword: trimmed)) ?? []
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("关闭") { dismiss() }
-                }
-            }
-        }
-    }
-}
-
-struct MentionTopicPickerSheet: View {
-    let onSelect: (String) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var keyword = ""
-    @State private var topics: [TopicItem] = []
-
-    var body: some View {
-        NavigationStack {
-            List(topics) { topic in
-                Button {
-                    onSelect(topic.title)
-                    dismiss()
-                } label: {
-                    Text("#\(topic.title)#")
-                }
-            }
-            .navigationTitle("插入话题")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $keyword, prompt: "搜索话题")
-            .onChange(of: keyword) { _, value in
-                Task {
-                    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else { topics = []; return }
-                    topics = (try? await API.searchTags(keyword: trimmed)) ?? []
-                }
-            }
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button("关闭") { dismiss() }
-                }
             }
         }
     }

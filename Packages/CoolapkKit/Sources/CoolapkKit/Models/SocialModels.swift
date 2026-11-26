@@ -384,14 +384,49 @@ public struct EventItem: Identifiable, Hashable, Sendable {
     public var cover: String
     public var url: String
     public var startTimeText: String
+    public var statusText: String
+    public var joinNum: Int
+
+    public init(
+        id: String,
+        title: String = "",
+        description: String = "",
+        cover: String = "",
+        url: String = "",
+        startTimeText: String = "",
+        statusText: String = "",
+        joinNum: Int = 0
+    ) {
+        self.id = id
+        self.title = title
+        self.description = description
+        self.cover = cover
+        self.url = url
+        self.startTimeText = startTimeText
+        self.statusText = statusText
+        self.joinNum = joinNum
+    }
 
     public init(json: JSON) {
-        id = json.id.exists ? json.id.identifier : json.entityId.identifier
+        let rawID = json.id.exists ? json.id.identifier : json.entityId.identifier
+        let rawURL = json.url.string
+        if !rawID.isEmpty {
+            id = rawID
+        } else if let range = rawURL.range(of: "/event/") {
+            let tail = String(rawURL[range.upperBound...])
+            id = String(tail.prefix { $0 != "?" && $0 != "/" })
+        } else {
+            id = rawURL
+        }
         title = json.title.string
-        description = json.description.string
-        cover = json.pic.string.isEmpty ? json.cover.string : json.pic.string
-        url = json.url.string
-        startTimeText = json.dateline_text.string
+        description = [json.description.string, json.intro.string, json.content.string, json.message.string, json.sub_title.string]
+            .first { !$0.isEmpty } ?? ""
+        cover = [json.pic.string, json.cover.string, json.logo.string]
+            .first { !$0.isEmpty } ?? ""
+        url = rawURL
+        startTimeText = json.dateline_text.string.isEmpty ? json.start_time_text.string : json.dateline_text.string
+        statusText = json.status_text.string.isEmpty ? json.label.string : json.status_text.string
+        joinNum = json.join_num.int > 0 ? json.join_num.int : json.follow_num.int
     }
 }
 
@@ -443,6 +478,7 @@ public enum HomeFeedRow: Identifiable, Hashable, Sendable {
     case lives(String, [LiveTopic])
     case browse(BrowseItem)
     case collection(CollectionItem)
+    case event(EventItem)
 
     public var id: String {
         switch self {
@@ -465,6 +501,7 @@ public enum HomeFeedRow: Identifiable, Hashable, Sendable {
         case let .lives(key, _): return "lives-\(key)"
         case let .browse(item): return "browse-\(item.id)"
         case let .collection(item): return "collection-\(item.id)"
+        case let .event(item): return "event-\(item.id)"
         }
     }
 

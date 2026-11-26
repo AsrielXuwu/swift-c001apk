@@ -20,7 +20,8 @@ public struct EngagementListView: View {
     @Environment(AppState.self) private var appState
     @State private var users: [UserBrief] = []
     @State private var rows: [HomeFeedRow] = []
-    @State private var isLoading = false
+    @State private var isLoading = true
+    @State private var hasLoaded = false
     @State private var page = 1
     @State private var hasMore = true
 
@@ -30,10 +31,12 @@ public struct EngagementListView: View {
 
     public var body: some View {
         Group {
-            if isLoading && users.isEmpty && rows.isEmpty {
+            if (!hasLoaded || isLoading) && users.isEmpty && rows.isEmpty {
                 ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if users.isEmpty && rows.isEmpty {
                 ContentUnavailableView("暂无记录", systemImage: "list.bullet")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
@@ -54,9 +57,12 @@ public struct EngagementListView: View {
                             }
                         }
                     }
+                    .padding(.vertical, 8)
                 }
             }
         }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .c001TransparentTopBar()
         .navigationTitle(mode.title)
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadInitial() }
@@ -64,7 +70,10 @@ public struct EngagementListView: View {
 
     private func loadInitial() async {
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            hasLoaded = true
+        }
         page = 1
         do {
             switch mode {

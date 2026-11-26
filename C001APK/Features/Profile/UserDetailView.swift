@@ -14,13 +14,14 @@ public struct UserDetailView: View {
     @State private var followers: [UserBrief] = []
     @State private var following: [UserBrief] = []
     @State private var tab: UserTab = .feeds
+    @State private var scrolledTab: UserTab? = .feeds
     @State private var loadedTabs: Set<UserTab> = []
     @State private var pageByTab: [UserTab: Int] = [:]
     @State private var hasMoreByTab: [UserTab: Bool] = [:]
     @State private var loadingTabs: Set<UserTab> = []
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
-    @State private var tabTask: Task<Void, Never>?
+    @State private var tabTasks: [UserTab: Task<Void, Never>] = [:]
 
     private enum UserTab: String, CaseIterable, Identifiable {
         case feeds = "动态"
@@ -36,63 +37,55 @@ public struct UserDetailView: View {
 
     public var body: some View {
         ScrollViewReader { proxy in
-            ScrollView {
-                Color.clear.frame(height: 0).id("user-top")
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    headerCard
-                        .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
-                        .scaleEffect(1.0 - compactNavProgress * 0.03, anchor: .top)
-
-                    tabBody
-                }
-                .padding(.vertical, 10)
-            }
-            .onScrollGeometryChange(for: CGFloat.self) { geo in
-                geo.contentOffset.y + geo.contentInsets.top
-            } action: { _, offset in
-                let progress = min(1, max(0, (offset - 44) / 76))
-                if abs(progress - compactNavProgress) > 0.02 {
-                    withAnimation(.easeOut(duration: 0.16)) {
-                        compactNavProgress = progress
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 0) {
+                    ForEach(UserTab.allCases) { item in
+                        tabScrollPage(for: item)
+                            .containerRelativeFrame(.horizontal)
+                            .frame(maxHeight: .infinity)
+                            .id(item)
                     }
                 }
+                .scrollTargetLayout()
             }
-            .refreshable {
-                profile = try? await API.userProfile(uid: uid)
-                await reloadTab(tab, force: true)
-            }
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $scrolledTab)
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .safeAreaInset(edge: .top, spacing: 0) {
-                floatingUserTabs
+                FloatingTabStrip(
+                    items: UserTab.allCases,
+                    selection: tab,
+                    titleProvider: { $0.rawValue },
+                    onSelect: { selected in
+                        tab = selected
+                    },
+                    onReselect: { current in
+                        withAnimation(.snappy) {
+                            proxy.scrollTo("user-top-\(current.rawValue)", anchor: .top)
+                        }
+                    }
+                )
             }
             .navigationTitle(profile?.username ?? "用户主页")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let profile, compactNavProgress > 0.08 {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button {
-                            withAnimation(.snappy) { proxy.scrollTo("user-top", anchor: .top) }
-                        } label: {
-                            AvatarView(url: profile.avatar, size: 28)
-                        }
-                        .accessibilityLabel("回到顶部")
-                    }
-
-                    if uid != appState.accounts.activeUID {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button {
-                                Task { await handleFollowTap(profile: profile) }
-                            } label: {
-                                Image(systemName: isFollowingUser(profile) ? "checkmark" : "plus")
-                                    .font(.body.weight(.semibold))
-                                    .foregroundStyle(isFollowingUser(profile) ? Color.primary : Color.accentColor)
+                    CollapsedNavEntityToolbar(
+                        avatarURL: profile.avatar,
+                        isFollowed: isFollowingUser(profile),
+                        showFollowButton: uid != appState.accounts.activeUID,
+                        isDisabled: isTogglingFollow,
+                        onTapAvatar: {
+                            withAnimation(.snappy) {
+                                proxy.scrollTo("user-top-\(tab.rawValue)", anchor: .top)
                             }
-                            .disabled(isTogglingFollow)
-                            .accessibilityLabel(isFollowingUser(profile) ? "取消关注" : "关注")
+                        },
+                        onTapFollow: {
+                            Task { await handleFollowTap(profile: profile) }
                         }
-                    }
+                    )
                 }
 
                 if let profile, uid != appState.accounts.activeUID {
@@ -134,11 +127,18 @@ public struct UserDetailView: View {
                     }
                 }
             }
-            .onChange(of: tab) { _, nextTab in
-                tabTask?.cancel()
-                tabTask = Task {
-                    await reloadTab(nextTab, force: false)
+            .onChange(of: scrolledTab) { _, newTab in
+                if let newTab, newTab != tab {
+                    tab = newTab
                 }
+            }
+            .onChange(of: tab) { _, nextTab in
+                if scrolledTab != nextTab {
+                    withAnimation(.snappy(duration: 0.24)) {
+                        scrolledTab = nextTab
+                    }
+                }
+                startLoadTab(nextTab, force: false)
             }
             .task(id: uid) {
                 profile = try? await API.userProfile(uid: uid)
@@ -147,38 +147,45 @@ public struct UserDetailView: View {
         }
     }
 
-    private func isFollowingUser(_ profile: UserProfile) -> Bool {
-        appState.accounts.isLoggedIn ? profile.isFollowed : appState.localFollow.contains(uid: profile.id)
+    private func startLoadTab(_ targetTab: UserTab, force: Bool) {
+        tabTasks[targetTab]?.cancel()
+        tabTasks[targetTab] = Task {
+            await reloadTab(targetTab, force: force)
+        }
     }
 
-    private var floatingUserTabs: some View {
-        GlassEffectContainer(spacing: 4) {
-            HStack(spacing: 4) {
-                ForEach(UserTab.allCases) { item in
-                    let isSelected = (tab == item)
-                    Button {
-                        withAnimation(.snappy(duration: 0.22)) {
-                            tab = item
-                        }
-                    } label: {
-                        Text(item.rawValue)
-                            .font(.caption.weight(isSelected ? .semibold : .medium))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 7)
-                            .background(
-                                isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
-                                in: Capsule()
-                            )
-                            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                    }
-                    .buttonStyle(.plain)
+    private func tabScrollPage(for item: UserTab) -> some View {
+        ScrollView {
+            Color.clear.frame(height: 0).id("user-top-\(item.rawValue)")
+            LazyVStack(alignment: .leading, spacing: 12) {
+                headerCard
+                    .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
+                    .scaleEffect(1.0 - compactNavProgress * 0.03, anchor: .top)
+
+                tabBody(for: item)
+            }
+            .padding(.top, 10)
+            .padding(.bottom, 88)
+        }
+        .onScrollGeometryChange(for: CGFloat.self) { geo in
+            geo.contentOffset.y + geo.contentInsets.top
+        } action: { _, offset in
+            guard item == tab else { return }
+            let progress = min(1, max(0, (offset - 44) / 76))
+            if abs(progress - compactNavProgress) > 0.02 {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    compactNavProgress = progress
                 }
             }
-            .padding(5)
-            .glassEffect(.regular.interactive(), in: .capsule)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        .refreshable {
+            profile = try? await API.userProfile(uid: uid)
+            await reloadTab(item, force: true)
+        }
+    }
+
+    private func isFollowingUser(_ profile: UserProfile) -> Bool {
+        appState.accounts.isLoggedIn ? profile.isFollowed : appState.localFollow.contains(uid: profile.id)
     }
 
     @ViewBuilder
@@ -296,8 +303,8 @@ public struct UserDetailView: View {
         )
     }
 
-    private var isCurrentTabEmpty: Bool {
-        switch tab {
+    private func isTabEmpty(_ item: UserTab) -> Bool {
+        switch item {
         case .feeds: return rows.isEmpty
         case .likes: return likedRows.isEmpty
         case .collections: return userCollections.isEmpty
@@ -307,23 +314,27 @@ public struct UserDetailView: View {
     }
 
     @ViewBuilder
-    private var tabBody: some View {
-        if loadingTabs.contains(tab) && isCurrentTabEmpty {
+    private func tabBody(for item: UserTab) -> some View {
+        let isEmpty = isTabEmpty(item)
+        let hasLoaded = loadedTabs.contains(item)
+        let isLoadingTab = loadingTabs.contains(item)
+
+        if (!hasLoaded || isLoadingTab) && isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, minHeight: 200)
                 .padding(.vertical, 40)
-        } else if isCurrentTabEmpty {
-            ContentUnavailableView("暂无\(tab.rawValue)", systemImage: "tray")
+        } else if isEmpty {
+            ContentUnavailableView("暂无\(item.rawValue)", systemImage: "tray")
                 .frame(maxWidth: .infinity, minHeight: 200)
         } else {
-            switch tab {
+            switch item {
             case .feeds:
                 feedList(rows, for: .feeds)
             case .likes:
                 feedList(likedRows, for: .likes)
             case .collections:
-                ForEach(Array(userCollections.enumerated()), id: \.element.id) { idx, item in
-                    CollectionRowView(item: item)
+                ForEach(Array(userCollections.enumerated()), id: \.element.id) { idx, col in
+                    CollectionRowView(item: col)
                         .onAppear {
                             if idx >= userCollections.count - 4 { Task { await loadMore(for: .collections) } }
                         }
@@ -360,7 +371,10 @@ public struct UserDetailView: View {
             return
         }
         loadingTabs.insert(targetTab)
-        defer { loadingTabs.remove(targetTab) }
+        defer {
+            loadingTabs.remove(targetTab)
+            loadedTabs.insert(targetTab)
+        }
         pageByTab[targetTab] = 1
         hasMoreByTab[targetTab] = true
         do {
@@ -391,7 +405,6 @@ public struct UserDetailView: View {
                 followers = fetched
                 hasMoreByTab[.fans] = !fetched.isEmpty
             }
-            loadedTabs.insert(targetTab)
         } catch {
             guard !Task.isCancelled else { return }
             _ = await appState.handleAPIError(error)

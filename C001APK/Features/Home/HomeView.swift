@@ -216,53 +216,30 @@ public struct HomeView: View {
         activeTab: HomeTabType,
         proxy: ScrollViewProxy
     ) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            GlassEffectContainer(spacing: 6) {
-                HStack(spacing: 6) {
-                    ForEach(visibleTabs) { tab in
-                        let isSelected = tab == activeTab
-                        Button {
-                            if isSelected {
-                                withAnimation(.snappy) {
-                                    proxy.scrollTo("home-top-\(tab.rawValue)", anchor: .top)
-                                    isFabCollapsed = false
-                                }
-                            } else {
-                                withAnimation(.snappy(duration: 0.24)) {
-                                    selectedTab = tab
-                                    scrolledTab = tab
-                                }
-                            }
-                        } label: {
-                            Text(tab.label)
-                                .font(.subheadline.weight(isSelected ? .semibold : .medium))
-                                .padding(.horizontal, 14)
-                                .padding(.vertical, 7)
-                                .background(
-                                    isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
-                                    in: Capsule()
-                                )
-                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                        }
-                        .buttonStyle(.plain)
-                        .id("tab-chip-\(tab.rawValue)")
-                    }
+        FloatingTabStrip(
+            items: visibleTabs,
+            selection: activeTab,
+            titleProvider: { $0.label },
+            onSelect: { tab in
+                selectedTab = tab
+                scrolledTab = tab
+            },
+            onReselect: { tab in
+                withAnimation(.snappy) {
+                    proxy.scrollTo("home-top-\(tab.rawValue)", anchor: .top)
+                    isFabCollapsed = false
                 }
-                .padding(.horizontal, 6)
-                .padding(.vertical, 5)
-                .glassEffect(.regular.interactive(), in: .capsule)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 6)
-        }
+        )
     }
 
     @ViewBuilder
     private func tabContent(for tab: HomeTabType) -> some View {
         let rows = viewModel.rowsByTab[tab] ?? []
         let isLoading = viewModel.loadingTabs.contains(tab)
+        let hasLoaded = viewModel.loadedTabs.contains(tab)
 
-        if isLoading && rows.isEmpty {
+        if (!hasLoaded || isLoading) && rows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = viewModel.errorByTab[tab], rows.isEmpty {

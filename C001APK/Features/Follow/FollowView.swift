@@ -72,34 +72,15 @@ public struct FollowView: View {
     }
 
     private var floatingSegmentStrip: some View {
-        GlassEffectContainer(spacing: 4) {
-            HStack(spacing: 4) {
-                ForEach(FollowSegment.allCases) { seg in
-                    let isSelected = viewModel.segment == seg
-                    Button {
-                        withAnimation(.snappy(duration: 0.24)) {
-                            viewModel.segment = seg
-                        }
-                    } label: {
-                        Text(seg.rawValue)
-                            .font(.subheadline.weight(isSelected ? .semibold : .medium))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 7)
-                            .background(
-                                isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
-                                in: Capsule()
-                            )
-                            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                    }
-                    .buttonStyle(.plain)
-                }
+        FloatingTabStrip(
+            items: FollowSegment.allCases,
+            selection: viewModel.segment,
+            titleProvider: { $0.rawValue },
+            onSelect: { seg in
+                viewModel.segment = seg
             }
-            .padding(5)
-            .glassEffect(.regular.interactive(), in: .capsule)
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 6)
-        .padding(.bottom, viewModel.segment == .topics && !viewModel.followedTopics.isEmpty ? 0 : 6)
+        )
+        .padding(.bottom, viewModel.segment == .topics && !viewModel.followedTopics.isEmpty ? -2 : 0)
     }
 
     private var topicChipsStrip: some View {
@@ -136,6 +117,7 @@ public struct FollowView: View {
     private func segmentContent(for seg: FollowSegment) -> some View {
         let segRows = viewModel.rowsBySegment[seg] ?? []
         let segLoading = viewModel.loadingSegments.contains(seg)
+        let segHasLoaded = viewModel.loadedSegments.contains(seg)
         let segLoadingMore = viewModel.loadingMoreSegments.contains(seg)
         let segError = viewModel.errorBySegment[seg]
 
@@ -148,7 +130,7 @@ public struct FollowView: View {
                 Button("立即登录") { appState.showLoginSheet = true }
                     .buttonStyle(.borderedProminent)
             }
-        } else if segLoading && segRows.isEmpty {
+        } else if (!segHasLoaded || segLoading) && segRows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let segError, segRows.isEmpty {

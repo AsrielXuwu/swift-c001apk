@@ -31,6 +31,7 @@ public final class MessagesViewModel {
     public private(set) var threads: [MessageThread] = []
     public private(set) var notificationsBySegment: [MessagesSegment: [NotificationItem]] = [:]
     public private(set) var loadingSegments: Set<MessagesSegment> = []
+    public private(set) var loadedSegments: Set<MessagesSegment> = []
     public private(set) var loadingMoreSegments: Set<MessagesSegment> = []
     public private(set) var hasMoreBySegment: [MessagesSegment: Bool] = [:]
     public private(set) var errorBySegment: [MessagesSegment: String] = [:]
@@ -46,6 +47,7 @@ public final class MessagesViewModel {
             threads = []
             notificationsBySegment.removeAll()
             loadingSegments.removeAll()
+            loadedSegments.removeAll()
             loadingMoreSegments.removeAll()
             hasMoreBySegment.removeAll()
             errorBySegment.removeAll()
@@ -68,7 +70,10 @@ public final class MessagesViewModel {
         hasMoreBySegment[targetSegment] = true
         errorBySegment[targetSegment] = nil
         loadingSegments.insert(targetSegment)
-        defer { loadingSegments.remove(targetSegment) }
+        defer {
+            loadingSegments.remove(targetSegment)
+            loadedSegments.insert(targetSegment)
+        }
         await fetch(segment: targetSegment, page: 1, append: false, appState: appState)
         await appState.refreshBadgeOnly()
     }

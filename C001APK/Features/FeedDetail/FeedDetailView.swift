@@ -278,6 +278,19 @@ public struct FeedDetailView: View {
                 .frame(maxWidth: 760, alignment: .leading)
                 .frame(maxWidth: .infinity)
 
+                if feed.kind == .question, !viewModel.answers.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("精选回答")
+                            .font(.headline)
+                            .padding(.horizontal, 16)
+                        ForEach(viewModel.answers) { row in
+                            HomeRowRenderer(row: row)
+                        }
+                    }
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+                }
+
                 repliesHeader(feed)
 
                 repliesSection(feed)

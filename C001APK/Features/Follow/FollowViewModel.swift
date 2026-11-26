@@ -20,6 +20,7 @@ public final class FollowViewModel {
 
     public private(set) var rowsBySegment: [FollowSegment: [HomeFeedRow]] = [:]
     public private(set) var loadingSegments: Set<FollowSegment> = []
+    public private(set) var loadedSegments: Set<FollowSegment> = []
     public private(set) var loadingMoreSegments: Set<FollowSegment> = []
     public private(set) var hasMoreBySegment: [FollowSegment: Bool] = [:]
     public private(set) var errorBySegment: [FollowSegment: String] = [:]
@@ -39,6 +40,7 @@ public final class FollowViewModel {
             activeTasks.removeAll()
             rowsBySegment.removeAll()
             loadingSegments.removeAll()
+            loadedSegments.removeAll()
             loadingMoreSegments.removeAll()
             hasMoreBySegment.removeAll()
             errorBySegment.removeAll()
@@ -99,7 +101,12 @@ public final class FollowViewModel {
         appState: AppState,
         expectedSession: Int
     ) async {
-        defer { if !append { loadingSegments.remove(targetSegment) } }
+        defer {
+            if !append {
+                loadingSegments.remove(targetSegment)
+                loadedSegments.insert(targetSegment)
+            }
+        }
         do {
             let loaded: [HomeFeedRow]
             switch targetSegment {

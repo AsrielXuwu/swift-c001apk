@@ -9,10 +9,12 @@ public struct ReplyThreadSheet: View {
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @State private var items: [ReplyItem] = []
-    @State private var isLoading = false
+    @State private var isLoading = true
+    @State private var hasLoaded = false
     @State private var isLoadingMore = false
     @State private var hasMore = true
     @State private var currentPage = 1
+    @State private var threadComposeMode: ComposeMode?
 
     public init(rootReply: ReplyItem, feedAuthorUID: String) {
         self.rootReply = rootReply
@@ -28,7 +30,7 @@ public struct ReplyThreadSheet: View {
 
                     sectionHeader("全部回复")
 
-                    if isLoading && items.isEmpty {
+                    if (!hasLoaded || isLoading) && items.isEmpty {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 28)
@@ -67,6 +69,7 @@ public struct ReplyThreadSheet: View {
                 await loadInitial()
             }
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .c001TransparentTopBar()
             .navigationTitle("评论详情")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -88,6 +91,9 @@ public struct ReplyThreadSheet: View {
                 Task { await loadInitial() }
             }
         }
+        .overlay {
+            ComposeFloatingOverlayHost(composeMode: $threadComposeMode)
+        }
         .presentationDetents([.medium, .large])
         .presentationDragIndicator(.visible)
     }
@@ -102,7 +108,7 @@ public struct ReplyThreadSheet: View {
 
     private func openReplyComposer(for target: ReplyItem) {
         if appState.accounts.isLoggedIn {
-            appState.composeMode = .replyToComment(targetID: target.id, replyToName: target.username)
+            threadComposeMode = .replyToComment(targetID: target.id, replyToName: target.username)
         } else {
             appState.showLoginSheet = true
         }
@@ -219,7 +225,10 @@ public struct ReplyThreadSheet: View {
 
     private func loadInitial() async {
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            isLoading = false
+            hasLoaded = true
+        }
         currentPage = 1
         do {
             items = try await API.subReplies(replyID: rootReply.id, page: 1)

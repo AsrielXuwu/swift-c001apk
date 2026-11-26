@@ -21,6 +21,8 @@ public enum FeedLink: Hashable, Sendable {
         var normalized = trimmed
         if normalized.hasPrefix("coolmarket://") {
             normalized = "/" + String(normalized.dropFirst("coolmarket://".count))
+        } else if normalized.hasPrefix("coolapk://") {
+            normalized = "/" + String(normalized.dropFirst("coolapk://".count))
         }
         if let url = URL(string: normalized), let host = url.host?.lowercased() {
             if host.contains("coolapk.com") || host.contains("coolapk1s.com") {
@@ -30,7 +32,7 @@ public enum FeedLink: Hashable, Sendable {
             }
         }
 
-        if normalized.hasPrefix("/page?url=") || normalized.hasPrefix("#/") {
+        if normalized.hasPrefix("/page?url=") || normalized.hasPrefix("page?url=") || normalized.hasPrefix("#/") {
             return .page(normalized)
         }
         if let tag = extractSegment(from: normalized, prefix: "/t/") {

@@ -39,8 +39,12 @@ public struct MediaViewerView: View {
     }
 
     public var body: some View {
-        GeometryReader { geo in
-            let containerSize = geo.size
+        GeometryReader { safeGeo in
+            let safeInsets = safeGeo.safeAreaInsets
+            let totalWidth = safeGeo.size.width + safeInsets.leading + safeInsets.trailing
+            let totalHeight = safeGeo.size.height + safeInsets.top + safeInsets.bottom
+            let containerSize = CGSize(width: totalWidth, height: totalHeight)
+
             ZStack {
                 Color.black.ignoresSafeArea(.all)
 
@@ -79,13 +83,12 @@ public struct MediaViewerView: View {
                 }
 
                 if showControls {
-                    controlsOverlay(safeInsets: geo.safeAreaInsets)
+                    controlsOverlay(safeInsets: safeInsets)
                 }
             }
             .frame(width: containerSize.width, height: containerSize.height)
             .ignoresSafeArea(.all)
         }
-        .ignoresSafeArea(.all)
         .statusBarHidden(!showControls)
         .persistentSystemOverlays(showControls ? .automatic : .hidden)
         .applyZoomTransition(sourceID: presentation.sourceID(at: currentIndex), in: zoomNamespace)
@@ -94,6 +97,8 @@ public struct MediaViewerView: View {
     private func controlsOverlay(safeInsets: EdgeInsets) -> some View {
         let topTint: Color = currentContrast.topIsLight ? .black : .white
         let bottomTint: Color = currentContrast.bottomIsLight ? .black : .white
+        let effectiveTop = max(resolvedTopSafeInset(from: safeInsets), 44)
+        let effectiveBottom = max(resolvedBottomSafeInset(from: safeInsets), 20)
 
         return VStack {
             GlassEffectContainer(spacing: 12) {
@@ -137,7 +142,7 @@ public struct MediaViewerView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.top, max(12, safeInsets.top + 6))
+            .padding(.top, effectiveTop + 6)
 
             Spacer()
 
@@ -179,10 +184,26 @@ public struct MediaViewerView: View {
                     .foregroundStyle(bottomTint)
                 }
             }
-            .padding(.bottom, max(24, safeInsets.bottom + 12))
+            .padding(.bottom, effectiveBottom + 8)
         }
         .ignoresSafeArea(.all)
         .transition(.opacity)
+    }
+
+    private func resolvedTopSafeInset(from safeInsets: EdgeInsets) -> CGFloat {
+        if safeInsets.top > 0 { return safeInsets.top }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes.first?.keyWindow?.safeAreaInsets.top
+            ?? scenes.first?.windows.first?.safeAreaInsets.top
+            ?? 48
+    }
+
+    private func resolvedBottomSafeInset(from safeInsets: EdgeInsets) -> CGFloat {
+        if safeInsets.bottom > 0 { return safeInsets.bottom }
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        return scenes.first?.keyWindow?.safeAreaInsets.bottom
+            ?? scenes.first?.windows.first?.safeAreaInsets.bottom
+            ?? 20
     }
 
     private func saveMedia(item: FeedMedia) async {

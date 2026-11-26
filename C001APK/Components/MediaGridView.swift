@@ -10,7 +10,7 @@ public struct MediaGridView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
     @State private var transitionSeed = UUID().uuidString
-    @State private var activeStackIndex: Int = 0
+    @State private var deckPhase: CGFloat = 0
     @State private var shareFileURL: URL?
 
     public init(items: [FeedMedia], onTapItem: ((Int) -> Void)? = nil) {
@@ -27,7 +27,7 @@ public struct MediaGridView: View {
             } else if appState.settings.mediaDisplayStyle == .stackedCards {
                 PhotoStackCardView(
                     items: items,
-                    activeIndex: $activeStackIndex,
+                    deckPhase: $deckPhase,
                     transitionSeed: transitionSeed,
                     enableZoomSource: onTapItem == nil,
                     disableHDR: appState.settings.disableHDR,
@@ -268,7 +268,7 @@ public struct MediaGridView: View {
 
 private struct PhotoStackCardView<MenuContent: View>: View {
     let items: [FeedMedia]
-    @Binding var activeIndex: Int
+    @Binding var deckPhase: CGFloat
     let transitionSeed: String
     let enableZoomSource: Bool
     let disableHDR: Bool
@@ -276,47 +276,127 @@ private struct PhotoStackCardView<MenuContent: View>: View {
     @ViewBuilder let contextMenuBuilder: (FeedMedia, Int) -> MenuContent
 
     @Environment(\.zoomNamespace) private var zoomNamespace
-    @State private var dragOffset: CGFloat = 0
+    @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
     @State private var lastDragEndedAt: Date = .distantPast
+
+    private var currentNearestIndex: Int {
+        let count = items.count
+        guard count > 0 else { return 0 }
+        let rounded = Int((deckPhase + dragProgress).rounded())
+        return ((rounded % count) + count) % count
+    }
 
     var body: some View {
         let count = items.count
         let visibleLayers = min(count, 3)
+        let activeIdx = currentNearestIndex
+        let activeItem = items[activeIdx]
 
         ZStack {
-            ForEach((0..<visibleLayers).reversed(), id: \.self) { depth in
-                let itemIndex = (activeIndex + depth) % count
+            OrbitalDeckStage(
+                phase: deckPhase + dragProgress,
+                count: count,
+                cardHeight: 218
+            ) { itemIndex, isFront in
                 let item = items[itemIndex]
-                let isFront = (depth == 0)
                 let sourceID = (isFront && enableZoomSource) ? "media-\(transitionSeed)-\(itemIndex)" : nil
 
-                stackCard(item: item, index: itemIndex, isFront: isFront, count: count)
+                Color.clear
+                    .frame(height: 218)
+                    .overlay {
+                        RemoteImageView(
+                            url: item.thumbnailUrl,
+                            maxPixelSize: 1080
+                        )
+                    }
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
+                    }
                     .applyZoomSource(id: sourceID, in: zoomNamespace)
-                    .scaleEffect(scaleFor(depth: depth))
-                    .rotationEffect(.degrees(rotationFor(depth: depth, isFront: isFront)))
-                    .offset(x: xOffsetFor(depth: depth, isFront: isFront), y: yOffsetFor(depth: depth))
-                    .opacity(depth == 2 ? 0.90 : (depth == 1 ? 0.96 : 1.0))
-                    .zIndex(Double(visibleLayers - depth))
-                    .allowsHitTesting(isFront)
+                    .onTapGesture {
+                        guard isFront,
+                              !isHorizontalDragging,
+                              abs(dragProgress) < 0.04,
+                              Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
+                        onTapCard(itemIndex)
+                    }
+                    .contextMenu {
+                        contextMenuBuilder(item, itemIndex)
+                    }
             }
+            .padding(.leading, visibleLayers > 2 ? 16 : 0)
+            .padding(.trailing, visibleLayers > 1 ? 20 : 0)
+            .padding(.bottom, visibleLayers > 1 ? 16 : 0)
+
+            // Stationary floating controls outside moving/rotating deck so badges never deform.
+            VStack {
+                HStack {
+                    Spacer()
+                    HStack(spacing: 4) {
+                        if activeItem.isLivePhoto { stackPill("LIVE") }
+                        if activeItem.isHdr && !disableHDR { stackPill("HDR") }
+                        if activeItem.isGif { stackPill("GIF") }
+                        stackPill("\(activeIdx + 1)/\(count)")
+                    }
+                }
+                .allowsHitTesting(false)
+
+                Spacer()
+
+                if count > 1 {
+                    HStack {
+                        Spacer()
+                        HStack(spacing: 8) {
+                            Button {
+                                stepDeck(by: -1)
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .frame(width: 24, height: 22)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                stepDeck(by: 1)
+                            } label: {
+                                Image(systemName: "chevron.right")
+                                    .frame(width: 24, height: 22)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                    }
+                }
+            }
+            .padding(.top, 10)
+            .padding(.bottom, (visibleLayers > 1 ? 16 : 0) + 10)
+            .padding(.leading, visibleLayers > 2 ? 26 : 10)
+            .padding(.trailing, (visibleLayers > 1 ? 20 : 0) + 10)
         }
-        .padding(.leading, visibleLayers > 2 ? 16 : 0)
-        .padding(.trailing, visibleLayers > 1 ? 20 : 0)
-        .padding(.bottom, visibleLayers > 1 ? 18 : 0)
-        .frame(height: 244)
+        .frame(height: visibleLayers > 1 ? 236 : 218)
         .contentShape(Rectangle())
         .simultaneousGesture(
             DragGesture(minimumDistance: 12)
                 .onChanged { value in
+                    guard count > 1 else { return }
                     let dx = value.translation.width
                     let dy = value.translation.height
                     if isHorizontalDragging || abs(dx) > max(12, abs(dy) * 1.15) {
                         isHorizontalDragging = true
-                        dragOffset = dx
+                        dragProgress = max(-1.15, min(1.15, -dx / 210.0))
                     }
                 }
                 .onEnded { value in
+                    guard count > 1 else { return }
                     let dx = value.translation.width
                     let predicted = value.predictedEndTranslation.width
                     let wasDragging = isHorizontalDragging || abs(dx) > 10
@@ -325,133 +405,148 @@ private struct PhotoStackCardView<MenuContent: View>: View {
                     }
                     isHorizontalDragging = false
                     guard wasDragging else {
-                        withAnimation(.snappy(duration: 0.22)) { dragOffset = 0 }
+                        withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
+                            dragProgress = 0
+                        }
                         return
                     }
-                    withAnimation(.snappy(duration: 0.28)) {
-                        if dx < -42 || predicted < -90 {
-                            activeIndex = (activeIndex + 1) % count
-                        } else if dx > 42 || predicted > 90 {
-                            activeIndex = (activeIndex - 1 + count) % count
-                        }
-                        dragOffset = 0
+                    let deltaStep: CGFloat
+                    if dx < -38 || predicted < -85 {
+                        deltaStep = 1
+                    } else if dx > 38 || predicted > 85 {
+                        deltaStep = -1
+                    } else {
+                        deltaStep = 0
+                    }
+                    let combined = deckPhase + dragProgress
+                    let base = deckPhase.rounded()
+                    deckPhase = combined
+                    dragProgress = 0
+                    withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+                        deckPhase = base + deltaStep
                     }
                 }
         )
     }
 
-    private func handleFrontCardTap(at index: Int) {
-        guard !isHorizontalDragging,
-              abs(dragOffset) < 4,
-              Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
-        onTapCard(index)
-    }
-
-    private func stackCard(item: FeedMedia, index: Int, isFront: Bool, count: Int) -> some View {
-        ZStack(alignment: .bottomTrailing) {
-            Color.clear
-                .frame(height: 218)
-                .overlay {
-                    RemoteImageView(
-                        url: item.thumbnailUrl,
-                        maxPixelSize: 1080
-                    )
-                }
-                .clipped()
-                .overlay(alignment: .topTrailing) {
-                    if isFront {
-                        HStack(spacing: 4) {
-                            if item.isLivePhoto { stackPill("LIVE") }
-                            if item.isHdr && !disableHDR { stackPill("HDR") }
-                            if item.isGif { stackPill("GIF") }
-                            stackPill("\(index + 1)/\(count)")
-                        }
-                        .padding(10)
-                        .allowsHitTesting(false)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                .onTapGesture {
-                    guard isFront else { return }
-                    handleFrontCardTap(at: index)
-                }
-                .contextMenu {
-                    contextMenuBuilder(item, index)
-                }
-
-            if isFront && count > 1 {
-                HStack(spacing: 8) {
-                    Button {
-                        withAnimation(.snappy(duration: 0.26)) {
-                            activeIndex = (activeIndex - 1 + count) % count
-                        }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .frame(width: 24, height: 22)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        withAnimation(.snappy(duration: 0.26)) {
-                            activeIndex = (activeIndex + 1) % count
-                        }
-                    } label: {
-                        Image(systemName: "chevron.right")
-                            .frame(width: 24, height: 22)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .glassEffect(.regular.interactive(), in: .capsule)
-                .padding(10)
-            }
+    private func stepDeck(by delta: CGFloat) {
+        withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+            deckPhase = deckPhase.rounded() + delta
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color(.systemBackground).opacity(isFront ? 0.92 : 0.80), lineWidth: 1.4)
-        }
-        .shadow(color: .black.opacity(isFront ? 0.14 : 0.08), radius: isFront ? 9 : 5, x: 0, y: 3)
     }
 
     private func stackPill(_ text: String) -> some View {
         Text(text)
             .font(.caption2.weight(.semibold))
+            .monospacedDigit()
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
             .glassEffect(.regular, in: .capsule)
             .foregroundStyle(.primary)
     }
+}
 
-    private func scaleFor(depth: Int) -> CGFloat {
-        let base: CGFloat = depth == 0 ? 1.0 : (depth == 1 ? 0.95 : 0.91)
-        if depth > 0 {
-            let progress = min(1, abs(dragOffset) / 140)
-            return base + progress * 0.03
-        }
-        return base
+/// Shared continuous Animatable card-deck stage supporting orbital edge crossing and smooth z-order handoff.
+public struct OrbitalDeckStage<CardContent: View>: View, Animatable {
+    public var phase: CGFloat
+    public let count: Int
+    public let cardHeight: CGFloat
+    @ViewBuilder public let cardBuilder: (Int, Bool) -> CardContent
+
+    public var animatableData: CGFloat {
+        get { phase }
+        set { phase = newValue }
     }
 
-    private func rotationFor(depth: Int, isFront: Bool) -> Double {
-        if isFront {
-            return Double(dragOffset) / 22.0
-        }
-        return depth == 1 ? 4.2 : -4.2
+    public init(
+        phase: CGFloat,
+        count: Int,
+        cardHeight: CGFloat,
+        @ViewBuilder cardBuilder: @escaping (Int, Bool) -> CardContent
+    ) {
+        self.phase = phase
+        self.count = count
+        self.cardHeight = cardHeight
+        self.cardBuilder = cardBuilder
     }
 
-    private func xOffsetFor(depth: Int, isFront: Bool) -> CGFloat {
-        if isFront {
-            return dragOffset
+    public var body: some View {
+        let baseSlot = Int(floor(phase))
+        let maxBack = min(2, max(0, count - 1))
+        let slotOffsets = Array((-1...maxBack).reversed())
+        let activeRounded = Int(phase.rounded())
+
+        ZStack {
+            ForEach(slotOffsets, id: \.self) { stepOffset in
+                let rawSlot = baseSlot + stepOffset
+                let itemIndex = ((rawSlot % count) + count) % count
+                let t = CGFloat(rawSlot) - phase
+                let isFront = (rawSlot == activeRounded) && abs(t) < 0.35
+                let geometry = cardGeometry(for: t, count: count)
+
+                cardBuilder(itemIndex, isFront)
+                    .scaleEffect(geometry.scale)
+                    .rotationEffect(.degrees(geometry.angle))
+                    .offset(x: geometry.x, y: geometry.y)
+                    .opacity(geometry.opacity)
+                    .zIndex(geometry.zIndex)
+                    .allowsHitTesting(isFront)
+            }
         }
-        return depth == 1 ? 15 : -13
+        .frame(height: cardHeight)
     }
 
-    private func yOffsetFor(depth: Int) -> CGFloat {
-        depth == 0 ? 0 : (depth == 1 ? 9 : 16)
+    private struct CardGeometry {
+        let x: CGFloat
+        let y: CGFloat
+        let scale: CGFloat
+        let angle: Double
+        let opacity: Double
+        let zIndex: Double
+    }
+
+    private func cardGeometry(for t: CGFloat, count: Int) -> CardGeometry {
+        // t == 0: center front card
+        // t in [-0.5, 0]: active card swinging out left & dropping down a layer past -0.48
+        // t in [-1.0, -0.5]: tucking under behind into back-left deck slot
+        // t in [0, 1]: next card moving from back-right slot into center front
+        // t in [1, 2]: deeper back layer peaking from opposite edge
+        if t < 0 {
+            let clamped = max(-1.0, t)
+            let swingOut = sin(-clamped * .pi)
+            let tuckRatio = min(1.0, max(0.0, (-clamped - 0.5) * 2.0))
+            let rearTargetX: CGFloat = count > 2 ? -13 : 15
+            let rearTargetY: CGFloat = count > 2 ? 15 : 8
+            let rearTargetAngle: Double = count > 2 ? -3.8 : 3.8
+            let targetShrink: CGFloat = count > 2 ? 0.09 : 0.05
+
+            let x = (-swingOut * 138.0) + (tuckRatio * rearTargetX)
+            let y = (abs(clamped) * 6.0) + (tuckRatio * (rearTargetY - 6.0))
+            let scale = 1.0 - (targetShrink * min(1.0, abs(clamped)))
+            let angle = Double(-swingOut * 7.5) + (tuckRatio * rearTargetAngle)
+            let zIndex: Double = clamped > -0.48 ? 100.0 : 12.0
+            let fadeAtRest = (count == 2 && clamped < -0.94) ? 0.0 : 1.0
+            let opacity = (1.0 - Double(tuckRatio) * 0.10) * fadeAtRest
+            return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
+        } else if t <= 1.0 {
+            let p = t
+            let x = p * 15.0
+            let y = p * 8.0
+            let scale = 1.0 - p * 0.05
+            let angle = Double(p) * 3.8
+            let opacity = 1.0 - Double(p) * 0.04
+            let zIndex = 88.0 - Double(p) * 18.0
+            return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
+        } else {
+            let p = min(1.35, t - 1.0)
+            let x = 15.0 + p * (-28.0)
+            let y = 8.0 + p * 7.0
+            let scale = 0.95 - p * 0.04
+            let angle = 3.8 + Double(p) * (-7.6)
+            let opacity = max(0.0, 0.96 - Double(p) * 0.14 - (t > 2.0 ? Double(t - 2.0) * 1.4 : 0.0))
+            let zIndex = 58.0 - Double(p) * 20.0
+            return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
+        }
     }
 }
 

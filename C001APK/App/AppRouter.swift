@@ -1,6 +1,7 @@
 import CoolapkKit
 import Foundation
 import SwiftUI
+import UIKit
 
 private struct ZoomNamespaceKey: EnvironmentKey {
     static let defaultValue: Namespace.ID? = nil
@@ -43,6 +44,48 @@ public extension View {
                     .strokeBorder(Color.primary.opacity(0.05), lineWidth: 0.5)
             }
     }
+
+    func c001TransparentTopBar() -> some View {
+        self
+            .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
+            .overlay(alignment: .top) {
+                StatusBarGradientBlurOverlay()
+            }
+    }
+}
+
+private struct StatusBarGradientBlurOverlay: View {
+    @Environment(\.displayScale) private var displayScale
+
+    var body: some View {
+        let topHeight = currentStatusBarHeight() + 14
+        Rectangle()
+            .fill(.ultraThinMaterial)
+            .mask(
+                LinearGradient(
+                    stops: [
+                        .init(color: .black, location: 0.0),
+                        .init(color: .black.opacity(0.82), location: 0.50),
+                        .init(color: .clear, location: 1.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .frame(height: topHeight)
+            .frame(maxWidth: .infinity)
+            .ignoresSafeArea(edges: .top)
+            .allowsHitTesting(false)
+    }
+
+    private func currentStatusBarHeight() -> CGFloat {
+        let _ = displayScale
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let top = scenes.first?.keyWindow?.safeAreaInsets.top
+            ?? scenes.first?.windows.first?.safeAreaInsets.top
+            ?? 48
+        return max(20, top)
+    }
 }
 
 public enum RootTab: Hashable, Sendable {
@@ -60,7 +103,7 @@ public enum AppRoute: Hashable, Sendable {
     case app(id: String, transitionID: String? = nil)
     case collection(id: String, transitionID: String? = nil)
     case dyh(id: String, transitionID: String? = nil)
-    case event(id: String, transitionID: String? = nil)
+    case event(id: String, initial: EventItem? = nil, transitionID: String? = nil)
     case page(link: String, title: String)
     case coolpic(tag: String)
     case messages
@@ -86,7 +129,7 @@ public enum AppRoute: Hashable, Sendable {
              let .app(_, id),
              let .collection(_, id),
              let .dyh(_, id),
-             let .event(_, id):
+             let .event(_, _, id):
             return id
         default:
             return nil

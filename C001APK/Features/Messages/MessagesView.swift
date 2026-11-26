@@ -48,35 +48,20 @@ public struct MessagesView: View {
     }
 
     private var floatingMessageSegmentStrip: some View {
-        GlassEffectContainer(spacing: 4) {
-            HStack(spacing: 4) {
-                ForEach(MessagesSegment.allCases) { seg in
-                    let isSelected = viewModel.segment == seg
-                    Button {
-                        withAnimation(.snappy(duration: 0.22)) {
-                            viewModel.segment = seg
-                        }
-                    } label: {
-                        Text(seg.rawValue)
-                            .font(.caption.weight(isSelected ? .semibold : .medium))
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 7)
-                            .background(isSelected ? Color.accentColor.opacity(0.18) : Color.clear, in: Capsule())
-                            .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                    }
-                    .buttonStyle(.plain)
-                }
+        FloatingTabStrip(
+            items: MessagesSegment.allCases,
+            selection: viewModel.segment,
+            titleProvider: { $0.rawValue },
+            onSelect: { seg in
+                viewModel.segment = seg
             }
-            .padding(5)
-            .glassEffect(.regular.interactive(), in: .capsule)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
+        )
     }
 
     @ViewBuilder
     private func segmentContent(for seg: MessagesSegment) -> some View {
         let isLoadingSeg = viewModel.loadingSegments.contains(seg)
+        let hasLoadedSeg = viewModel.loadedSegments.contains(seg)
         let notifications = viewModel.notificationsBySegment[seg] ?? []
 
         if !appState.accounts.isLoggedIn {
@@ -89,7 +74,7 @@ public struct MessagesView: View {
                     .buttonStyle(.borderedProminent)
             }
         } else if seg == .chat {
-            if isLoadingSeg && viewModel.threads.isEmpty {
+            if (!hasLoadedSeg || isLoadingSeg) && viewModel.threads.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if viewModel.threads.isEmpty {
@@ -157,7 +142,7 @@ public struct MessagesView: View {
                 }
             }
         } else {
-            if isLoadingSeg && notifications.isEmpty {
+            if (!hasLoadedSeg || isLoadingSeg) && notifications.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if notifications.isEmpty {

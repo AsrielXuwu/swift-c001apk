@@ -8,6 +8,9 @@ public enum HomeTabType: String, CaseIterable, Codable, Identifiable, Sendable {
     case topic
     case product
     case coolpic
+    case headline
+    case question
+    case goods
     case none
 
     public var id: String { rawValue }
@@ -21,6 +24,9 @@ public enum HomeTabType: String, CaseIterable, Codable, Identifiable, Sendable {
         case .topic: return "话题"
         case .product: return "数码"
         case .coolpic: return "酷图"
+        case .headline: return "头条"
+        case .question: return "问答"
+        case .goods: return "好物"
         case .none: return "其他"
         }
     }
@@ -30,9 +36,12 @@ public struct HomeTabConfiguration: Codable, Equatable, Sendable {
     public static let defaultOrder: [HomeTabType] = [
         .feed,
         .hot,
+        .headline,
         .topic,
         .product,
         .coolpic,
+        .question,
+        .goods,
         .app
     ]
 

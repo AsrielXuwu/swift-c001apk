@@ -9,6 +9,7 @@ public final class HomeFeedViewModel {
     public private(set) var subCategoriesByTab: [HomeTabType: [HomeSection]] = [:]
     public private(set) var selectedSubCategoryByTab: [HomeTabType: HomeSection] = [:]
     public private(set) var loadingTabs: Set<HomeTabType> = []
+    public private(set) var loadedTabs: Set<HomeTabType> = []
     public private(set) var loadingMoreTabs: Set<HomeTabType> = []
     public private(set) var hasMoreByTab: [HomeTabType: Bool] = [:]
     public private(set) var errorByTab: [HomeTabType: String] = [:]
@@ -25,6 +26,7 @@ public final class HomeFeedViewModel {
             subCategoriesByTab.removeAll()
             selectedSubCategoryByTab.removeAll()
             loadingTabs.removeAll()
+            loadedTabs.removeAll()
             loadingMoreTabs.removeAll()
             hasMoreByTab.removeAll()
             errorByTab.removeAll()
@@ -35,12 +37,13 @@ public final class HomeFeedViewModel {
     public func selectSubCategory(_ section: HomeSection, for tab: HomeTabType, appState: AppState) async {
         selectedSubCategoryByTab[tab] = section
         rowsByTab[tab] = []
+        loadedTabs.remove(tab)
         await loadInitial(tab: tab, appState: appState, force: true)
     }
 
     public func loadInitial(tab: HomeTabType, appState: AppState, force: Bool = false) async {
         syncSessionIfNeeded(appState: appState)
-        if !force, let existing = rowsByTab[tab], !existing.isEmpty { return }
+        if !force, loadedTabs.contains(tab), let existing = rowsByTab[tab], !existing.isEmpty { return }
         guard !loadingTabs.contains(tab) else { return }
 
         loadingTabs.insert(tab)
@@ -51,6 +54,7 @@ public final class HomeFeedViewModel {
         let expectedSession = appState.sessionVersion
         await fetch(tab: tab, page: 1, append: false, appState: appState, expectedSession: expectedSession)
         loadingTabs.remove(tab)
+        loadedTabs.insert(tab)
     }
 
     public func loadMore(tab: HomeTabType, appState: AppState) async {
@@ -73,6 +77,22 @@ public final class HomeFeedViewModel {
                 loaded = try await API.homeFeed(page: page)
             case .hot:
                 loaded = try await API.pageFeed(pageName: "V9_HOME_TAB_RANKING", page: page)
+            case .headline:
+                loaded = try await API.headlineFeed(page: page)
+            case .question:
+                let primary = (try? await API.pageFeed(pageName: "V11_FIND_QUESTION", page: page)) ?? []
+                if !primary.isEmpty {
+                    loaded = primary
+                } else {
+                    loaded = try await API.linkFeed(link: "#/question/list", page: page)
+                }
+            case .goods:
+                let primary = (try? await API.pageFeed(pageName: "V11_FIND_GOODS", page: page)) ?? []
+                if !primary.isEmpty {
+                    loaded = primary
+                } else {
+                    loaded = try await API.linkFeed(link: "#/goods/feedList", page: page)
+                }
             case .topic:
                 if subCategoriesByTab[.topic]?.isEmpty != false {
                     let categories = try await API.topicVerticalTabs()
