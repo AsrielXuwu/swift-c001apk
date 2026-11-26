@@ -10,6 +10,10 @@ public enum EmojiBundleStore {
         return cache
     }()
 
+    public static func purgeCache() {
+        cache.removeAllObjects()
+    }
+
     public static let allNames: [String] = {
         let dir = Bundle.main.url(forResource: "Emoji", withExtension: nil)
             ?? Bundle.main.resourceURL?.appendingPathComponent("Emoji")

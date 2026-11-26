@@ -94,7 +94,7 @@ public struct FollowView: View {
                             viewModel.selectedTopicTag = topic.title
                             Task { await viewModel.loadInitial(segment: .topics, appState: appState, force: true) }
                         } label: {
-                            Text("#\(topic.title)")
+                            Text(TopicItem.cleanTitle(topic.title))
                                 .font(.caption.weight(selected ? .semibold : .medium))
                                 .padding(.horizontal, 11)
                                 .padding(.vertical, 6)

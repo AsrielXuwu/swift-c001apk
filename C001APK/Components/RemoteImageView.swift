@@ -77,6 +77,12 @@ public struct RemoteImageView: View {
                 didFail = true
             }
         }
+        .onDisappear {
+            // Release per-view strong UIImage retain once buried offscreen in deep NavigationStacks;
+            // synchronous NSCache lookup in body restores images immediately without flicker on pop.
+            loaded = nil
+            loadedKey = ""
+        }
     }
 }
 

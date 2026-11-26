@@ -51,7 +51,7 @@ public struct FeedRowView: View {
         .c001CardStyle(cornerRadius: 22)
         .padding(.horizontal, 12)
         .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .applyZoomSource(id: "feed-\(transitionSeed)", in: zoomNamespace)
+        .applyZoomSource(id: "feed-\(transitionSeed)", in: zoomNamespace, cornerRadius: 22)
         .onTapGesture {
             openFeedDetail()
         }
@@ -516,7 +516,7 @@ public struct FeedRelationEntitiesView: View {
                                 .foregroundStyle(Color.accentColor)
                                 .frame(width: iconSize, height: iconSize)
                         }
-                        Text(entity.title)
+                        Text(TopicItem.cleanTitle(entity.title))
                             .font(.caption.weight(.medium))
                             .foregroundStyle(.primary)
                             .lineLimit(1)

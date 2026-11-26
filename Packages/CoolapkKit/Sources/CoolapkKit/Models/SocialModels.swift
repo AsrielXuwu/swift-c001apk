@@ -582,9 +582,17 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
     public var selectedTab: String
     public var tabs: [HomeSection]
 
+    public static func cleanTitle(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stripped = trimmed
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.isEmpty ? trimmed : stripped
+    }
+
     public init(json: JSON) {
         id = json.id.exists ? json.id.identifier : json.entityId.identifier
-        title = json.title.string
+        title = Self.cleanTitle(json.title.string)
         description = json.description.string
         logo = json.logo.string.isEmpty ? json.pic.string : json.logo.string
         let rawFeedTxt = [

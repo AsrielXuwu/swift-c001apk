@@ -24,9 +24,17 @@ public extension EnvironmentValues {
 
 public extension View {
     @ViewBuilder
-    func applyZoomSource(id: String?, in namespace: Namespace.ID?) -> some View {
+    func applyZoomSource(id: String?, in namespace: Namespace.ID?, cornerRadius: CGFloat? = nil) -> some View {
         if let id, let namespace {
-            self.matchedTransitionSource(id: id, in: namespace)
+            if let cornerRadius {
+                self.matchedTransitionSource(id: id, in: namespace) { configuration in
+                    configuration
+                        .background(Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                }
+            } else {
+                self.matchedTransitionSource(id: id, in: namespace)
+            }
         } else {
             self
         }

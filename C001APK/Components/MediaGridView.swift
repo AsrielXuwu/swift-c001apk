@@ -326,6 +326,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
     public var cornerRadius: CGFloat = 18
     public var adaptiveContentMode: Bool = false
     public var adaptivePerItemAspect: Bool = true
+    public var initialWidth: CGFloat? = nil
     public let onTapCard: (Int) -> Void
     @ViewBuilder public let contextMenuBuilder: (FeedMedia, Int) -> MenuContent
 
@@ -335,7 +336,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
     @State private var lastDragEndedAt: Date = .distantPast
-    @State private var availableWidth: CGFloat = 320
+    @State private var availableWidth: CGFloat
     @State private var detectedRatios: [Int: CGFloat] = [:]
 
     public init(
@@ -348,6 +349,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         cornerRadius: CGFloat = 18,
         adaptiveContentMode: Bool = false,
         adaptivePerItemAspect: Bool = true,
+        initialWidth: CGFloat? = nil,
         onTapCard: @escaping (Int) -> Void,
         @ViewBuilder contextMenuBuilder: @escaping (FeedMedia, Int) -> MenuContent
     ) {
@@ -360,6 +362,8 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         self.cornerRadius = cornerRadius
         self.adaptiveContentMode = adaptiveContentMode
         self.adaptivePerItemAspect = adaptivePerItemAspect
+        self.initialWidth = initialWidth
+        self._availableWidth = State(initialValue: initialWidth ?? 320)
         self.onTapCard = onTapCard
         self.contextMenuBuilder = contextMenuBuilder
     }
@@ -426,14 +430,14 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                             ZStack {
                                 RemoteImageView(
                                     url: item.thumbnailUrl,
-                                    maxPixelSize: 320,
+                                    maxPixelSize: 120,
                                     contentMode: .fill
                                 )
-                                .blur(radius: 20)
+                                .blur(radius: 14)
                                 .opacity(0.45)
                                 RemoteImageView(
                                     url: item.sourceUrl,
-                                    maxPixelSize: 1200,
+                                    maxPixelSize: 960,
                                     contentMode: .fit
                                 ) { size in
                                     updateDetectedRatio(index: itemIndex, size: size)
@@ -442,7 +446,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                         } else {
                             RemoteImageView(
                                 url: adaptiveContentMode ? item.sourceUrl : item.thumbnailUrl,
-                                maxPixelSize: adaptiveContentMode ? 1200 : 1080,
+                                maxPixelSize: adaptiveContentMode ? 960 : 1080,
                                 contentMode: .fill
                             ) { size in
                                 updateDetectedRatio(index: itemIndex, size: size)
@@ -589,8 +593,8 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         }
         .frame(maxWidth: .infinity)
         .frame(height: visibleLayers > 1 ? maxCardHeight + bottomInset + 2 : maxCardHeight)
-        .animation(.interpolatingSpring(stiffness: 220, damping: 24), value: activeCardSize)
-        .animation(.interpolatingSpring(stiffness: 220, damping: 24), value: maxCardHeight)
+        .animation(adaptivePerItemAspect ? .interpolatingSpring(stiffness: 220, damping: 24) : nil, value: activeCardSize)
+        .animation(adaptivePerItemAspect ? .interpolatingSpring(stiffness: 220, damping: 24) : nil, value: maxCardHeight)
         .onGeometryChange(for: CGFloat.self) { proxy in
             proxy.size.width
         } action: { _, newWidth in
@@ -793,6 +797,11 @@ public struct AnimatedGIFView: UIViewRepresentable {
 
     public func makeCoordinator() -> Coordinator { Coordinator() }
 
+    public static func dismantleUIView(_ uiView: UIImageView, coordinator: Coordinator) {
+        uiView.image = nil
+        coordinator.lastDataHash = 0
+    }
+
     @MainActor
     public final class Coordinator {
         var lastDataHash: Int = 0
@@ -803,10 +812,22 @@ public struct AnimatedGIFView: UIViewRepresentable {
         let count = CGImageSourceGetCount(source)
         guard count > 1 else { return UIImage(data: data) }
 
+        let strideStep = max(1, count / 90)
+        let thumbOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: 900
+        ]
+
         var frames: [UIImage] = []
         var totalDuration: TimeInterval = 0
-        for index in 0..<count {
-            guard let cgImage = CGImageSourceCreateImageAtIndex(source, index, nil) else { continue }
+        var index = 0
+        while index < count {
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, index, thumbOptions as CFDictionary)
+                ?? CGImageSourceCreateImageAtIndex(source, index, nil) else {
+                index += strideStep
+                continue
+            }
             var frameDuration: TimeInterval = 0.1
             if let props = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any],
                let gifProps = props[kCGImagePropertyGIFDictionary] as? [CFString: Any] {
@@ -817,8 +838,9 @@ public struct AnimatedGIFView: UIViewRepresentable {
                 }
             }
             if frameDuration < 0.02 { frameDuration = 0.08 }
-            totalDuration += frameDuration
+            totalDuration += frameDuration * Double(strideStep)
             frames.append(UIImage(cgImage: cgImage))
+            index += strideStep
         }
         guard !frames.isEmpty else { return nil }
         return UIImage.animatedImage(with: frames, duration: max(0.1, totalDuration))
@@ -1041,6 +1063,11 @@ private struct HorizontalDeckPanOverlay: UIViewRepresentable {
         context.coordinator.onTap = onTap
         context.coordinator.onDragChanged = onDragChanged
         context.coordinator.onDragEnded = onDragEnded
+    }
+
+    static func dismantleUIView(_ uiView: OverlayView, coordinator: Coordinator) {
+        uiView.isUserInteractionEnabled = false
+        coordinator.isEnabled = false
     }
 
     final class OverlayView: UIView {

@@ -742,7 +742,7 @@ public struct TopicRowView: View {
                     .frame(width: 44, height: 44)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("#\(topic.title)#")
+                    Text(TopicItem.cleanTitle(topic.title))
                         .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
                     let statsText: String = {
@@ -768,7 +768,7 @@ public struct TopicRowView: View {
             .c001CardStyle(cornerRadius: 20)
             .padding(.horizontal, 12)
             .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .applyZoomSource(id: "topic-\(transitionSeed)", in: zoomNamespace)
+            .applyZoomSource(id: "topic-\(transitionSeed)", in: zoomNamespace, cornerRadius: 20)
         }
         .buttonStyle(.plain)
     }

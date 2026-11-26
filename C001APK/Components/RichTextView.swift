@@ -74,6 +74,13 @@ public struct RichTextView: UIViewRepresentable {
         return CGSize(width: width, height: ceil(fitted.height))
     }
 
+    public static func dismantleUIView(_ uiView: UITextView, coordinator: Coordinator) {
+        uiView.delegate = nil
+        uiView.attributedText = nil
+        coordinator.onLinkTap = nil
+        coordinator.onCardTap = nil
+    }
+
     @MainActor
     public final class Coordinator: NSObject, UITextViewDelegate {
         var onLinkTap: ((String) -> Void)?

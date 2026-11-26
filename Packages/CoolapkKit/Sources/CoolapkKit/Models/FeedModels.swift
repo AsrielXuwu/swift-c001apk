@@ -731,7 +731,7 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         var builtRelations: [FeedRelationEntity] = []
         var seenRelationKeys = Set<String>()
         func appendRelation(id: String, title: String, url: String, pic: String, entityType: String) {
-            let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanTitle = TopicItem.cleanTitle(title)
             let cleanURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !cleanTitle.isEmpty || !cleanURL.isEmpty else { return }
             let dedupeKey = cleanTitle.isEmpty ? cleanURL.lowercased() : cleanTitle.lowercased()

@@ -173,6 +173,12 @@ public struct UserDetailView: View {
                 profile = try? await API.userProfile(uid: uid)
                 await reloadTab(tab, force: true)
             }
+            .onDisappear {
+                for task in tabTasks.values {
+                    task.cancel()
+                }
+                tabTasks.removeAll()
+            }
         }
     }
 

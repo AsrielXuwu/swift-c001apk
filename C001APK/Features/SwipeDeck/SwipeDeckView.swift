@@ -11,8 +11,6 @@ public struct SwipeDeckView: View {
     @State private var isHorizontalDragging = false
     @State private var canDragCardFromStart = false
     @State private var lastDragEndedAt: Date = .distantPast
-    @State private var mediaFramesByCard: [String: CGRect] = [:]
-    @State private var photoPhaseByCard: [String: CGFloat] = [:]
     @State private var shareFileURL: URL?
 
     public init() {}
@@ -56,28 +54,21 @@ public struct SwipeDeckView: View {
                     let cardHeight = min(max(geo.size.height - 54, 410), max(430, geo.size.height * 0.83))
                     let mediaHeight = floor(cardHeight * 0.67)
                     let currentCard = viewModel.cards[safe: viewModel.currentIndex]
+                    let stagePhase = clampedPhase(maxIndex: max(0, viewModel.cards.count - 1))
+                    let baseSlot = Int(floor(stagePhase))
+                    let lowSlot = max(0, baseSlot - 1)
+                    let highSlot = min(max(0, viewModel.cards.count - 1), baseSlot + 2)
+                    let visibleSlots = !viewModel.cards.isEmpty && lowSlot <= highSlot ? Array(lowSlot...highSlot) : []
+                    let mediaHitZone = CGRect(x: 12, y: 12, width: max(120, cardWidth - 24), height: max(120, mediaHeight - 12))
 
                     ZStack {
-                        SwipeFeedDeckStage(
-                            phase: clampedPhase(maxIndex: max(0, viewModel.cards.count - 1)),
-                            count: viewModel.cards.count,
-                            cardWidth: cardWidth,
-                            cardHeight: cardHeight
-                        ) { index, isFront in
+                        ForEach(visibleSlots, id: \.self) { index in
                             let card = viewModel.cards[index]
                             SwipeFeedCardItemView(
                                 card: card,
                                 cardWidth: cardWidth,
                                 cardHeight: cardHeight,
                                 mediaHeight: mediaHeight,
-                                isFront: isFront,
-                                photoDeckPhase: Binding(
-                                    get: { photoPhaseByCard[card.id] ?? 0 },
-                                    set: { photoPhaseByCard[card.id] = $0 }
-                                ),
-                                onMediaFrameChanged: { rect in
-                                    mediaFramesByCard[card.id] = rect
-                                },
                                 onOpenFeed: {
                                     guard Date().timeIntervalSince(lastDragEndedAt) > 0.25 else { return }
                                     openFeedDetail(card.feed, transitionID: "swipe-card-\(card.id)")
@@ -89,6 +80,12 @@ public struct SwipeDeckView: View {
                                     shareFileURL = url
                                 }
                             )
+                            .id(card.id)
+                            .modifier(SwipeCardOrbitalMotionModifier(
+                                phase: stagePhase,
+                                slot: index,
+                                cardWidth: cardWidth
+                            ))
                         }
                         .frame(width: cardWidth, height: cardHeight)
                         .offset(y: -12)
@@ -104,8 +101,7 @@ public struct SwipeDeckView: View {
                                     // Inside a multi-photo stacked image zone, let the inner PhotoStackCardView own horizontal swipes.
                                     if let card = currentCard,
                                        card.feed.mediaItems.count > 1,
-                                       let mediaRect = mediaFramesByCard[card.id],
-                                       mediaRect.contains(value.startLocation) {
+                                       mediaHitZone.contains(value.startLocation) {
                                         canDragCardFromStart = false
                                         return
                                     }
@@ -229,8 +225,6 @@ public struct SwipeDeckView: View {
     private func reloadDeck(force: Bool) async {
         deckPhase = 0
         dragProgress = 0
-        mediaFramesByCard.removeAll()
-        photoPhaseByCard.removeAll()
         await viewModel.reload(appState: appState, force: force)
     }
 
@@ -260,15 +254,13 @@ private struct SwipeFeedCardItemView: View {
     let cardWidth: CGFloat
     let cardHeight: CGFloat
     let mediaHeight: CGFloat
-    let isFront: Bool
-    @Binding var photoDeckPhase: CGFloat
-    let onMediaFrameChanged: (CGRect) -> Void
     let onOpenFeed: () -> Void
     let onToggleLike: () -> Void
     let onShareFile: (URL) -> Void
 
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var photoDeckPhase: CGFloat = 0
     @State private var transitionSeed = UUID().uuidString
 
     var body: some View {
@@ -285,10 +277,11 @@ private struct SwipeFeedCardItemView: View {
                         transitionSeed: transitionSeed,
                         enableZoomSource: false,
                         disableHDR: appState.settings.disableHDR,
-                        cardHeight: max(220, mediaHeight - 24),
+                        cardHeight: max(200, mediaHeight - 32),
                         cornerRadius: 20,
                         adaptiveContentMode: true,
                         adaptivePerItemAspect: false,
+                        initialWidth: max(180, cardWidth - 24),
                         onTapCard: { idx in
                             appState.openMedia(items, at: idx, sourcePrefix: "swipe-media-\(transitionSeed)")
                         },
@@ -304,16 +297,6 @@ private struct SwipeFeedCardItemView: View {
                     )
                     .padding(.horizontal, 12)
                     .padding(.top, 12)
-                    .background {
-                        Color.clear
-                            .onGeometryChange(for: CGRect.self) { proxy in
-                                proxy.frame(in: .named("SwipeCardStageSpace"))
-                            } action: { _, rect in
-                                if isFront {
-                                    onMediaFrameChanged(rect)
-                                }
-                            }
-                    }
                 } else if let first = items.first {
                     singlePortraitMedia(item: first)
                         .padding(.horizontal, 12)
@@ -373,7 +356,7 @@ private struct SwipeFeedCardItemView: View {
                                 appState.push(.topic(tag: firstTag.title))
                             }
                         } label: {
-                            Text("#\(firstTag.title)")
+                            Text(TopicItem.cleanTitle(firstTag.title))
                                 .font(.caption2.weight(.medium))
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
@@ -392,9 +375,8 @@ private struct SwipeFeedCardItemView: View {
                             .foregroundStyle(.primary)
                             .lineLimit(1)
                     }
-                    let summary = FeedHTMLParser.plainText(feed.message).trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !summary.isEmpty {
-                        Text(summary)
+                    if !card.plainSummary.isEmpty {
+                        Text(card.plainSummary)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .lineLimit(feed.messageTitle.isEmpty ? 3 : 2)
@@ -471,8 +453,11 @@ private struct SwipeFeedCardItemView: View {
         }
         .frame(width: cardWidth, height: cardHeight)
         .c001CardStyle(cornerRadius: 28)
-        .shadow(color: .black.opacity(isFront ? 0.14 : 0.06), radius: isFront ? 18 : 8, y: isFront ? 8 : 3)
-        .applyZoomSource(id: isFront ? "swipe-card-\(card.id)" : nil, in: zoomNamespace)
+        .overlay {
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.75)
+        }
+        .applyZoomSource(id: "swipe-card-\(card.id)", in: zoomNamespace, cornerRadius: 28)
     }
 
     @ViewBuilder
@@ -490,13 +475,13 @@ private struct SwipeFeedCardItemView: View {
                 .overlay {
                     if shouldLetterboxWide {
                         ZStack {
-                            RemoteImageView(url: item.thumbnailUrl, maxPixelSize: 320, contentMode: .fill)
-                                .blur(radius: 20)
+                            RemoteImageView(url: item.thumbnailUrl, maxPixelSize: 120, contentMode: .fill)
+                                .blur(radius: 14)
                                 .opacity(0.45)
-                            RemoteImageView(url: item.sourceUrl, maxPixelSize: 1200, contentMode: .fit)
+                            RemoteImageView(url: item.sourceUrl, maxPixelSize: 960, contentMode: .fit)
                         }
                     } else {
-                        RemoteImageView(url: item.sourceUrl, maxPixelSize: 1200, contentMode: .fill)
+                        RemoteImageView(url: item.sourceUrl, maxPixelSize: 960, contentMode: .fill)
                     }
                 }
                 .clipped()
@@ -559,41 +544,28 @@ private struct SwipeFeedCardItemView: View {
     }
 }
 
-private struct SwipeFeedDeckStage<CardContent: View>: View, @MainActor Animatable {
+private struct SwipeCardOrbitalMotionModifier: ViewModifier, @MainActor Animatable {
     var phase: CGFloat
-    let count: Int
+    let slot: Int
     let cardWidth: CGFloat
-    let cardHeight: CGFloat
-    @ViewBuilder let cardBuilder: (Int, Bool) -> CardContent
 
     var animatableData: CGFloat {
         get { phase }
         set { phase = newValue }
     }
 
-    var body: some View {
-        let baseSlot = Int(floor(phase))
-        let low = max(0, baseSlot - 1)
-        let high = min(max(0, count - 1), baseSlot + 2)
-        let visibleSlots = count > 0 && low <= high ? Array(low...high) : []
-        let activeRounded = max(0, min(max(0, count - 1), Int(phase.rounded())))
+    func body(content: Content) -> some View {
+        let t = CGFloat(slot) - phase
+        let isFront = abs(t) < 0.35
+        let geometry = cardGeometry(for: t)
 
-        ZStack {
-            ForEach(visibleSlots, id: \.self) { slot in
-                let t = CGFloat(slot) - phase
-                let isFront = (slot == activeRounded) && abs(t) < 0.35
-                let geometry = cardGeometry(for: t)
-
-                cardBuilder(slot, isFront)
-                    .scaleEffect(geometry.scale)
-                    .rotationEffect(.degrees(geometry.angle))
-                    .offset(x: geometry.x, y: geometry.y)
-                    .opacity(geometry.opacity)
-                    .zIndex(geometry.zIndex)
-                    .allowsHitTesting(isFront)
-            }
-        }
-        .frame(width: cardWidth, height: cardHeight)
+        content
+            .scaleEffect(geometry.scale)
+            .rotationEffect(.degrees(geometry.angle))
+            .offset(x: geometry.x, y: geometry.y)
+            .opacity(geometry.opacity)
+            .zIndex(geometry.zIndex)
+            .allowsHitTesting(isFront)
     }
 
     private struct CardGeometry {
@@ -631,12 +603,13 @@ private struct SwipeFeedDeckStage<CardContent: View>: View, @MainActor Animatabl
             }
         } else {
             let capped = min(2.0, t)
+            let fade = t <= 1.2 ? 1.0 : max(0.0, 1.0 - Double((t - 1.2) / 0.8))
             return CardGeometry(
                 x: capped * 17.0,
                 y: capped * 18.0,
                 scale: 1.0 - capped * 0.058,
                 angle: Double(capped) * 4.2,
-                opacity: t <= 1.0 ? 1.0 - Double(capped) * 0.04 : max(0.0, 0.96 - Double(capped - 1.0) * 0.18),
+                opacity: t <= 1.0 ? 1.0 - Double(capped) * 0.04 : 0.96 * fade,
                 zIndex: 80.0 - Double(capped) * 15.0
             )
         }

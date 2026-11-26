@@ -48,7 +48,16 @@ public final class AppState {
     public var followDoubleTapTrigger: Int = 0
     public var swipeDoubleTapTrigger: Int = 0
     public var feedRefreshTrigger: Int = 0
-    public var pageTabSelections: [String: String] = [:]
+    public var pageTabSelections: [String: String] = [:] {
+        didSet {
+            if pageTabSelections.count > 120 {
+                let overflow = pageTabSelections.count - 80
+                for key in pageTabSelections.keys.prefix(overflow) {
+                    pageTabSelections.removeValue(forKey: key)
+                }
+            }
+        }
+    }
     public var homeSelectedTab: HomeTabType = .feed
     public var favoritePickerFeed: FeedItem?
 

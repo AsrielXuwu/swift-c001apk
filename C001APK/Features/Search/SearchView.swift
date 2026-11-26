@@ -277,7 +277,7 @@ public struct SearchView: View {
                         .monospacedDigit()
                         .foregroundStyle(rank <= 3 ? Color.red : Color.secondary)
                         .frame(width: 22)
-                    Text("#\(topic.title)#")
+                    Text(TopicItem.cleanTitle(topic.title))
                         .font(.subheadline.weight(.medium))
                         .foregroundStyle(.primary)
                     Spacer()

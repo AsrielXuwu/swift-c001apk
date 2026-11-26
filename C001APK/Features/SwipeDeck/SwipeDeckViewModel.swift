@@ -5,12 +5,14 @@ import Observation
 public struct SwipeFeedCard: Identifiable, Hashable, Sendable {
     public var feed: FeedItem
     public let sourceLabel: String
+    public let plainSummary: String
 
     public var id: String { feed.id }
 
     public init(feed: FeedItem, sourceLabel: String) {
         self.feed = feed
         self.sourceLabel = sourceLabel
+        self.plainSummary = FeedHTMLParser.plainText(feed.message).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
@@ -99,10 +101,12 @@ public final class SwipeDeckViewModel {
             errorMessage = "暂未找到带图动态，下拉或点击换一批重试"
         } else {
             appendFilteredCards(batch, appState: appState)
+            prefetchAdjacentMedia(around: currentIndex)
         }
     }
 
     public func loadMoreIfNeeded(appState: AppState) async {
+        prefetchAdjacentMedia(around: currentIndex)
         guard !isLoading, !isLoadingMore, currentIndex >= max(0, cards.count - 5) else { return }
         isLoadingMore = true
         let expectedSession = appState.sessionVersion
@@ -111,6 +115,20 @@ public final class SwipeDeckViewModel {
         let batch = await fetchMixedBatch(appState: appState, batchSize: 3)
         guard expectedSession == appState.sessionVersion else { return }
         appendFilteredCards(batch, appState: appState)
+    }
+
+    public func prefetchAdjacentMedia(around index: Int) {
+        let candidateIndices = [index + 1, index + 2]
+        let urls = candidateIndices.compactMap { idx -> String? in
+            guard cards.indices.contains(idx) else { return nil }
+            return cards[idx].feed.mediaItems.first?.sourceUrl
+        }.filter { !$0.isEmpty }
+        guard !urls.isEmpty else { return }
+        Task(priority: .utility) {
+            for url in urls {
+                _ = await ImagePipeline.shared.loadImage(urlString: url, maxPixelSize: 960, preferHDR: false)
+            }
+        }
     }
 
     public func toggleLike(for cardID: String, appState: AppState) async {
@@ -180,7 +198,7 @@ public final class SwipeDeckViewModel {
             if let extraTopicTag, let extraTopicPage, sourceMode == .all || sourceMode == .topic {
                 group.addTask {
                     let rows = (try? await API.topicFeeds(tag: extraTopicTag, page: extraTopicPage)) ?? []
-                    return Self.extractMediaFeeds(from: rows, sourceLabel: "#\(extraTopicTag)#")
+                    return Self.extractMediaFeeds(from: rows, sourceLabel: TopicItem.cleanTitle(extraTopicTag))
                 }
             }
 

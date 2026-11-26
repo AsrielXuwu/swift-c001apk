@@ -33,6 +33,7 @@ struct C001APKApp: App {
                 }
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didReceiveMemoryWarningNotification)) { _ in
                     RichTextRenderer.purgeCache()
+                    EmojiBundleStore.purgeCache()
                     Task { await ImagePipeline.shared.purgeMemory() }
                 }
         }

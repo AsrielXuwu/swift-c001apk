@@ -97,7 +97,7 @@ public struct TopicDetailView: View {
                     )
                 }
             }
-            .navigationTitle(topic?.title.isEmpty == false ? "#\(topic!.title)#" : "#\(tag)#")
+            .navigationTitle(topic?.title.isEmpty == false ? TopicItem.cleanTitle(topic!.title) : TopicItem.cleanTitle(tag))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let topic, compactNavProgress > 0.08 {
@@ -195,7 +195,7 @@ public struct TopicDetailView: View {
                             .clipped()
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         VStack(alignment: .leading, spacing: 4) {
-                            Text("#\(topic.title)#").font(.headline)
+                            Text(TopicItem.cleanTitle(topic.title)).font(.headline)
                             Text(topicStatsText(topic))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
@@ -271,7 +271,7 @@ public struct TopicDetailView: View {
         } else if !topic.feedNumText.isEmpty {
             primary = "\(topic.feedNumText) 讨论"
         } else {
-            primary = "#\(topic.title)#"
+            primary = TopicItem.cleanTitle(topic.title)
         }
         let discussPart = topic.feedNum > 0
             ? "\(Formatting.count(topic.feedNum)) 讨论"
