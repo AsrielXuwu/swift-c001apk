@@ -33,12 +33,54 @@ public struct ProtocolParameters: Codable, Equatable, Hashable, Sendable {
             deviceBrand: deviceBrand,
             deviceModel: deviceModel,
             appVersion: appVersion,
-            appCode: appCode
+            appCode: appCode,
+            sdkInt: sdkInt
         )
-        self.deviceCode = deviceCode.isEmpty
-            ? CoolapkToken.makeDeviceCode(brand: deviceBrand, model: deviceModel)
-            : deviceCode
-        self.szlmID = szlmID
+        let build = CoolapkToken.buildID(forSDKInt: Int(sdkInt) ?? 35)
+        let trimmedSzlm = szlmID.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.szlmID = trimmedSzlm
+        if deviceCode.isEmpty {
+            self.deviceCode = CoolapkToken.makeDeviceCode(
+                brand: deviceBrand,
+                model: deviceModel,
+                build: build,
+                identifier: trimmedSzlm.isEmpty ? nil : trimmedSzlm
+            )
+        } else if !trimmedSzlm.isEmpty {
+            self.deviceCode = CoolapkToken.replacingDeviceIdentifier(
+                in: deviceCode,
+                with: trimmedSzlm,
+                brand: deviceBrand,
+                model: deviceModel,
+                build: build
+            )
+        } else {
+            self.deviceCode = deviceCode
+        }
+    }
+
+    /// Returns a copy whose `X-App-Device` slot 0 is synchronized with `szlmID` when present.
+    public func normalized() -> ProtocolParameters {
+        var copy = self
+        let trimmed = copy.szlmID.trimmingCharacters(in: .whitespacesAndNewlines)
+        copy.szlmID = trimmed
+        let build = CoolapkToken.buildID(forSDKInt: Int(copy.sdkInt) ?? 35)
+        if !trimmed.isEmpty {
+            copy.deviceCode = CoolapkToken.replacingDeviceIdentifier(
+                in: copy.deviceCode,
+                with: trimmed,
+                brand: copy.deviceBrand,
+                model: copy.deviceModel,
+                build: build
+            )
+        } else if copy.deviceCode.isEmpty {
+            copy.deviceCode = CoolapkToken.makeDeviceCode(
+                brand: copy.deviceBrand,
+                model: copy.deviceModel,
+                build: build
+            )
+        }
+        return copy
     }
 }
 
@@ -52,6 +94,21 @@ public struct LoginSubmissionResult: Sendable {
     public let messageStatus: String
 }
 
+private struct PersistedAPISession: Codable, Sendable {
+    var identity: String
+    var value: String
+    var domain: String
+    var path: String
+    var expiresAt: TimeInterval
+}
+
+private struct PersistedCaptchaValidation: Codable, Sendable {
+    var identity: String
+    var sessionHash: String
+    var value: String
+    var expiresAt: TimeInterval
+}
+
 /// Actor-isolated Coolapk HTTP client handling signed headers, session generation, captcha proof, and OSS uploads.
 public actor CoolapkClient {
     public static let shared = CoolapkClient()
@@ -62,9 +119,6 @@ public actor CoolapkClient {
 
     private let session: URLSession
     private var params: ProtocolParameters
-    private var cachedToken: String?
-    private var tokenDate: Date = .distantPast
-    private let tokenLifetime: TimeInterval = 15
     private var inFlightGETs: [String: Task<JSON, Error>] = [:]
     private var hasBootstrappedSession = false
 
@@ -75,14 +129,22 @@ public actor CoolapkClient {
     private var sessid: String = ""
     private var loginSessionCookies: [String: String] = [:]
     private var apiSessionCookies: [String: String] = [:]
+    private var persistedAPISession: PersistedAPISession?
 
-    private var captchaProof: String?
-    private var captchaProofExpiresAt: Date?
-    private var captchaProofScope: String = ""
+    /// In-memory proof for `validate=` cookie during verification retry; promoted to persistent storage once accepted.
+    private var memoryCaptchaProof: String?
+    private var memoryCaptchaExpiresAt: Date?
+    private var memoryCaptchaIdentity: String = ""
+    private var memoryCaptchaSessionHash: String = ""
 
-    private static let captchaProofDefaultsKey = "c001apk.captchaProof.v1"
-    private static let captchaExpiryDefaultsKey = "c001apk.captchaExpiry.v1"
-    private static let captchaScopeDefaultsKey = "c001apk.captchaScope.v1"
+    private var persistedCaptchaValidation: PersistedCaptchaValidation?
+
+    /// One-shot field proof when server asks for `captchaField` (e.g. `_v2_post_token`).
+    private var pendingFieldProof: (field: String, proof: String, identity: String, expiresAt: Date)?
+
+    private static let apiSessionDefaultsKey = "c001apk.apiSession.v1"
+    private static let captchaValidationDefaultsKey = "c001apk.apiValidation.v1"
+    private static let apiSessionMaxAge: TimeInterval = 7 * 86400
 
     public var isLoggedIn: Bool { !token.isEmpty && !uid.isEmpty }
 
@@ -93,15 +155,21 @@ public actor CoolapkClient {
         configuration.httpAdditionalHeaders = ["Accept-Encoding": "gzip, deflate"]
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         session = URLSession(configuration: configuration)
-        self.params = parameters
+        self.params = parameters.normalized()
 
         let defaults = UserDefaults.standard
-        if let savedProof = defaults.string(forKey: Self.captchaProofDefaultsKey),
-           let savedExpiry = defaults.object(forKey: Self.captchaExpiryDefaultsKey) as? TimeInterval,
-           savedExpiry > Date().timeIntervalSince1970 {
-            self.captchaProof = savedProof
-            self.captchaProofExpiresAt = Date(timeIntervalSince1970: savedExpiry)
-            self.captchaProofScope = defaults.string(forKey: Self.captchaScopeDefaultsKey) ?? ""
+        let now = Date().timeIntervalSince1970
+        if let sessionData = defaults.data(forKey: Self.apiSessionDefaultsKey),
+           let decoded = try? JSONDecoder().decode(PersistedAPISession.self, from: sessionData),
+           decoded.expiresAt > now,
+           !decoded.value.isEmpty {
+            self.persistedAPISession = decoded
+        }
+        if let valData = defaults.data(forKey: Self.captchaValidationDefaultsKey),
+           let decoded = try? JSONDecoder().decode(PersistedCaptchaValidation.self, from: valData),
+           decoded.expiresAt > now,
+           !decoded.value.isEmpty {
+            self.persistedCaptchaValidation = decoded
         }
     }
 
@@ -110,14 +178,18 @@ public actor CoolapkClient {
     public func currentParameters() -> ProtocolParameters { params }
 
     public func updateParameters(_ updated: ProtocolParameters) {
-        if updated.deviceCode != params.deviceCode || updated.appCode != params.appCode {
-            invalidateToken()
+        let normalized = updated.normalized()
+        let deviceChanged = normalized.deviceCode != params.deviceCode
+        params = normalized
+        if deviceChanged {
+            clearAPISessionAndValidation()
         }
-        params = updated
     }
 
     public func applySzlmID(_ id: String) {
-        params.szlmID = id
+        var updated = params
+        updated.szlmID = id
+        updateParameters(updated)
     }
 
     public func bootstrapSession(
@@ -127,19 +199,22 @@ public actor CoolapkClient {
         token: String,
         sessid: String
     ) {
-        if parameters.deviceCode != params.deviceCode || parameters.appCode != params.appCode {
-            invalidateToken()
-        }
-        params = parameters
+        let normalized = parameters.normalized()
+        let deviceChanged = normalized.deviceCode != params.deviceCode
+        params = normalized
         self.uid = uid
         self.username = username
         self.token = token
         self.sessid = sessid
         hasBootstrappedSession = true
+        if deviceChanged {
+            apiSessionCookies.removeAll()
+        }
+        pruneMismatchedSessionAndValidation()
     }
 
     public func updateLogin(uid: String, username: String, token: String, sessid: String = "") {
-        let uidChanged = self.uid != uid
+        let uidChanged = self.uid != uid || self.token != token
         if hasBootstrappedSession {
             sessionGeneration += 1
         }
@@ -151,8 +226,7 @@ public actor CoolapkClient {
             self.sessid = sessid
         }
         if uidChanged {
-            clearCaptchaState()
-            apiSessionCookies.removeAll()
+            clearAPISessionAndValidation()
         }
     }
 
@@ -165,49 +239,138 @@ public actor CoolapkClient {
         username = ""
         token = ""
         sessid = ""
-        clearCaptchaState()
-        apiSessionCookies.removeAll()
+        clearAPISessionAndValidation()
     }
 
     public func sessionSnapshot() -> (generation: Int, uid: String, username: String, token: String, sessid: String) {
         (sessionGeneration, uid, username, token, sessid)
     }
 
-    private func currentCaptchaScope() -> String {
-        "\(uid)|\(params.deviceCode)"
+    private func currentIdentityHash() -> String {
+        let raw = "\(params.deviceCode)|\(isLoggedIn)|\(isLoggedIn ? uid : "")|\(isLoggedIn ? token : "")"
+        let digest = SHA256.hash(data: Data(raw.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    public func setCaptchaProof(_ proof: String) {
+    private func activeAPISessionValue(for url: URL?) -> String {
+        let identity = currentIdentityHash()
+        let now = Date().timeIntervalSince1970
+        if let saved = persistedAPISession,
+           saved.identity == identity,
+           saved.expiresAt > now {
+            if let url, let host = url.host?.lowercased() {
+                let domainMatch = saved.domain == "coolapk.com" || saved.domain == host
+                let pathMatch = url.path == saved.path || url.path.hasPrefix(saved.path.hasSuffix("/") ? saved.path : "\(saved.path)/")
+                if domainMatch && pathMatch {
+                    return saved.value
+                }
+            } else {
+                return saved.value
+            }
+        }
+        if let mem = apiSessionCookies["SESSID"], !mem.isEmpty {
+            return mem
+        }
+        return sessid
+    }
+
+    private func currentSessionHash() -> String {
+        let val = activeAPISessionValue(for: nil)
+        let digest = SHA256.hash(data: Data(val.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func pruneMismatchedSessionAndValidation() {
+        let identity = currentIdentityHash()
+        let now = Date().timeIntervalSince1970
+        if let saved = persistedAPISession, (saved.identity != identity || saved.expiresAt <= now) {
+            persistedAPISession = nil
+            UserDefaults.standard.removeObject(forKey: Self.apiSessionDefaultsKey)
+        }
+        let sHash = currentSessionHash()
+        if let val = persistedCaptchaValidation,
+           (val.identity != identity || val.sessionHash != sHash || val.expiresAt <= now) {
+            persistedCaptchaValidation = nil
+            UserDefaults.standard.removeObject(forKey: Self.captchaValidationDefaultsKey)
+        }
+    }
+
+    private func clearAPISessionAndValidation() {
+        apiSessionCookies.removeAll()
+        persistedAPISession = nil
+        UserDefaults.standard.removeObject(forKey: Self.apiSessionDefaultsKey)
+        clearCaptchaState()
+    }
+
+    public func setCaptchaProof(_ proof: String, field: String = "") {
         let encoded = proof.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? proof
-        let expiry = Date().addingTimeInterval(24 * 3600)
-        let scope = currentCaptchaScope()
-        captchaProof = encoded
-        captchaProofExpiresAt = expiry
-        captchaProofScope = scope
-        let defaults = UserDefaults.standard
-        defaults.set(encoded, forKey: Self.captchaProofDefaultsKey)
-        defaults.set(expiry.timeIntervalSince1970, forKey: Self.captchaExpiryDefaultsKey)
-        defaults.set(scope, forKey: Self.captchaScopeDefaultsKey)
+        let identity = currentIdentityHash()
+        if !field.isEmpty {
+            pendingFieldProof = (
+                field: field,
+                proof: proof,
+                identity: identity,
+                expiresAt: Date().addingTimeInterval(300)
+            )
+            return
+        }
+        memoryCaptchaProof = encoded
+        memoryCaptchaExpiresAt = Date().addingTimeInterval(24 * 3600)
+        memoryCaptchaIdentity = identity
+        memoryCaptchaSessionHash = currentSessionHash()
     }
 
     public func clearCaptchaState() {
-        captchaProof = nil
-        captchaProofExpiresAt = nil
-        captchaProofScope = ""
-        let defaults = UserDefaults.standard
-        defaults.removeObject(forKey: Self.captchaProofDefaultsKey)
-        defaults.removeObject(forKey: Self.captchaExpiryDefaultsKey)
-        defaults.removeObject(forKey: Self.captchaScopeDefaultsKey)
+        memoryCaptchaProof = nil
+        memoryCaptchaExpiresAt = nil
+        memoryCaptchaIdentity = ""
+        memoryCaptchaSessionHash = ""
+        pendingFieldProof = nil
+        persistedCaptchaValidation = nil
+        UserDefaults.standard.removeObject(forKey: Self.captchaValidationDefaultsKey)
     }
 
-    private func activeCaptchaProof() -> String? {
-        guard let proof = captchaProof,
-              captchaProofScope == currentCaptchaScope(),
-              let expires = captchaProofExpiresAt,
-              expires > Date() else {
-            return nil
+    private func activeCaptchaProof(for url: URL) -> String? {
+        let identity = currentIdentityHash()
+        let sHash = currentSessionHash()
+        let now = Date()
+        if let proof = memoryCaptchaProof,
+           memoryCaptchaIdentity == identity,
+           memoryCaptchaSessionHash == sHash,
+           let expires = memoryCaptchaExpiresAt,
+           expires > now {
+            return proof
         }
-        return proof
+        if let saved = persistedCaptchaValidation,
+           saved.identity == identity,
+           saved.sessionHash == sHash,
+           saved.expiresAt > now.timeIntervalSince1970 {
+            return saved.value
+        }
+        return nil
+    }
+
+    private func promoteAcceptedCaptchaProofIfNeeded(usedProof: String?, identityAtStart: String) {
+        guard let usedProof,
+              let memProof = memoryCaptchaProof,
+              usedProof == memProof,
+              identityAtStart == currentIdentityHash() else {
+            return
+        }
+        let persisted = PersistedCaptchaValidation(
+            identity: identityAtStart,
+            sessionHash: currentSessionHash(),
+            value: memProof,
+            expiresAt: Date().addingTimeInterval(24 * 3600).timeIntervalSince1970
+        )
+        persistedCaptchaValidation = persisted
+        if let encoded = try? JSONEncoder().encode(persisted) {
+            UserDefaults.standard.set(encoded, forKey: Self.captchaValidationDefaultsKey)
+        }
+        memoryCaptchaProof = nil
+        memoryCaptchaExpiresAt = nil
+        memoryCaptchaIdentity = ""
+        memoryCaptchaSessionHash = ""
     }
 
     private func buildCookieHeader(for url: URL) -> String {
@@ -219,77 +382,89 @@ public actor CoolapkClient {
             parts.append("username=\(encodedName)")
             parts.append("token=\(token)")
         }
-        if !sessid.isEmpty {
-            parts.append("SESSID=\(sessid)")
+        let effectiveSessid = activeAPISessionValue(for: url)
+        if !effectiveSessid.isEmpty {
+            parts.append("SESSID=\(effectiveSessid)")
         }
-        for (key, value) in apiSessionCookies.sorted(by: { $0.key < $1.key }) where key != "SESSID" {
+        for (key, value) in apiSessionCookies.sorted(by: { $0.key < $1.key })
+        where key != "SESSID" && key != "validate" && key != "uid" && key != "username" && key != "token" {
             parts.append("\(key)=\(value)")
         }
-        if url.scheme == "https", let proof = activeCaptchaProof() {
+        if url.scheme == "https", let proof = activeCaptchaProof(for: url) {
             parts.append("validate=\(proof)")
         }
         return parts.joined(separator: "; ")
     }
 
-    private func captureCookies(from response: HTTPURLResponse, target: inout [String: String]) {
+    private func captureCookies(
+        from response: HTTPURLResponse,
+        target: inout [String: String],
+        persistAPISession: Bool = false,
+        requestGeneration: Int? = nil,
+        requestIdentity: String? = nil
+    ) {
         guard let url = response.url,
               let allHeaders = response.allHeaderFields as? [String: String] else { return }
         let cookies = HTTPCookie.cookies(withResponseHeaderFields: allHeaders, for: url)
         for cookie in cookies where !cookie.name.isEmpty {
             target[cookie.name] = cookie.value
+            guard persistAPISession,
+                  cookie.name == "SESSID",
+                  let requestGeneration,
+                  let requestIdentity,
+                  requestGeneration == sessionGeneration,
+                  requestIdentity == currentIdentityHash(),
+                  let host = url.host?.lowercased(),
+                  host == "api.coolapk.com" || host == "api2.coolapk.com" else {
+                continue
+            }
+            let domain = (cookie.domain.isEmpty ? host : cookie.domain).trimmingCharacters(in: CharacterSet(charactersIn: ".")).lowercased()
+            let path = cookie.path.isEmpty ? "/" : cookie.path
+            guard domain == "coolapk.com" || domain == host else { continue }
+
+            let now = Date()
+            var expires = now.addingTimeInterval(Self.apiSessionMaxAge)
+            if let cookieExpiry = cookie.expiresDate, cookieExpiry < expires {
+                expires = cookieExpiry
+            }
+            if cookie.value.isEmpty || expires <= now {
+                persistedAPISession = nil
+                persistedCaptchaValidation = nil
+                UserDefaults.standard.removeObject(forKey: Self.apiSessionDefaultsKey)
+                UserDefaults.standard.removeObject(forKey: Self.captchaValidationDefaultsKey)
+            } else {
+                let record = PersistedAPISession(
+                    identity: requestIdentity,
+                    value: cookie.value,
+                    domain: domain,
+                    path: path,
+                    expiresAt: expires.timeIntervalSince1970
+                )
+                persistedAPISession = record
+                if let encoded = try? JSONEncoder().encode(record) {
+                    UserDefaults.standard.set(encoded, forKey: Self.apiSessionDefaultsKey)
+                }
+            }
         }
     }
 
     // MARK: - Token
 
     private func currentAppToken() async -> String {
-        if let cachedToken, Date().timeIntervalSince(tokenDate) < tokenLifetime {
-            return cachedToken
-        }
         let code = params.deviceCode
         let appCode = Int(params.appCode) ?? 2604201
-        let generated = await CoolapkToken.currentToken(deviceCode: code, appCode: appCode) ?? ""
-        cachedToken = generated
-        tokenDate = Date()
-        return generated
+        return await CoolapkToken.currentToken(deviceCode: code, appCode: appCode) ?? ""
     }
 
-    private func invalidateToken() {
-        cachedToken = nil
-        tokenDate = .distantPast
-    }
-
-    public func prepareForForeground(flushConnections: Bool) async {
-        invalidateToken()
+    public func prepareForForeground(flushConnections: Bool = false) async {
+        // Keep persistent HTTP/2 connections and session state intact across foreground transitions
+        // to match Android/Flutter clients and avoid unnecessary risk-control re-challenges.
         if flushConnections {
             await session.flush()
         }
     }
 
-    // MARK: - Core Requests
-
-    private func makeSignedRequest(
-        base: String,
-        path: String,
-        parameters: [String: String],
-        method: String,
-        body: Data?,
-        contentType: String?
-    ) async throws -> (Data, HTTPURLResponse?) {
-        let appToken = await currentAppToken()
-        let fullString = path.hasPrefix("http") ? path : base + path
-        var components = URLComponents(string: fullString)
-        if !parameters.isEmpty {
-            var items = components?.queryItems ?? []
-            for (key, value) in parameters where !value.isEmpty {
-                items.append(URLQueryItem(name: key, value: value))
-            }
-            components?.queryItems = items
-        }
-        guard let url = components?.url else { throw APIError.network("无效的请求地址") }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = method
+    private func applySignedClientHeaders(to request: inout URLRequest, appToken: String, includeAccept: Bool = true) {
         request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
         request.setValue(CoolapkToken.packageName, forHTTPHeaderField: "X-App-Id")
         request.setValue(params.appVersion, forHTTPHeaderField: "X-App-Version")
@@ -303,12 +478,41 @@ public actor CoolapkClient {
         request.setValue("universal", forHTTPHeaderField: "X-App-Mode")
         request.setValue("coolapk", forHTTPHeaderField: "X-App-Channel")
         request.setValue("0", forHTTPHeaderField: "X-Dark-Mode")
-        if !params.szlmID.isEmpty {
-            request.setValue(params.szlmID, forHTTPHeaderField: "X-App-Szlm-Id")
-        }
         request.setValue(params.userAgent, forHTTPHeaderField: "User-Agent")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
+        if includeAccept {
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            request.setValue("zh-CN,zh;q=0.9", forHTTPHeaderField: "Accept-Language")
+        }
+    }
+
+    // MARK: - Core Requests
+
+    private func makeSignedRequest(
+        base: String,
+        path: String,
+        parameters: [String: String],
+        method: String,
+        body: Data?,
+        contentType: String?,
+        requestGeneration: Int,
+        requestIdentity: String
+    ) async throws -> (Data, HTTPURLResponse?, String?) {
+        let appToken = await currentAppToken()
+        let fullString = path.hasPrefix("http") ? path : base + path
+        var components = URLComponents(string: fullString)
+        if !parameters.isEmpty {
+            var items = components?.queryItems ?? []
+            for (key, value) in parameters where !value.isEmpty {
+                items.append(URLQueryItem(name: key, value: value))
+            }
+            components?.queryItems = items
+        }
+        guard let url = components?.url else { throw APIError.network("无效的请求地址") }
+
+        let usedProof = url.scheme == "https" ? activeCaptchaProof(for: url) : nil
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        applySignedClientHeaders(to: &request, appToken: appToken)
 
         let cookieHeader = buildCookieHeader(for: url)
         if !cookieHeader.isEmpty {
@@ -325,13 +529,19 @@ public actor CoolapkClient {
             let (data, response) = try await session.data(for: request)
             let http = response as? HTTPURLResponse
             if let http {
-                captureCookies(from: http, target: &apiSessionCookies)
+                captureCookies(
+                    from: http,
+                    target: &apiSessionCookies,
+                    persistAPISession: true,
+                    requestGeneration: requestGeneration,
+                    requestIdentity: requestIdentity
+                )
                 if http.statusCode == 567 { throw APIError.blocked }
                 if http.statusCode != 200, (try? JSON(data: data)) == nil {
                     throw APIError.network("服务端返回异常（HTTP \(http.statusCode)）")
                 }
             }
-            return (data, http)
+            return (data, http, usedProof)
         } catch let error as APIError {
             throw error
         } catch is CancellationError {
@@ -341,6 +551,40 @@ public actor CoolapkClient {
         } catch {
             throw APIError.network(error.localizedDescription)
         }
+    }
+
+    private func consumePendingFieldProofIfValid() -> (field: String, proof: String)? {
+        guard let pending = pendingFieldProof else { return nil }
+        pendingFieldProof = nil
+        guard pending.identity == currentIdentityHash(), pending.expiresAt > Date() else {
+            return nil
+        }
+        return (pending.field, pending.proof)
+    }
+
+    private func injectFieldProof(
+        _ fieldProof: (field: String, proof: String),
+        intoParameters parameters: [String: String],
+        method: String,
+        body: Data?,
+        contentType: String?
+    ) -> ([String: String], Data?) {
+        if method == "GET" || body == nil {
+            var updated = parameters
+            updated[fieldProof.field] = fieldProof.proof
+            return (updated, body)
+        }
+        if let body,
+           let contentType,
+           contentType.contains("application/x-www-form-urlencoded"),
+           var bodyStr = String(data: body, encoding: .utf8) {
+            let pair = "\(urlFormEncode(fieldProof.field))=\(urlFormEncode(fieldProof.proof))"
+            bodyStr = bodyStr.isEmpty ? pair : "\(bodyStr)&\(pair)"
+            return (parameters, Data(bodyStr.utf8))
+        }
+        var updated = parameters
+        updated[fieldProof.field] = fieldProof.proof
+        return (updated, body)
     }
 
     private func perform(
@@ -353,21 +597,35 @@ public actor CoolapkClient {
         clearProofOnCaptcha: Bool = true
     ) async throws -> JSON {
         let initialGeneration = sessionGeneration
-        var attempt = 0
-        while true {
-            guard initialGeneration == sessionGeneration else {
-                throw APIError.sessionChanged
-            }
-            let usedProof = activeCaptchaProof()
-            let (data, _) = try await makeSignedRequest(
-                base: base,
-                path: path,
-                parameters: parameters,
+        let initialIdentity = currentIdentityHash()
+        var effectiveParameters = parameters
+        var effectiveBody = body
+        if let fieldProof = consumePendingFieldProofIfValid() {
+            (effectiveParameters, effectiveBody) = injectFieldProof(
+                fieldProof,
+                intoParameters: effectiveParameters,
                 method: method,
-                body: body,
+                body: effectiveBody,
                 contentType: contentType
             )
-            guard initialGeneration == sessionGeneration else {
+        }
+
+        var attempt = 0
+        while true {
+            guard initialGeneration == sessionGeneration, initialIdentity == currentIdentityHash() else {
+                throw APIError.sessionChanged
+            }
+            let (data, _, usedProof) = try await makeSignedRequest(
+                base: base,
+                path: path,
+                parameters: effectiveParameters,
+                method: method,
+                body: effectiveBody,
+                contentType: contentType,
+                requestGeneration: initialGeneration,
+                requestIdentity: initialIdentity
+            )
+            guard initialGeneration == sessionGeneration, initialIdentity == currentIdentityHash() else {
                 throw APIError.sessionChanged
             }
 
@@ -375,14 +633,12 @@ public actor CoolapkClient {
             do {
                 json = try JSON(data: data)
             } catch {
-                if attempt == 0 { attempt += 1; invalidateToken(); continue }
+                if attempt == 0 { attempt += 1; continue }
                 throw APIError.decoding
             }
 
             if let challenge = CaptchaChallenge.from(json: json) {
-                // Only clear captcha proof if it actually matched the rejected request;
-                // avoids wiping a fresher proof solved concurrently by another request or fallback chain.
-                if clearProofOnCaptcha, let usedProof, usedProof == captchaProof {
+                if clearProofOnCaptcha, usedProof != nil {
                     clearCaptchaState()
                 }
                 throw APIError.captchaRequired(challenge, message: json.message.string)
@@ -392,7 +648,7 @@ public actor CoolapkClient {
             if !json.message.isNull, status != 0, status != 1, status != 1000, !json.data.exists {
                 let text = json.message.string
                 if status == 1005 || text.contains("过期") {
-                    if attempt == 0 { attempt += 1; invalidateToken(); continue }
+                    if attempt == 0 { attempt += 1; continue }
                     throw APIError.expired
                 }
                 if text.contains("登录") {
@@ -410,10 +666,10 @@ public actor CoolapkClient {
 
             if status == 1005, attempt == 0 {
                 attempt += 1
-                invalidateToken()
                 continue
             }
 
+            promoteAcceptedCaptchaProofIfNeeded(usedProof: usedProof, identityAtStart: initialIdentity)
             CoolapkLog.log("\(method) \(path) -> status \(status) count \(json.data.array.count)")
             return json
         }
@@ -523,23 +779,7 @@ public actor CoolapkClient {
         }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
-        request.setValue(CoolapkToken.packageName, forHTTPHeaderField: "X-App-Id")
-        request.setValue(params.appVersion, forHTTPHeaderField: "X-App-Version")
-        request.setValue(params.appCode, forHTTPHeaderField: "X-App-Code")
-        request.setValue(params.appCode, forHTTPHeaderField: "X-App-Supported")
-        request.setValue(params.apiVersion, forHTTPHeaderField: "X-Api-Version")
-        request.setValue(appToken, forHTTPHeaderField: "X-App-Token")
-        request.setValue(params.deviceCode, forHTTPHeaderField: "X-App-Device")
-        request.setValue(params.sdkInt, forHTTPHeaderField: "X-Sdk-Int")
-        request.setValue("zh-CN", forHTTPHeaderField: "X-Sdk-Locale")
-        request.setValue("universal", forHTTPHeaderField: "X-App-Mode")
-        request.setValue("coolapk", forHTTPHeaderField: "X-App-Channel")
-        request.setValue("0", forHTTPHeaderField: "X-Dark-Mode")
-        if !params.szlmID.isEmpty {
-            request.setValue(params.szlmID, forHTTPHeaderField: "X-App-Szlm-Id")
-        }
-        request.setValue(params.userAgent, forHTTPHeaderField: "User-Agent")
+        applySignedClientHeaders(to: &request, appToken: appToken, includeAccept: false)
 
         let (data, _) = try await session.data(for: request)
         let json = try JSON(data: data)
@@ -822,22 +1062,7 @@ public actor CoolapkClient {
         let appToken = await currentAppToken()
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
-        request.setValue("XMLHttpRequest", forHTTPHeaderField: "X-Requested-With")
-        request.setValue(CoolapkToken.packageName, forHTTPHeaderField: "X-App-Id")
-        request.setValue(params.appVersion, forHTTPHeaderField: "X-App-Version")
-        request.setValue(params.appCode, forHTTPHeaderField: "X-App-Code")
-        request.setValue(params.appCode, forHTTPHeaderField: "X-App-Supported")
-        request.setValue(params.apiVersion, forHTTPHeaderField: "X-Api-Version")
-        request.setValue(appToken, forHTTPHeaderField: "X-App-Token")
-        request.setValue(params.deviceCode, forHTTPHeaderField: "X-App-Device")
-        request.setValue(params.sdkInt, forHTTPHeaderField: "X-Sdk-Int")
-        request.setValue("zh-CN", forHTTPHeaderField: "X-Sdk-Locale")
-        request.setValue("universal", forHTTPHeaderField: "X-App-Mode")
-        request.setValue("coolapk", forHTTPHeaderField: "X-App-Channel")
-        if !params.szlmID.isEmpty {
-            request.setValue(params.szlmID, forHTTPHeaderField: "X-App-Szlm-Id")
-        }
-        request.setValue(params.userAgent, forHTTPHeaderField: "User-Agent")
+        applySignedClientHeaders(to: &request, appToken: appToken, includeAccept: false)
         let cookieHeader = buildCookieHeader(for: url)
         if !cookieHeader.isEmpty {
             request.setValue(cookieHeader, forHTTPHeaderField: "Cookie")

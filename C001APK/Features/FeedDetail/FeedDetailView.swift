@@ -365,7 +365,7 @@ public struct FeedDetailView: View {
                 }
             } label: {
                 AvatarView(url: feed.avatar, size: 42)
-                    .applyZoomSource(id: "detail-author-\(detailSeed)", in: zoomNamespace)
+                    .applyZoomSource(id: "detail-author-\(detailSeed)", in: zoomNamespace, cornerRadius: 21)
             }
             .buttonStyle(.plain)
 
@@ -392,7 +392,7 @@ public struct FeedDetailView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .applyZoomSource(id: "\(itemPrefix)-\(idx)", in: zoomNamespace)
+                .applyZoomSource(id: "\(itemPrefix)-\(idx)", in: zoomNamespace, cornerRadius: 12)
                 .onTapGesture {
                     appState.openMedia(feed.mediaItems, at: idx, sourcePrefix: itemPrefix)
                 }
@@ -428,7 +428,7 @@ public struct FeedDetailView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace)
+                .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace, cornerRadius: 12)
                 .onTapGesture {
                     appState.openMedia([coverMedia], at: 0, sourcePrefix: coverPrefix)
                 }
@@ -473,7 +473,7 @@ public struct FeedDetailView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                             .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .applyZoomSource(id: "\(partPrefix)-0", in: zoomNamespace)
+                            .applyZoomSource(id: "\(partPrefix)-0", in: zoomNamespace, cornerRadius: 10)
                             .onTapGesture {
                                 appState.openMedia([partMedia], at: 0, sourcePrefix: partPrefix)
                             }
@@ -642,7 +642,19 @@ public struct FeedDetailView: View {
                 .padding(.horizontal, 12)
             }
 
-            if viewModel.isLoadingReplies && visibleReplies.isEmpty {
+            if viewModel.repliesDeferred && visibleReplies.isEmpty {
+                ContentUnavailableView {
+                    Label("暂未加载评论", systemImage: "shield.lefthalf.filled")
+                } description: {
+                    Text("尚未获取数盟设备标识，为避免自动弹出人机验证，已暂缓自动拉取评论。")
+                } actions: {
+                    Button("加载评论") {
+                        Task { await viewModel.loadDeferredReplies(appState: appState) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .padding(.vertical, 20)
+            } else if viewModel.isLoadingReplies && visibleReplies.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 32)
@@ -650,6 +662,11 @@ public struct FeedDetailView: View {
                 ContentUnavailableView("暂无评论", systemImage: "bubble.right")
                     .padding(.vertical, 24)
             } else {
+                if viewModel.isLoadingReplies {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                }
                 ForEach(Array(normalReplies.enumerated()), id: \.element.id) { index, reply in
                     replyRow(reply, feed: feed)
                         .onAppear {
@@ -700,7 +717,7 @@ public struct FeedDetailView: View {
                     }
                 } label: {
                     AvatarView(url: reply.avatar, size: 36)
-                        .applyZoomSource(id: replyAvatarID, in: zoomNamespace)
+                        .applyZoomSource(id: replyAvatarID, in: zoomNamespace, cornerRadius: 18)
                 }
                 .buttonStyle(.plain)
 

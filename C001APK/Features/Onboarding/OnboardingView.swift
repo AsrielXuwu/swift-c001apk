@@ -78,13 +78,15 @@ public struct OnboardingView: View {
                         appState.contentFilter.enabled = enableFilter
                         appState.contentFilter.level = filterLevel
                         appState.settings.hideHomePublishButton = hidePublish
-                        appState.settings.onboardingCompleted = true
                         dismiss()
                         Task { @MainActor in
-                            await CoolapkClient.shared.updateParameters(appState.settings.protocolParameters)
-                            await ImagePipeline.shared.updateUserAgent(appState.settings.protocolParameters.userAgent)
+                            await appState.settings.syncProtocolToClient()
+                            if appState.settings.autoAcquireSzlmOnLaunch,
+                               appState.settings.protocolParameters.szlmID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                _ = try? await appState.settings.acquireSzlmID()
+                            }
                             await appState.refreshLoginAndBadge()
-                            appState.feedRefreshTrigger += 1
+                            appState.settings.onboardingCompleted = true
                         }
                     }
                     .fontWeight(.semibold)

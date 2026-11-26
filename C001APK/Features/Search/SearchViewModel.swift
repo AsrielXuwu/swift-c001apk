@@ -168,9 +168,11 @@ public final class SearchViewModel {
         searchingCategories.insert(activeCategory)
         defer {
             searchingCategories.remove(activeCategory)
+        }
+        let succeeded = await fetch(category: activeCategory, keyword: trimmed, page: 1, append: false, appState: appState)
+        if succeeded {
             searchedQueryKeyByCategory[activeCategory] = queryKey
         }
-        await fetch(category: activeCategory, keyword: trimmed, page: 1, append: false, appState: appState)
     }
 
     public func loadMore(category targetCategory: SearchCategory, appState: AppState) async {
@@ -181,10 +183,11 @@ public final class SearchViewModel {
         loadingMoreCategories.insert(targetCategory)
         defer { loadingMoreCategories.remove(targetCategory) }
         let nextPage = (pageByCategory[targetCategory] ?? 1) + 1
-        await fetch(category: targetCategory, keyword: submittedKeyword, page: nextPage, append: true, appState: appState)
+        _ = await fetch(category: targetCategory, keyword: submittedKeyword, page: nextPage, append: true, appState: appState)
     }
 
-    private func fetch(category targetCategory: SearchCategory, keyword: String, page: Int, append: Bool, appState: AppState) async {
+    @discardableResult
+    private func fetch(category targetCategory: SearchCategory, keyword: String, page: Int, append: Bool, appState: AppState) async -> Bool {
         do {
             let items = try await API.search(
                 keyword: keyword,
@@ -220,8 +223,10 @@ public final class SearchViewModel {
                 }
                 pageByCategory[targetCategory] = page
             }
+            return true
         } catch {
             _ = await appState.handleAPIError(error)
+            return false
         }
     }
 }

@@ -167,7 +167,12 @@ public enum SzlmDuidClient: Sendable {
     ) async throws -> String {
         let activeSeed = seed ?? createSeed()
         let resolvedAndroidVersion = androidVersion ?? CoolapkToken.androidVersion(forSDKInt: sdkInt)
-        let ts = String(format: "%.3f", Date().timeIntervalSince1970)
+        let now = Date()
+        let millisSinceEpoch = Int64(now.timeIntervalSince1970 * 1000.0)
+        let wholeSeconds = millisSinceEpoch / 1000
+        let subSecondMillis = millisSinceEpoch % 1000
+        let nanos = (subSecondMillis * 1_000_000) + Int64.random(in: 1...999_999)
+        let ts = String(format: "%lld.%09lld", wholeSeconds, nanos)
         let report = try buildReport(
             seed: activeSeed,
             timestamp: ts,
@@ -184,7 +189,7 @@ public enum SzlmDuidClient: Sendable {
         let session = URLSession(configuration: config)
         defer { session.invalidateAndCancel() }
 
-        let nonce = Int.random(in: 100_000...999_999)
+        let nonce = createSeed()
         var lastError: Error?
         for targetHost in [host, fallbackHost] {
             guard let url = URL(string: "https://\(targetHost)\(reportPath)&r=\(nonce)&n=0&l=2&h=0") else { continue }
@@ -192,10 +197,7 @@ public enum SzlmDuidClient: Sendable {
             request.httpMethod = "POST"
             request.httpBody = payload
             request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-            request.setValue(
-                "Dalvik/2.1.0 (Linux; U; Android \(resolvedAndroidVersion); \(model))",
-                forHTTPHeaderField: "User-Agent"
-            )
+            request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
             do {
                 let (data, response) = try await session.data(for: request)
                 if let http = response as? HTTPURLResponse, http.statusCode != 200 {

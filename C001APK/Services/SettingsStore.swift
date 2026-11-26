@@ -280,7 +280,11 @@ public final class SettingsStore {
 
         if let protoData = defaults.data(forKey: "settings.protocolParameters"),
            let decodedProto = try? JSONDecoder().decode(ProtocolParameters.self, from: protoData) {
-            self.protocolParameters = decodedProto
+            let normalized = decodedProto.normalized()
+            self.protocolParameters = normalized
+            if normalized != decodedProto, let reencoded = try? JSONEncoder().encode(normalized) {
+                defaults.set(reencoded, forKey: "settings.protocolParameters")
+            }
         } else {
             let initial = ProtocolParameters()
             if let encoded = try? JSONEncoder().encode(initial) {
@@ -345,13 +349,15 @@ public final class SettingsStore {
         var updated = protocolParameters
         let preset = CoolapkToken.randomDevicePreset(
             appVersion: updated.appVersion,
-            appCode: updated.appCode
+            appCode: updated.appCode,
+            identifier: updated.szlmID.isEmpty ? nil : updated.szlmID
         )
         updated.deviceBrand = preset.brand
         updated.deviceModel = preset.model
         updated.sdkInt = preset.sdkInt
         updated.userAgent = preset.userAgent
         updated.deviceCode = preset.deviceCode
+        updated = updated.normalized()
         protocolParameters = updated
         return updated
     }
@@ -360,6 +366,7 @@ public final class SettingsStore {
     public func resetDeviceParametersToDefault(preserveSzlmID: Bool = true) -> ProtocolParameters {
         let sdk = Int(CoolapkToken.defaultSDKInt) ?? 35
         let build = CoolapkToken.buildID(forSDKInt: sdk)
+        let keptSzlm = preserveSzlmID ? protocolParameters.szlmID : ""
         let reset = ProtocolParameters(
             appVersion: CoolapkToken.defaultAppVersion,
             appCode: CoolapkToken.defaultAppCode,
@@ -371,12 +378,36 @@ public final class SettingsStore {
             deviceCode: CoolapkToken.makeDeviceCode(
                 brand: CoolapkToken.defaultDeviceBrand,
                 model: CoolapkToken.defaultDeviceModel,
-                build: build
+                build: build,
+                identifier: keptSzlm.isEmpty ? nil : keptSzlm
             ),
-            szlmID: preserveSzlmID ? protocolParameters.szlmID : ""
-        )
+            szlmID: keptSzlm
+        ).normalized()
         protocolParameters = reset
         return reset
+    }
+
+    public func applyManualSzlmID(_ rawID: String) async {
+        let trimmedID = rawID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedID.isEmpty else { return }
+        var updated = protocolParameters
+        updated.szlmID = trimmedID
+        updated = updated.normalized()
+        protocolParameters = updated
+        await CoolapkClient.shared.updateParameters(updated)
+        await ImagePipeline.shared.updateUserAgent(updated.userAgent)
+    }
+
+    private func persistedSzlmReportSeed() -> String {
+        let key = "settings.szlmReportSeed"
+        if let existing = defaults.string(forKey: key),
+           existing.count == 32,
+           existing.allSatisfy({ ("0"..."9").contains($0) || ("a"..."f").contains($0) }) {
+            return existing
+        }
+        let created = SzlmDuidClient.createSeed()
+        defaults.set(created, forKey: key)
+        return created
     }
 
     public func acquireSzlmID(
@@ -393,9 +424,11 @@ public final class SettingsStore {
             await CoolapkClient.shared.updateParameters(updatedParams)
             await ImagePipeline.shared.updateUserAgent(updatedParams.userAgent)
         }
+        let seed = persistedSzlmReportSeed()
         let sdk = Int(protocolParameters.sdkInt) ?? 35
         let androidVer = CoolapkToken.androidVersion(forSDKInt: sdk)
         let acquired = try await SzlmDuidClient.acquire(
+            seed: seed,
             manufacturer: protocolParameters.deviceBrand,
             model: protocolParameters.deviceModel,
             androidVersion: androidVer,
@@ -411,9 +444,9 @@ public final class SettingsStore {
         szlmLastAcquiredAt = now
         var updated = protocolParameters
         updated.szlmID = trimmedID
+        updated = updated.normalized()
         protocolParameters = updated
         await CoolapkClient.shared.updateParameters(updated)
-        await CoolapkClient.shared.clearCaptchaState()
         return trimmedID
     }
 }

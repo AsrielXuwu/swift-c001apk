@@ -68,21 +68,62 @@ public enum CoolapkToken: Sendable {
         return bytes.map { String(format: "%02X", $0) }.joined()
     }
 
-    /// Generates an `X-App-Device` value: reversed unpadded base64 of `aid; ; ; mac; brand; brand; model; build; null`.
+    /// Generates an `X-App-Device` value: reversed unpadded base64 of `id; ; ; mac; brand; brand; model; build; null`.
     public static func makeDeviceCode(
+        brand: String = defaultDeviceBrand,
+        model: String = defaultDeviceModel,
+        build: String = "AP3A.240905.015.A2",
+        identifier: String? = nil
+    ) -> String {
+        let trimmedID = identifier?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let slot0 = trimmedID.isEmpty ? randomHex(8).lowercased() : trimmedID
+        let mac = (0..<6).map { _ in String(format: "%02x", Int.random(in: 0...255)) }.joined(separator: ":")
+        let raw = "\(slot0); ; ; \(mac); \(brand); \(brand); \(model); \(build); null"
+        return String(base64(raw, padding: false).reversed())
+    }
+
+    /// Decodes an `X-App-Device` value back into its semicolon-separated fields.
+    public static func decodeDeviceFields(_ deviceCode: String) -> [String]? {
+        let trimmed = deviceCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var normalized = String(trimmed.reversed())
+        let remainder = normalized.count % 4
+        if remainder != 0 {
+            normalized += String(repeating: "=", count: 4 - remainder)
+        }
+        guard let data = Data(base64Encoded: normalized),
+              let plain = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        let fields = plain.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
+        return fields.count >= 2 ? fields : nil
+    }
+
+    /// Replaces only field 0 of `X-App-Device` with `identifier` (e.g. SZLM DUID), preserving all remaining fields.
+    public static func replacingDeviceIdentifier(
+        in deviceCode: String,
+        with identifier: String,
         brand: String = defaultDeviceBrand,
         model: String = defaultDeviceModel,
         build: String = "AP3A.240905.015.A2"
     ) -> String {
-        let aid = randomHex(8).lowercased()
-        let mac = (0..<6).map { _ in String(format: "%02x", Int.random(in: 0...255)) }.joined(separator: ":")
-        let raw = "\(aid); ; ; \(mac); \(brand); \(brand); \(model); \(build); null"
-        return String(base64(raw, padding: false).reversed())
+        let cleanID = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanID.isEmpty else {
+            return deviceCode.isEmpty
+                ? makeDeviceCode(brand: brand, model: model, build: build)
+                : deviceCode
+        }
+        if var fields = decodeDeviceFields(deviceCode) {
+            fields[0] = cleanID
+            return String(base64(fields.joined(separator: ";"), padding: false).reversed())
+        }
+        return makeDeviceCode(brand: brand, model: model, build: build, identifier: cleanID)
     }
 
     public static func randomDevicePreset(
         appVersion: String = defaultAppVersion,
-        appCode: String = defaultAppCode
+        appCode: String = defaultAppCode,
+        identifier: String? = nil
     ) -> (brand: String, model: String, sdkInt: String, buildID: String, userAgent: String, deviceCode: String) {
         let catalog: [(String, String, Int)] = [
             ("Xiaomi", "24129PN74C", 35),
@@ -109,7 +150,7 @@ public enum CoolapkToken: Sendable {
             appCode: appCode,
             sdkInt: sdkString
         )
-        let code = makeDeviceCode(brand: picked.0, model: picked.1, build: build)
+        let code = makeDeviceCode(brand: picked.0, model: picked.1, build: build, identifier: identifier)
         return (picked.0, picked.1, sdkString, build, ua, code)
     }
 

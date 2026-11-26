@@ -275,7 +275,7 @@ private struct SwipeFeedCardItemView: View {
                         items: items,
                         deckPhase: $photoDeckPhase,
                         transitionSeed: transitionSeed,
-                        enableZoomSource: false,
+                        enableZoomSource: true,
                         disableHDR: appState.settings.disableHDR,
                         cardHeight: max(200, mediaHeight - 32),
                         cornerRadius: 20,
@@ -283,13 +283,13 @@ private struct SwipeFeedCardItemView: View {
                         adaptivePerItemAspect: false,
                         initialWidth: max(180, cardWidth - 24),
                         onTapCard: { idx in
-                            appState.openMedia(items, at: idx, sourcePrefix: "swipe-media-\(transitionSeed)")
+                            appState.openMedia(items, at: idx, sourcePrefix: "media-\(transitionSeed)")
                         },
                         contextMenuBuilder: { item, idx in
                             MediaActionsContextMenu(
                                 item: item,
                                 onViewFull: {
-                                    appState.openMedia(items, at: idx, sourcePrefix: "swipe-media-\(transitionSeed)")
+                                    appState.openMedia(items, at: idx, sourcePrefix: "media-\(transitionSeed)")
                                 },
                                 onShareFile: onShareFile
                             )
@@ -488,6 +488,7 @@ private struct SwipeFeedCardItemView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .applyZoomSource(id: "swipe-single-\(transitionSeed)-0", in: zoomNamespace, cornerRadius: 20)
                 .onTapGesture {
                     appState.openMedia([item], at: 0, sourcePrefix: "swipe-single-\(transitionSeed)")
                 }

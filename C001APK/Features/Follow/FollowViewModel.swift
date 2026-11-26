@@ -107,7 +107,6 @@ public final class FollowViewModel {
         defer {
             if !append {
                 loadingSegments.remove(targetSegment)
-                loadedSegments.insert(targetSegment)
             }
         }
         do {
@@ -176,6 +175,7 @@ public final class FollowViewModel {
                 rowsBySegment[targetSegment] = loaded
                 hasMoreBySegment[targetSegment] = !loaded.isEmpty
                 pageBySegment[targetSegment] = page
+                loadedSegments.insert(targetSegment)
             }
         } catch {
             guard !Task.isCancelled, expectedSession == appState.sessionVersion else { return }

@@ -22,10 +22,9 @@ struct C001APKApp: App {
                     case .background:
                         backgroundEnteredAt = Date()
                     case .active:
-                        let elapsed = backgroundEnteredAt.map { Date().timeIntervalSince($0) } ?? 0
                         backgroundEnteredAt = nil
                         Task {
-                            await CoolapkClient.shared.prepareForForeground(flushConnections: elapsed > 12)
+                            await CoolapkClient.shared.prepareForForeground(flushConnections: false)
                         }
                     default:
                         break

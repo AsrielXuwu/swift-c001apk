@@ -73,7 +73,7 @@ public struct MediaGridView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .applyZoomSource(id: sourceID, in: zoomNamespace)
+                        .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 12)
                         .onTapGesture {
                             triggerTap(at: index)
                         }
@@ -133,7 +133,7 @@ public struct MediaGridView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
             }
-            .applyZoomSource(id: sourceID, in: zoomNamespace)
+            .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 14)
             .onTapGesture {
                 triggerTap(at: index)
             }
@@ -460,7 +460,12 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                             .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
                     }
-                    .applyZoomSource(id: sourceID, in: zoomNamespace)
+                    .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: cornerRadius)
+                    .contextMenu {
+                        contextMenuBuilder(item, itemIndex)
+                    } preview: {
+                        MediaContextMenuPreview(item: item, disableHDR: disableHDR)
+                    }
                     .onTapGesture {
                         guard isFront,
                               !isHorizontalDragging,
@@ -518,6 +523,12 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                     }
                 )
                 .frame(height: maxCardHeight)
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                .contextMenu {
+                    contextMenuBuilder(activeItem, activeIdx)
+                } preview: {
+                    MediaContextMenuPreview(item: activeItem, disableHDR: disableHDR)
+                }
                 .padding(.leading, leftInset)
                 .padding(.trailing, rightInset)
                 .padding(.bottom, bottomInset)

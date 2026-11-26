@@ -183,7 +183,7 @@ public final class AppState {
     // MARK: - Error & Captcha Handling
 
     @discardableResult
-    public func handleAPIError(_ error: Error) async -> Bool {
+    public func handleAPIError(_ error: Error, allowCaptchaPrompt: Bool = true) async -> Bool {
         if error is CancellationError || (error as? APIError).map({
             if case .sessionChanged = $0 { return true }
             return false
@@ -192,9 +192,17 @@ public final class AppState {
         }
 
         if case let APIError.captchaRequired(challenge, _) = error {
+            if challenge.field.isEmpty,
+               settings.autoAcquireSzlmOnLaunch,
+               settings.protocolParameters.szlmID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               settings.szlmNextAllowedAt == nil,
+               (try? await settings.acquireSzlmID()) != nil {
+                return true
+            }
+            guard allowCaptchaPrompt else { return false }
             let proof = await requestCaptchaVerification(challenge: challenge)
             if let proof, !proof.isEmpty {
-                await CoolapkClient.shared.setCaptchaProof(proof)
+                await CoolapkClient.shared.setCaptchaProof(proof, field: challenge.field)
                 return true // Caller can retry request immediately.
             }
             return false

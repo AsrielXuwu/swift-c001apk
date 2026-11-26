@@ -12,9 +12,10 @@ public struct SearchView: View {
         @Bindable var state = appState
 
         Group {
-            if state.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && viewModel.submittedKeyword.isEmpty {
+            let trimmedQuery = state.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmedQuery.isEmpty && viewModel.submittedKeyword.isEmpty {
                 discoveryLanding
-            } else if viewModel.submittedKeyword.isEmpty || viewModel.submittedKeyword != state.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) && !viewModel.suggestions.isEmpty {
+            } else if viewModel.submittedKeyword.isEmpty || viewModel.submittedKeyword != trimmedQuery {
                 suggestionsList
             } else {
                 resultsView
@@ -45,7 +46,7 @@ public struct SearchView: View {
                         }
                     }
                 } label: {
-                    Image(systemName: viewModel.feedFilter == .all && viewModel.category == .all
+                    Image(systemName: viewModel.feedFilter == .all && viewModel.category == .all && viewModel.sortOrder == .defaultOrder
                           ? "line.3.horizontal.decrease.circle"
                           : "line.3.horizontal.decrease.circle.fill")
                 }
@@ -392,32 +393,12 @@ public struct SearchView: View {
                 LazyVStack(spacing: 10) {
                     if cat == .dyh {
                         ForEach(Array(viewModel.dyhResults.enumerated()), id: \.element.id) { idx, dyh in
-                            Button {
-                                appState.push(.dyh(id: dyh.id))
-                            } label: {
-                                HStack(spacing: 12) {
-                                    RemoteImageView(url: dyh.logo, maxPixelSize: 132)
-                                        .frame(width: 44, height: 44)
-                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        Text(dyh.title).font(.body.weight(.medium))
-                                        Text(dyh.description).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            DyhRowView(dyh: dyh)
+                                .onAppear {
+                                    if idx >= viewModel.dyhResults.count - 4 {
+                                        Task { await viewModel.loadMore(category: .dyh, appState: appState) }
                                     }
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .font(.caption)
-                                        .foregroundStyle(.tertiary)
                                 }
-                                .padding(14)
-                                .c001CardStyle(cornerRadius: 16)
-                                .padding(.horizontal, 12)
-                            }
-                            .buttonStyle(.plain)
-                            .onAppear {
-                                if idx >= viewModel.dyhResults.count - 4 {
-                                    Task { await viewModel.loadMore(category: .dyh, appState: appState) }
-                                }
-                            }
                         }
                     } else {
                         ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in

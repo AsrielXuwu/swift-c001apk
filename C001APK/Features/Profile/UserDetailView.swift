@@ -21,6 +21,8 @@ public struct UserDetailView: View {
     @State private var pageByTab: [UserTab: Int] = [:]
     @State private var hasMoreByTab: [UserTab: Bool] = [:]
     @State private var loadingTabs: Set<UserTab> = []
+    @State private var loadingMoreTabs: Set<UserTab> = []
+    @State private var profileLoadFailed = false
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
     @State private var tabTasks: [UserTab: Task<Void, Never>] = [:]
@@ -171,7 +173,7 @@ public struct UserDetailView: View {
             }
             .task(id: uid) {
                 guard profile == nil else { return }
-                profile = try? await API.userProfile(uid: uid)
+                await reloadProfileHeader(showPromptOnCaptcha: false)
                 await reloadTab(tab, force: true)
             }
             .onDisappear {
@@ -215,7 +217,7 @@ public struct UserDetailView: View {
             }
         }
         .refreshable {
-            profile = try? await API.userProfile(uid: uid)
+            await reloadProfileHeader(showPromptOnCaptcha: true)
             await reloadTab(item, force: true)
         }
     }
@@ -241,7 +243,7 @@ public struct UserDetailView: View {
                         }
                     } label: {
                         AvatarView(url: profile.avatar, size: 64)
-                            .applyZoomSource(id: "user-avatar-\(transitionSeed)-0", in: zoomNamespace)
+                            .applyZoomSource(id: "user-avatar-\(transitionSeed)-0", in: zoomNamespace, cornerRadius: 32)
                     }
                     .buttonStyle(.plain)
 
@@ -299,13 +301,23 @@ public struct UserDetailView: View {
                 HStack(spacing: 14) {
                     AvatarView(url: initialAvatar ?? "", size: 64)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(initialUsername ?? "加载中…")
+                        Text(initialUsername ?? (profileLoadFailed ? "资料加载失败" : "加载中…"))
                             .font(.title3.weight(.bold))
                         Text("UID: \(uid)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if profileLoadFailed {
+                        Button("重试") {
+                            Task {
+                                await reloadProfileHeader(showPromptOnCaptcha: true)
+                            }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
                 }
             }
             .padding(16)
@@ -422,6 +434,17 @@ public struct UserDetailView: View {
         }
     }
 
+    private func reloadProfileHeader(showPromptOnCaptcha: Bool) async {
+        profileLoadFailed = false
+        do {
+            profile = try await API.userProfile(uid: uid)
+        } catch {
+            guard !Task.isCancelled else { return }
+            profileLoadFailed = true
+            _ = await appState.handleAPIError(error, allowCaptchaPrompt: showPromptOnCaptcha)
+        }
+    }
+
     private func reloadTab(_ targetTab: UserTab, force: Bool) async {
         if !force && loadedTabs.contains(targetTab) {
             return
@@ -429,7 +452,6 @@ public struct UserDetailView: View {
         loadingTabs.insert(targetTab)
         defer {
             loadingTabs.remove(targetTab)
-            loadedTabs.insert(targetTab)
         }
         pageByTab[targetTab] = 1
         hasMoreByTab[targetTab] = true
@@ -449,6 +471,7 @@ public struct UserDetailView: View {
                 if !appState.settings.enableCloudFavoritesLoad {
                     userCollections = []
                     hasMoreByTab[.collections] = false
+                    loadedTabs.insert(targetTab)
                     return
                 }
                 let fetched = try await API.collectionList(uid: uid, page: 1)
@@ -459,6 +482,7 @@ public struct UserDetailView: View {
                 if !appState.settings.enableCloudFollowLoad {
                     following = []
                     hasMoreByTab[.following] = false
+                    loadedTabs.insert(targetTab)
                     return
                 }
                 let fetched = try await API.userList(uid: uid, followers: false, page: 1)
@@ -469,6 +493,7 @@ public struct UserDetailView: View {
                 if !appState.settings.enableCloudFollowLoad {
                     followers = []
                     hasMoreByTab[.fans] = false
+                    loadedTabs.insert(targetTab)
                     return
                 }
                 let fetched = try await API.userList(uid: uid, followers: true, page: 1)
@@ -476,6 +501,7 @@ public struct UserDetailView: View {
                 followers = fetched
                 hasMoreByTab[.fans] = !fetched.isEmpty
             }
+            loadedTabs.insert(targetTab)
         } catch {
             guard !Task.isCancelled else { return }
             _ = await appState.handleAPIError(error)
@@ -483,7 +509,11 @@ public struct UserDetailView: View {
     }
 
     private func loadMore(for targetTab: UserTab) async {
-        guard hasMoreByTab[targetTab] != false, !loadingTabs.contains(targetTab) else { return }
+        guard hasMoreByTab[targetTab] != false,
+              !loadingTabs.contains(targetTab),
+              !loadingMoreTabs.contains(targetTab) else { return }
+        loadingMoreTabs.insert(targetTab)
+        defer { loadingMoreTabs.remove(targetTab) }
         let next = (pageByTab[targetTab] ?? 1) + 1
         do {
             switch targetTab {
@@ -520,7 +550,7 @@ public struct UserDetailView: View {
             }
             if hasMoreByTab[targetTab] == true { pageByTab[targetTab] = next }
         } catch {
-            hasMoreByTab[targetTab] = false
+            _ = await appState.handleAPIError(error, allowCaptchaPrompt: false)
         }
     }
 

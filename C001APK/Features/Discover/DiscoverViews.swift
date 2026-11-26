@@ -21,6 +21,7 @@ public struct TopicDetailView: View {
     @State private var rowsByTab: [String: [HomeFeedRow]] = [:]
     @State private var loadedTabs: Set<String> = []
     @State private var loadingTabs: Set<String> = []
+    @State private var loadingMoreTabs: Set<String> = []
     @State private var pageByTab: [String: Int] = [:]
     @State private var hasMoreByTab: [String: Bool] = [:]
     @State private var isTogglingFollow = false
@@ -159,8 +160,8 @@ public struct TopicDetailView: View {
             }
             .task(id: tag) {
                 guard !hasInitialized || topic == nil else { return }
-                hasInitialized = true
                 let loadedTopic = try? await API.topicDetail(tag: tag)
+                hasInitialized = (loadedTopic != nil)
                 let resolvedTabs = (loadedTopic?.tabs.isEmpty == false) ? loadedTopic!.tabs : fallbackTabs
                 let saved = appState.pageTabSelections["topic-\(tag)"]
                 let initialTab: HomeSection? = if let saved, let matchedSaved = resolvedTabs.first(where: { $0.id == saved }) {
@@ -318,7 +319,6 @@ public struct TopicDetailView: View {
         loadingTabs.insert(tabItem.id)
         defer {
             loadingTabs.remove(tabItem.id)
-            loadedTabs.insert(tabItem.id)
         }
         pageByTab[tabItem.id] = 1
         hasMoreByTab[tabItem.id] = true
@@ -333,13 +333,18 @@ public struct TopicDetailView: View {
             )
             rowsByTab[tabItem.id] = fetched
             hasMoreByTab[tabItem.id] = !fetched.isEmpty
+            loadedTabs.insert(tabItem.id)
         } catch {
             _ = await appState.handleAPIError(error)
         }
     }
 
     private func loadMore(for tabItem: HomeSection) async {
-        guard hasMoreByTab[tabItem.id] != false, !loadingTabs.contains(tabItem.id) else { return }
+        guard hasMoreByTab[tabItem.id] != false,
+              !loadingTabs.contains(tabItem.id),
+              !loadingMoreTabs.contains(tabItem.id) else { return }
+        loadingMoreTabs.insert(tabItem.id)
+        defer { loadingMoreTabs.remove(tabItem.id) }
         let next = (pageByTab[tabItem.id] ?? 1) + 1
         let activeTag = topic?.title.isEmpty == false ? topic!.title : tag
         if let fetched = try? await API.topicTabFeeds(
@@ -394,6 +399,7 @@ public struct ProductDetailView: View {
     @State private var rowsByTab: [String: [HomeFeedRow]] = [:]
     @State private var loadedTabs: Set<String> = []
     @State private var loadingTabs: Set<String> = []
+    @State private var loadingMoreTabs: Set<String> = []
     @State private var pageByTab: [String: Int] = [:]
     @State private var hasMoreByTab: [String: Bool] = [:]
     @State private var isLoadingHeader = true
@@ -860,7 +866,6 @@ public struct ProductDetailView: View {
         loadingTabs.insert(tabID)
         defer {
             loadingTabs.remove(tabID)
-            loadedTabs.insert(tabID)
         }
         pageByTab[tabID] = 1
         hasMoreByTab[tabID] = true
@@ -876,6 +881,7 @@ public struct ProductDetailView: View {
             )
             rowsByTab[tabID] = fetched
             hasMoreByTab[tabID] = !fetched.isEmpty
+            loadedTabs.insert(tabID)
         } catch {
             _ = await appState.handleAPIError(error)
         }
@@ -884,7 +890,11 @@ public struct ProductDetailView: View {
     private func loadMore(for tabID: String) async {
         let chipTitle = activeChips.first(where: { $0.id == tabID })?.title ?? ""
         guard !isConfigTab(id: tabID, title: chipTitle) else { return }
-        guard hasMoreByTab[tabID] != false, !loadingTabs.contains(tabID) else { return }
+        guard hasMoreByTab[tabID] != false,
+              !loadingTabs.contains(tabID),
+              !loadingMoreTabs.contains(tabID) else { return }
+        loadingMoreTabs.insert(tabID)
+        defer { loadingMoreTabs.remove(tabID) }
         let next = (pageByTab[tabID] ?? 1) + 1
         let tabURL: String? = apiTabs.isEmpty ? nil : tabID
         let sort = apiTabs.isEmpty ? tabID : "lastupdate_desc"
@@ -946,6 +956,7 @@ public struct AppDetailView: View {
     @State private var comments: [HomeFeedRow] = []
     @State private var hasLoaded = false
     @State private var isLoading = true
+    @State private var isLoadingMore = false
     @State private var page = 1
     @State private var hasMore = true
 
@@ -988,7 +999,7 @@ public struct AppDetailView: View {
                                                 .clipped()
                                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                                 .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                                .applyZoomSource(id: "\(shotPrefix)-\(idx)", in: zoomNamespace)
+                                                .applyZoomSource(id: "\(shotPrefix)-\(idx)", in: zoomNamespace, cornerRadius: 10)
                                         }
                                         .buttonStyle(.plain)
                                     }
@@ -1053,7 +1064,9 @@ public struct AppDetailView: View {
     }
 
     private func loadMore() async {
-        guard hasMore, !isLoading else { return }
+        guard hasMore, !isLoading, !isLoadingMore else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
         let next = page + 1
         if let fetched = try? await API.appComments(id: appID, page: next) {
             var seen = Set(comments.map(\.id))
@@ -1075,6 +1088,7 @@ public struct DyhDetailView: View {
     @State private var rows: [HomeFeedRow] = []
     @State private var hasLoaded = false
     @State private var isLoading = true
+    @State private var isLoadingMore = false
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
     @State private var page = 1
@@ -1190,7 +1204,9 @@ public struct DyhDetailView: View {
     }
 
     private func loadMore() async {
-        guard hasMore, !isLoading else { return }
+        guard hasMore, !isLoading, !isLoadingMore else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
         let next = page + 1
         if let fetched = try? await API.dyhArticles(id: dyhID, page: next) {
             var seen = Set(rows.map(\.id))
@@ -1228,6 +1244,7 @@ public struct CollectionDetailView: View {
     @State private var rows: [HomeFeedRow] = []
     @State private var hasLoaded = false
     @State private var isLoading = true
+    @State private var isLoadingMore = false
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
     @State private var page = 1
@@ -1345,7 +1362,9 @@ public struct CollectionDetailView: View {
     }
 
     private func loadMore() async {
-        guard hasMore, !isLoading else { return }
+        guard hasMore, !isLoading, !isLoadingMore else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
         let next = page + 1
         if let fetched = try? await API.collectionItems(id: collectionID, page: next) {
             var seen = Set(rows.map(\.id))
@@ -1380,10 +1399,13 @@ public struct EventDetailView: View {
     public let initialEvent: EventItem?
 
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
     @State private var event: EventItem?
     @State private var rows: [HomeFeedRow] = []
     @State private var hasLoaded = false
     @State private var isLoading = true
+    @State private var isLoadingMore = false
     @State private var page = 1
     @State private var hasMore = true
     @State private var coverRatio: CGFloat?
@@ -1400,6 +1422,8 @@ public struct EventDetailView: View {
                 if let event {
                     VStack(alignment: .leading, spacing: 12) {
                         if !event.cover.isEmpty {
+                            let coverPrefix = "event-cover-\(transitionSeed)"
+                            let coverMedia = FeedMedia(sourceUrl: event.cover)
                             let resolvedRatio = max(0.55, min(coverRatio ?? MediaGridView.inferredAspectRatio(from: event.cover) ?? 1.85, 2.8))
                             RemoteImageView(url: event.cover, maxPixelSize: 1200, contentMode: .fit) { size in
                                 guard size.width > 0, size.height > 0 else { return }
@@ -1412,6 +1436,11 @@ public struct EventDetailView: View {
                             .frame(maxWidth: .infinity, maxHeight: 340)
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace, cornerRadius: 14)
+                            .onTapGesture {
+                                appState.openMedia([coverMedia], at: 0, sourcePrefix: coverPrefix)
+                            }
                         }
 
                         HStack(spacing: 8) {
@@ -1531,7 +1560,9 @@ public struct EventDetailView: View {
     }
 
     private func loadMore() async {
-        guard hasMore, !isLoading else { return }
+        guard hasMore, !isLoading, !isLoadingMore else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
         let next = page + 1
         if let fetched = try? await API.eventFeeds(id: eventID, page: next) {
             var seen = Set(rows.map(\.id))
@@ -1556,6 +1587,7 @@ public struct PageFeedView: View {
     @State private var rowsByTab: [String: [HomeFeedRow]] = [:]
     @State private var loadedTabs: Set<String> = []
     @State private var loadingTabs: Set<String> = []
+    @State private var loadingMoreTabs: Set<String> = []
     @State private var pageByTab: [String: Int] = [:]
     @State private var hasMoreByTab: [String: Bool] = [:]
     @State private var hasInitialized = false
@@ -1572,70 +1604,77 @@ public struct PageFeedView: View {
     }
 
     public var body: some View {
-        Group {
-            if subTabs.isEmpty {
-                singlePageScrollView(tabID: link, tabURL: link)
-            } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 0) {
-                        ForEach(subTabs) { item in
-                            singlePageScrollView(tabID: item.id, tabURL: item.url)
-                                .containerRelativeFrame(.horizontal)
-                                .frame(maxHeight: .infinity)
-                                .id(item.id)
+        ScrollViewReader { proxy in
+            Group {
+                if subTabs.isEmpty {
+                    singlePageScrollView(tabID: link, tabURL: link)
+                } else {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        LazyHStack(spacing: 0) {
+                            ForEach(subTabs) { item in
+                                singlePageScrollView(tabID: item.id, tabURL: item.url)
+                                    .containerRelativeFrame(.horizontal)
+                                    .frame(maxHeight: .infinity)
+                                    .id(item.id)
+                            }
                         }
+                        .scrollTargetLayout()
                     }
-                    .scrollTargetLayout()
-                }
-                .scrollTargetBehavior(.paging)
-                .scrollPosition(id: $scrolledTabID)
-                .safeAreaBar(edge: .top, spacing: 0) {
-                    FloatingTabStrip(
-                        items: subTabs,
-                        selection: activeTab,
-                        titleProvider: \.title,
-                        onSelect: { item in
-                            selectedTabID = item.id
-                        }
-                    )
-                }
-            }
-        }
-        .scrollClipDisabled()
-        .ignoresSafeArea(.container, edges: .bottom)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .navigationTitle(title)
-        .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: scrolledTabID) { _, newValue in
-            if let newValue, newValue != selectedTabID {
-                selectedTabID = newValue
-            }
-        }
-        .onChange(of: selectedTabID) { _, newID in
-            if !newID.isEmpty {
-                appState.pageTabSelections["page-\(link)"] = newID
-            }
-            if scrolledTabID != newID {
-                withAnimation(.snappy(duration: 0.24)) {
-                    scrolledTabID = newID
+                    .scrollTargetBehavior(.paging)
+                    .scrollPosition(id: $scrolledTabID)
+                    .safeAreaBar(edge: .top, spacing: 0) {
+                        FloatingTabStrip(
+                            items: subTabs,
+                            selection: activeTab,
+                            titleProvider: \.title,
+                            onSelect: { item in
+                                selectedTabID = item.id
+                            },
+                            onReselect: { item in
+                                withAnimation(.snappy) {
+                                    proxy.scrollTo("page-top-\(item.id)", anchor: .top)
+                                }
+                            }
+                        )
+                    }
                 }
             }
-            if let tab = subTabs.first(where: { $0.id == newID }) {
-                Task { await loadSubTab(tabID: tab.id, url: tab.url, force: false) }
-            }
-        }
-        .task(id: link) {
-            if let saved = appState.pageTabSelections["page-\(link)"], !saved.isEmpty {
-                if selectedTabID.isEmpty {
-                    selectedTabID = saved
-                }
-                if !subTabs.isEmpty && subTabs.contains(where: { $0.id == saved }) {
-                    scrolledTabID = saved
+            .scrollClipDisabled()
+            .ignoresSafeArea(.container, edges: .bottom)
+            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: scrolledTabID) { _, newValue in
+                if let newValue, newValue != selectedTabID {
+                    selectedTabID = newValue
                 }
             }
-            guard !hasInitialized || (subTabs.isEmpty && (rowsByTab[link]?.isEmpty ?? true)) else { return }
-            hasInitialized = true
-            await loadInitial()
+            .onChange(of: selectedTabID) { _, newID in
+                if !newID.isEmpty {
+                    appState.pageTabSelections["page-\(link)"] = newID
+                }
+                if scrolledTabID != newID {
+                    withAnimation(.snappy(duration: 0.24)) {
+                        scrolledTabID = newID
+                    }
+                }
+                if let tab = subTabs.first(where: { $0.id == newID }) {
+                    Task { await loadSubTab(tabID: tab.id, url: tab.url, force: false) }
+                }
+            }
+            .task(id: link) {
+                if let saved = appState.pageTabSelections["page-\(link)"], !saved.isEmpty {
+                    if selectedTabID.isEmpty {
+                        selectedTabID = saved
+                    }
+                    if !subTabs.isEmpty && subTabs.contains(where: { $0.id == saved }) {
+                        scrolledTabID = saved
+                    }
+                }
+                guard !hasInitialized || (subTabs.isEmpty && (rowsByTab[link]?.isEmpty ?? true)) else { return }
+                hasInitialized = true
+                await loadInitial()
+            }
         }
     }
 
@@ -1653,6 +1692,7 @@ public struct PageFeedView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
+                Color.clear.frame(height: 0).id("page-top-\(tabID)")
                 LazyVStack(spacing: 12) {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
                         HomeRowRenderer(row: row)
@@ -1679,7 +1719,6 @@ public struct PageFeedView: View {
         loadingTabs.insert(link)
         defer {
             loadingTabs.remove(link)
-            loadedTabs.insert(link)
         }
         do {
             let initial: [HomeFeedRow]
@@ -1693,6 +1732,7 @@ public struct PageFeedView: View {
             } else {
                 initial = try await API.linkFeed(link: link, page: 1)
             }
+            loadedTabs.insert(link)
             let extractedTabs = extractSubTabs(from: initial)
             if !extractedTabs.isEmpty {
                 let contentOnly = filterNonTabRows(initial)
@@ -1771,7 +1811,6 @@ public struct PageFeedView: View {
         loadingTabs.insert(tabID)
         defer {
             loadingTabs.remove(tabID)
-            loadedTabs.insert(tabID)
         }
         pageByTab[tabID] = 1
         do {
@@ -1784,13 +1823,18 @@ public struct PageFeedView: View {
             let filtered = filterNonTabRows(fetched)
             rowsByTab[tabID] = filtered
             hasMoreByTab[tabID] = !filtered.isEmpty
+            loadedTabs.insert(tabID)
         } catch {
             _ = await appState.handleAPIError(error)
         }
     }
 
     private func loadMore(tabID: String, url: String) async {
-        guard hasMoreByTab[tabID] != false, !loadingTabs.contains(tabID) else { return }
+        guard hasMoreByTab[tabID] != false,
+              !loadingTabs.contains(tabID),
+              !loadingMoreTabs.contains(tabID) else { return }
+        loadingMoreTabs.insert(tabID)
+        defer { loadingMoreTabs.remove(tabID) }
         let next = (pageByTab[tabID] ?? 1) + 1
         let fetched: [HomeFeedRow]?
         if url == "/main/headline" {
@@ -1844,6 +1888,8 @@ public struct CoolPicView: View {
     @State private var rowsBySort: [String: [HomeFeedRow]] = [:]
     @State private var loadedSorts: Set<String> = []
     @State private var loadingSorts: Set<String> = []
+    @State private var loadingMoreSorts: Set<String> = []
+    @State private var errorBySort: [String: String] = [:]
     @State private var pageBySort: [String: Int] = [:]
     @State private var hasMoreBySort: [String: Bool] = [:]
     @State private var hasInitialized = false
@@ -1929,7 +1975,22 @@ public struct CoolPicView: View {
         let hasLoaded = loadedSorts.contains(sort)
         let isLoadingSort = loadingSorts.contains(sort)
 
-        if (!hasLoaded || isLoadingSort) && rows.isEmpty {
+        if isLoadingSort && rows.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let error = errorBySort[sort], rows.isEmpty {
+            ContentUnavailableView {
+                Label("加载失败", systemImage: "wifi.exclamationmark")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("重试") {
+                    Task { await reload(sort: sort, force: true) }
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if !hasLoaded && rows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if rows.isEmpty {
@@ -1958,26 +2019,38 @@ public struct CoolPicView: View {
     private func reload(sort: String, force: Bool) async {
         if !force && loadedSorts.contains(sort) { return }
         loadingSorts.insert(sort)
+        errorBySort[sort] = nil
         defer {
             loadingSorts.remove(sort)
-            loadedSorts.insert(sort)
         }
         pageBySort[sort] = 1
-        if initialTag == "全部" && sort == "recommend" {
-            let pageRows = (try? await API.pageFeed(pageName: "V11_FIND_COOLPIC", page: 1)) ?? []
-            if !pageRows.isEmpty {
-                rowsBySort[sort] = pageRows
-                hasMoreBySort[sort] = true
-                return
+        do {
+            if initialTag == "全部" && sort == "recommend" {
+                let pageRows = try await API.pageFeed(pageName: "V11_FIND_COOLPIC", page: 1)
+                if !pageRows.isEmpty {
+                    rowsBySort[sort] = pageRows
+                    hasMoreBySort[sort] = true
+                    loadedSorts.insert(sort)
+                    return
+                }
             }
+            let fetched = try await API.coolPic(tag: initialTag, type: sort, page: 1)
+            rowsBySort[sort] = fetched
+            hasMoreBySort[sort] = !fetched.isEmpty
+            loadedSorts.insert(sort)
+        } catch {
+            guard !Task.isCancelled else { return }
+            errorBySort[sort] = error.localizedDescription
+            _ = await appState.handleAPIError(error)
         }
-        let fetched = (try? await API.coolPic(tag: initialTag, type: sort, page: 1)) ?? []
-        rowsBySort[sort] = fetched
-        hasMoreBySort[sort] = !fetched.isEmpty
     }
 
     private func loadMore(sort: String) async {
-        guard hasMoreBySort[sort] != false, !loadingSorts.contains(sort) else { return }
+        guard hasMoreBySort[sort] != false,
+              !loadingSorts.contains(sort),
+              !loadingMoreSorts.contains(sort) else { return }
+        loadingMoreSorts.insert(sort)
+        defer { loadingMoreSorts.remove(sort) }
         let next = (pageBySort[sort] ?? 1) + 1
         let fetched: [HomeFeedRow]?
         if initialTag == "全部" && sort == "recommend" {

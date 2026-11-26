@@ -61,6 +61,7 @@ public final class ChatThreadViewModel {
         guard message.messagePic.isEmpty,
               resolvedImages[message.id] == nil,
               resolvingIDs.insert(message.id).inserted else { return }
+        defer { resolvingIDs.remove(message.id) }
         if let resolved = try? await CoolapkClient.shared.resolveMessageImageURL(id: message.id) {
             resolvedImages[message.id] = resolved
         }
@@ -162,6 +163,7 @@ public struct ChatThreadView: View {
     @State private var viewModel: ChatThreadViewModel
     @State private var draftText = ""
     @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var lastObservedTailID: String?
 
     public init(ukey: String, peerUID: String, peerName: String, peerAvatar: String) {
         self.ukey = ukey
@@ -192,9 +194,14 @@ public struct ChatThreadView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 12)
             }
-            .onChange(of: viewModel.messages.count) { _, _ in
-                if let lastID = viewModel.messages.last?.id {
+            .onChange(of: viewModel.messages.last?.id) { _, lastID in
+                guard let lastID, lastID != lastObservedTailID else { return }
+                let shouldAnimate = (lastObservedTailID != nil)
+                lastObservedTailID = lastID
+                if shouldAnimate {
                     withAnimation(.snappy) { proxy.scrollTo(lastID, anchor: .bottom) }
+                } else {
+                    proxy.scrollTo(lastID, anchor: .bottom)
                 }
             }
         }

@@ -145,6 +145,18 @@ public struct MessagesView: View {
             if (!hasLoadedSeg || isLoadingSeg) && notifications.isEmpty {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = viewModel.errorBySegment[seg], notifications.isEmpty {
+                ContentUnavailableView {
+                    Label("加载失败", systemImage: "wifi.exclamationmark")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("重试") {
+                        Task { await viewModel.loadInitial(segment: seg, appState: appState, force: true) }
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if notifications.isEmpty {
                 ContentUnavailableView("暂无\(seg.rawValue)", systemImage: "bell")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

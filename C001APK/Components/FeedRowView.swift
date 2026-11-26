@@ -103,7 +103,7 @@ public struct FeedRowView: View {
                 }
             } label: {
                 AvatarView(url: feed.avatar, size: 38)
-                    .applyZoomSource(id: "avatar-\(transitionSeed)", in: zoomNamespace)
+                    .applyZoomSource(id: "avatar-\(transitionSeed)", in: zoomNamespace, cornerRadius: 19)
             }
             .buttonStyle(.plain)
 
@@ -257,7 +257,7 @@ public struct FeedRowView: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .applyZoomSource(id: "quote-\(transitionSeed)", in: zoomNamespace)
+        .applyZoomSource(id: "quote-\(transitionSeed)", in: zoomNamespace, cornerRadius: 14)
         .onTapGesture {
             if !source.id.isEmpty {
                 appState.push(.feed(id: source.id, transitionID: "quote-\(transitionSeed)"))

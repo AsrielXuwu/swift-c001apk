@@ -671,7 +671,7 @@ public enum API: Sendable {
             "fromFeedAuthor": authorOnly ? "1" : "0",
         ]
         do {
-            // Prefer api2Base first to share host/session state with home timeline, then fall back to apiBase.
+            // Prefer api2Base first to share host/session state with home timeline, then fall back to apiBase without prematurely wiping proof.
             let json = try await client.get(
                 "/v6/feed/replyList",
                 query,
@@ -683,12 +683,15 @@ public enum API: Sendable {
                 .map { ReplyItem(json: $0) }
         } catch let error as APIError {
             if case .captchaRequired = error {
-                await client.prepareForForeground(flushConnections: false)
-                if let fallback = try? await client.get("/v6/feed/replyList", query, base: CoolapkClient.apiBase) {
-                    return fallback.data.array
-                        .filter { ReplyItem.isValidReplyJSON($0) }
-                        .map { ReplyItem(json: $0) }
-                }
+                let fallbackJSON = try await client.get(
+                    "/v6/feed/replyList",
+                    query,
+                    base: CoolapkClient.apiBase,
+                    clearProofOnCaptcha: true
+                )
+                return fallbackJSON.data.array
+                    .filter { ReplyItem.isValidReplyJSON($0) }
+                    .map { ReplyItem(json: $0) }
             }
             throw error
         }
@@ -901,7 +904,7 @@ public enum API: Sendable {
         if json.data.string == "1" || json.data.int == 1 || json.status.int == 1 {
             return LoginCheckResult(isValid: true)
         }
-        return LoginCheckResult(isValid: true)
+        return LoginCheckResult(isValid: false, explicitlyInvalid: false)
     }
 
     public static func checkLogin() async throws -> Bool {

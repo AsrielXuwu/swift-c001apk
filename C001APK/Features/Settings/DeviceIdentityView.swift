@@ -105,11 +105,11 @@ public struct DeviceIdentityView: View {
     private func importPastedText() {
         do {
             let parsed = try OfficialDeviceIdentity.parse(pasteInput)
-            var updated = appState.settings.protocolParameters
-            updated.szlmID = parsed
-            appState.settings.protocolParameters = updated
             pasteInput = ""
-            appState.showToast("已导入并应用 ShuzlmID")
+            Task {
+                await appState.settings.applyManualSzlmID(parsed)
+                appState.showToast("已导入并应用 ShuzlmID")
+            }
         } catch {
             appState.showToast(error.localizedDescription)
         }

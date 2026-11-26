@@ -103,8 +103,8 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
     public var body: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarLeading) {
             Button(action: onTapAvatar) {
-                HStack(spacing: 7) {
-                    AvatarView(url: avatarURL, size: 28)
+                HStack(spacing: 6) {
+                    AvatarView(url: avatarURL, size: 26)
 
                     if !primaryLine.isEmpty || !secondaryLine.isEmpty {
                         VStack(alignment: .leading, spacing: 1) {
@@ -121,7 +121,7 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
                                     .lineLimit(1)
                             }
                         }
-                        .frame(maxWidth: 112, alignment: .leading)
+                        .frame(maxWidth: 88, alignment: .leading)
                     }
                 }
             }

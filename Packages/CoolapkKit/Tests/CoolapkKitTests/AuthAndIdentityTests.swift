@@ -8,6 +8,22 @@ final class AuthAndIdentityTests: XCTestCase {
         XCTAssertFalse(code.contains("="))
     }
 
+    func testReplacingDeviceIdentifierUpdatesSlotZeroAndPreservesFields() {
+        let original = CoolapkToken.makeDeviceCode(brand: "Xiaomi", model: "24129PN74C")
+        let originalFields = CoolapkToken.decodeDeviceFields(original)
+        XCTAssertEqual(originalFields?.count, 9)
+
+        let fakeDUID = "DUMqtb1J4vCLYfS5OeVLfgeLAZqlvLqPnogbU"
+        let replaced = CoolapkToken.replacingDeviceIdentifier(in: original, with: fakeDUID)
+        let replacedFields = CoolapkToken.decodeDeviceFields(replaced)
+        XCTAssertEqual(replacedFields?.count, 9)
+        XCTAssertEqual(replacedFields?.first, fakeDUID)
+        XCTAssertEqual(Array(replacedFields?.dropFirst() ?? []), Array(originalFields?.dropFirst() ?? []))
+
+        let params = ProtocolParameters(deviceCode: original, szlmID: fakeDUID)
+        XCTAssertEqual(CoolapkToken.decodeDeviceFields(params.deviceCode)?.first, fakeDUID)
+    }
+
     func testTokenV3GeneratesCanonicalPrefix() {
         let device = CoolapkToken.makeDeviceCode()
         let token = CoolapkToken.appTokenV3(deviceCode: device, timestamp: 1_760_000_000, appCode: 2604201)
@@ -33,7 +49,7 @@ final class AuthAndIdentityTests: XCTestCase {
 
     func testSzlmDuidReportRoundTripAndDecode() throws {
         let seed = "0123456789abcdef0123456789abcdef"
-        let report = try SzlmDuidClient.buildReport(seed: seed, timestamp: "1760000000.123")
+        let report = try SzlmDuidClient.buildReport(seed: seed, timestamp: "1760000000.123456789")
         let encoded = try SzlmDuidClient.encodeReport(report)
         XCTAssertFalse(encoded.isEmpty)
 

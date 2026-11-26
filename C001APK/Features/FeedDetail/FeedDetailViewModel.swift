@@ -14,6 +14,7 @@ public final class FeedDetailViewModel {
     public var authorOnly = false
     public var isCoinRepliesExpanded = false
     public var temporarilyRevealedFilter = false
+    public private(set) var repliesDeferred = false
 
     public private(set) var isLoadingFeed = false
     public private(set) var isRefreshingDetail = false
@@ -63,17 +64,21 @@ public final class FeedDetailViewModel {
         let hadInitialFeed = (initialFeed != nil)
         let shouldFetchImmediately = forceRefreshDetail || initialFeed == nil
         didCheckScrollDetail = shouldFetchImmediately
+        let hasSzlm = !appState.settings.protocolParameters.szlmID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        repliesDeferred = !hasSzlm && replies.isEmpty
 
         isLoadingFeed = !hadInitialFeed
         isRefreshingDetail = false
-        isLoadingReplies = replies.isEmpty
+        isLoadingReplies = replies.isEmpty && !repliesDeferred
         errorMessage = nil
         currentReplyPage = 1
         hasMoreReplies = true
 
         if let initialFeed, !shouldFetchImmediately {
             appState.historyAndFav.recordVisit(initialFeed, enabled: appState.settings.recordHistory)
-            await fetchReplies(page: 1, append: false, appState: appState)
+            if !repliesDeferred {
+                await fetchReplies(page: 1, append: false, appState: appState)
+            }
             isLoadingReplies = false
             if initialFeed.kind == .question, answers.isEmpty {
                 answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
@@ -83,7 +88,9 @@ public final class FeedDetailViewModel {
         }
 
         async let loadedFeed = fetchFeedDetail(appState: appState)
-        async let initialReplies: Void = fetchReplies(page: 1, append: false, appState: appState)
+        async let initialReplies: Void = repliesDeferred
+            ? ()
+            : await fetchReplies(page: 1, append: false, appState: appState)
 
         if let loaded = await loadedFeed {
             withAnimation(.easeInOut(duration: 0.25)) {
@@ -99,6 +106,26 @@ public final class FeedDetailViewModel {
 
         _ = await initialReplies
         isLoadingReplies = false
+    }
+
+    public func loadDeferredReplies(appState: AppState) async {
+        repliesDeferred = false
+        currentReplyPage = 1
+        hasMoreReplies = true
+        isLoadingReplies = true
+        defer {
+            isLoadingReplies = false
+            let hasSzlm = !appState.settings.protocolParameters.szlmID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if replies.isEmpty && !hasSzlm {
+                repliesDeferred = true
+            }
+        }
+        if appState.settings.protocolParameters.szlmID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           appState.settings.autoAcquireSzlmOnLaunch,
+           appState.settings.szlmNextAllowedAt == nil {
+            _ = try? await appState.settings.acquireSzlmID()
+        }
+        await fetchReplies(page: 1, append: false, appState: appState)
     }
 
     /// Quietly checks on scroll whether a potentially truncated/collapsed feed needs updating,

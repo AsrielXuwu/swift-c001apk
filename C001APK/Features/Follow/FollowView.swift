@@ -81,13 +81,12 @@ public struct FollowView: View {
                 viewModel.segment = seg
             }
         )
-        .padding(.bottom, viewModel.segment == .topics && !viewModel.followedTopics.isEmpty ? -2 : 0)
     }
 
     private var topicChipsStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            GlassEffectContainer(spacing: 6) {
-                HStack(spacing: 8) {
+            GlassEffectContainer(spacing: 4) {
+                HStack(spacing: 4) {
                     ForEach(viewModel.followedTopics) { topic in
                         let selected = viewModel.selectedTopicTag == topic.title
                         Button {
@@ -96,20 +95,23 @@ public struct FollowView: View {
                         } label: {
                             Text(TopicItem.cleanTitle(topic.title))
                                 .font(.caption.weight(selected ? .semibold : .medium))
-                                .padding(.horizontal, 11)
+                                .padding(.horizontal, 12)
                                 .padding(.vertical, 6)
                                 .background(
                                     selected ? Color.accentColor.opacity(0.18) : Color.clear,
                                     in: Capsule()
                                 )
-                                .glassEffect(.regular.interactive(), in: .capsule)
                                 .foregroundStyle(selected ? Color.accentColor : Color.primary)
                         }
                         .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, 5)
+                .padding(.vertical, 4)
+                .glassEffect(.regular, in: .capsule)
             }
             .padding(.horizontal, 14)
+            .padding(.top, 2)
             .padding(.bottom, 6)
         }
     }
@@ -131,7 +133,7 @@ public struct FollowView: View {
                 Button("立即登录") { appState.showLoginSheet = true }
                     .buttonStyle(.borderedProminent)
             }
-        } else if (!segHasLoaded || segLoading) && segRows.isEmpty {
+        } else if segLoading && segRows.isEmpty {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let segError, segRows.isEmpty {
@@ -143,6 +145,9 @@ public struct FollowView: View {
                 Button("重试") { Task { await viewModel.loadInitial(segment: seg, appState: appState, force: true) } }
                     .buttonStyle(.borderedProminent)
             }
+        } else if !segHasLoaded && segRows.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if segRows.isEmpty {
             ContentUnavailableView {
                 Label("暂无\(seg.rawValue)动态", systemImage: "person.2")

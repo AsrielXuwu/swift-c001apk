@@ -52,9 +52,11 @@ public final class HomeFeedViewModel {
         hasMoreByTab[tab] = true
 
         let expectedSession = appState.sessionVersion
-        await fetch(tab: tab, page: 1, append: false, appState: appState, expectedSession: expectedSession)
+        let succeeded = await fetch(tab: tab, page: 1, append: false, appState: appState, expectedSession: expectedSession)
         loadingTabs.remove(tab)
-        loadedTabs.insert(tab)
+        if succeeded {
+            loadedTabs.insert(tab)
+        }
     }
 
     public func loadMore(tab: HomeTabType, appState: AppState) async {
@@ -69,7 +71,8 @@ public final class HomeFeedViewModel {
         loadingMoreTabs.remove(tab)
     }
 
-    private func fetch(tab: HomeTabType, page: Int, append: Bool, appState: AppState, expectedSession: Int) async {
+    @discardableResult
+    private func fetch(tab: HomeTabType, page: Int, append: Bool, appState: AppState, expectedSession: Int) async -> Bool {
         do {
             let loaded: [HomeFeedRow]
             switch tab {
@@ -151,22 +154,23 @@ public final class HomeFeedViewModel {
                 hasMoreByTab[tab] = !loaded.isEmpty
                 pageByTab[tab] = page
             }
+            return true
         } catch {
-            guard expectedSession == appState.sessionVersion else { return }
+            guard expectedSession == appState.sessionVersion else { return false }
             if case APIError.sessionChanged = error {
                 if !append {
-                    await fetch(tab: tab, page: page, append: false, appState: appState, expectedSession: expectedSession)
+                    return await fetch(tab: tab, page: page, append: false, appState: appState, expectedSession: expectedSession)
                 }
-                return
+                return false
             }
             let retried = await appState.handleAPIError(error)
             if retried && !append {
-                await fetch(tab: tab, page: page, append: false, appState: appState, expectedSession: expectedSession)
-                return
+                return await fetch(tab: tab, page: page, append: false, appState: appState, expectedSession: expectedSession)
             }
             if !append {
                 errorByTab[tab] = error.localizedDescription
             }
+            return false
         }
     }
 }

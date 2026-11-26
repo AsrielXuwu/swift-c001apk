@@ -66,10 +66,10 @@ public struct HomeView: View {
                             ))
                         } label: {
                             AvatarView(url: avatarURL, size: 28)
+                                .applyZoomSource(id: avatarID, in: zoomNamespace ?? fallbackNamespace, cornerRadius: 14)
                         }
                         .accessibilityLabel("个人主页")
                     }
-                    .matchedTransitionSource(id: avatarID, in: zoomNamespace ?? fallbackNamespace)
                 } else {
                     ToolbarItem(placement: .topBarLeading) {
                         Button {
@@ -152,13 +152,6 @@ public struct HomeView: View {
             .task(id: "\(appState.isSessionBootstrapped)|\(appState.settings.onboardingCompleted)|\(appState.sessionVersion)|\(activeTab.rawValue)") {
                 guard appState.isSessionBootstrapped, appState.settings.onboardingCompleted else { return }
                 await viewModel.loadInitial(tab: activeTab, appState: appState)
-            }
-            .onChange(of: appState.settings.onboardingCompleted) { wasDone, isDone in
-                if !wasDone && isDone {
-                    Task {
-                        await viewModel.loadInitial(tab: activeTab, appState: appState, force: true)
-                    }
-                }
             }
             .onChange(of: appState.feedRefreshTrigger) { _, _ in
                 guard appState.settings.onboardingCompleted else { return }
