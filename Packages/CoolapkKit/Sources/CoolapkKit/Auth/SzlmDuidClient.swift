@@ -163,7 +163,7 @@ public enum SzlmDuidClient: Sendable {
         manufacturer: String = CoolapkToken.defaultDeviceBrand,
         model: String = CoolapkToken.defaultDeviceModel,
         androidVersion: String = "16",
-        sdkInt: Int = Int(CoolapkToken.defaultSdkInt) ?? 35
+        sdkInt: Int = Int(CoolapkToken.defaultSDKInt) ?? 35
     ) async throws -> String {
         let activeSeed = seed ?? createSeed()
         let ts = String(format: "%.3f", Date().timeIntervalSince1970)
