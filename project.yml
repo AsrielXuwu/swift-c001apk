@@ -1,0 +1,57 @@
+name: C001APK
+options:
+  bundleIdPrefix: app.awavenue
+  deploymentTarget:
+    iOS: "27.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    ALWAYS_SEARCH_USER_PATHS: NO
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+packages:
+  CoolapkKit:
+    path: Packages/CoolapkKit
+targets:
+  C001APK:
+    type: application
+    platform: iOS
+    sources:
+      - path: C001APK
+        excludes:
+          - "Resources/Info.plist"
+          - "Resources/Emoji"
+      - path: C001APK/Resources/Emoji
+        type: folder
+    dependencies:
+      - package: CoolapkKit
+    settings:
+      base:
+        PRODUCT_NAME: C001APK
+        PRODUCT_BUNDLE_IDENTIFIER: app.awavenue.c001apk.ios
+        INFOPLIST_FILE: C001APK/Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        IPHONEOS_DEPLOYMENT_TARGET: "27.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SUPPORTS_MACCATALYST: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_EMIT_LOC_STRINGS: NO
+        DEVELOPMENT_TEAM: ""
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGNING_REQUIRED: NO
+        CODE_SIGNING_ALLOWED: NO
+schemes:
+  C001APK:
+    build:
+      targets:
+        C001APK: all
+    run:
+      config: Debug
+    archive:
+      config: Release
