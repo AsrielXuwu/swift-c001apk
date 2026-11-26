@@ -44,10 +44,9 @@ public struct UserDetailView: View {
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(profile?.username ?? "用户主页")
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
         .toolbar {
             if let profile, uid != appState.accounts.activeUID {
                 ToolbarItemGroup(placement: .topBarTrailing) {

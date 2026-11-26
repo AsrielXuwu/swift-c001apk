@@ -4,24 +4,44 @@ import SwiftUI
 public struct MessagesView: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel = MessagesViewModel()
+    @State private var scrolledSegment: MessagesSegment? = .chat
 
     public init() {}
 
     public var body: some View {
-        TabView(selection: $viewModel.segment) {
-            ForEach(MessagesSegment.allCases) { seg in
-                segmentContent(for: seg)
-                    .tag(seg)
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 0) {
+                ForEach(MessagesSegment.allCases) { seg in
+                    segmentContent(for: seg)
+                        .containerRelativeFrame(.horizontal)
+                        .frame(maxHeight: .infinity)
+                        .id(seg)
+                }
             }
+            .scrollTargetLayout()
         }
-        .tabViewStyle(.page(indexDisplayMode: .never))
+        .scrollTargetBehavior(.paging)
+        .scrollPosition(id: $scrolledSegment)
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
         .background(Color(.systemGroupedBackground).ignoresSafeArea())
         .safeAreaInset(edge: .top, spacing: 0) {
             floatingMessageSegmentStrip
         }
         .navigationTitle("消息")
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
+        .onChange(of: scrolledSegment) { _, newSeg in
+            if let newSeg, newSeg != viewModel.segment {
+                viewModel.segment = newSeg
+            }
+        }
+        .onChange(of: viewModel.segment) { _, newSeg in
+            if scrolledSegment != newSeg {
+                withAnimation(.snappy(duration: 0.22)) {
+                    scrolledSegment = newSeg
+                }
+            }
+        }
         .task(id: "\(appState.sessionVersion)|\(viewModel.segment.rawValue)") {
             await viewModel.loadInitial(appState: appState, force: true)
         }

@@ -43,18 +43,11 @@ public extension View {
                     .strokeBorder(Color.primary.opacity(0.05), lineWidth: 0.5)
             }
     }
-
-    func c001NavBarStyle() -> some View {
-        self
-            .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
-            .toolbarBackgroundVisibility(.visible, for: .navigationBar)
-    }
 }
 
 public enum RootTab: Hashable, Sendable {
     case home
     case follow
-    case messages
     case profile
     case search
 }
@@ -70,6 +63,7 @@ public enum AppRoute: Hashable, Sendable {
     case event(id: String, transitionID: String? = nil)
     case page(link: String, title: String)
     case coolpic(tag: String)
+    case messages
     case chat(ukey: String, uid: String, username: String, avatar: String)
     case history
     case favorites

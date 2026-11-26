@@ -3,9 +3,13 @@ import SwiftUI
 
 public struct HomeView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
     @State private var viewModel = HomeFeedViewModel()
     @State private var selectedTab: HomeTabType = .feed
+    @State private var scrolledTab: HomeTabType? = .feed
     @State private var showTabEditor = false
+    @State private var isFabCollapsed = false
+    @State private var navAvatarSeed = UUID().uuidString
 
     public init() {}
 
@@ -14,22 +18,55 @@ public struct HomeView: View {
         let activeTab = visibleTabs.contains(selectedTab) ? selectedTab : .feed
 
         ScrollViewReader { proxy in
-            TabView(selection: $selectedTab) {
-                ForEach(visibleTabs) { tab in
-                    tabContent(for: tab)
-                        .tag(tab)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 0) {
+                    ForEach(visibleTabs) { tab in
+                        tabContent(for: tab)
+                            .containerRelativeFrame(.horizontal)
+                            .frame(maxHeight: .infinity)
+                            .id(tab)
+                    }
                 }
+                .scrollTargetLayout()
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $scrolledTab)
+            .scrollClipDisabled()
+            .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .safeAreaInset(edge: .top, spacing: 0) {
                 floatingCategoryStrip(visibleTabs: visibleTabs, activeTab: activeTab, proxy: proxy)
             }
+            .overlay(alignment: .bottomTrailing) {
+                if !appState.settings.hideHomePublishButton {
+                    publishFloatingButton
+                        .padding(.trailing, 16)
+                        .padding(.bottom, 16)
+                }
+            }
             .navigationTitle("酷安")
             .navigationBarTitleDisplayMode(.inline)
-            .c001NavBarStyle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItemGroup(placement: .topBarLeading) {
+                    if let active = appState.accounts.activeAccount {
+                        let avatarURL = appState.currentUserProfile?.avatar ?? active.avatar
+                        let avatarID = "home-nav-avatar-\(navAvatarSeed)"
+                        Button {
+                            appState.push(.user(uid: active.uid, transitionID: avatarID))
+                        } label: {
+                            AvatarView(url: avatarURL, size: 28)
+                                .applyZoomSource(id: avatarID, in: zoomNamespace)
+                        }
+                        .accessibilityLabel("个人主页")
+                    } else {
+                        Button {
+                            appState.showLoginSheet = true
+                        } label: {
+                            Image(systemName: "person.crop.circle")
+                        }
+                        .accessibilityLabel("登录")
+                    }
+
                     Button {
                         showTabEditor = true
                     } label: {
@@ -44,17 +81,20 @@ public struct HomeView: View {
                         Label("头条", systemImage: "newspaper")
                     }
 
-                    if !appState.settings.hideHomePublishButton {
-                        Button {
-                            if appState.accounts.isLoggedIn {
-                                appState.composeMode = .newFeed
-                            } else {
-                                appState.showLoginSheet = true
+                    Button {
+                        appState.push(.messages)
+                    } label: {
+                        ZStack(alignment: .topTrailing) {
+                            Image(systemName: "bell")
+                            if appState.badge.total > 0 {
+                                Circle()
+                                    .fill(.red)
+                                    .frame(width: 8, height: 8)
+                                    .offset(x: 3, y: -2)
                             }
-                        } label: {
-                            Label("发布动态", systemImage: "square.and.pencil")
                         }
                     }
+                    .accessibilityLabel("消息")
                 }
             }
             .sheet(isPresented: $showTabEditor) {
@@ -62,10 +102,27 @@ public struct HomeView: View {
             }
             .onChange(of: visibleTabs) { _, newTabs in
                 if !newTabs.contains(selectedTab) {
-                    selectedTab = newTabs.first ?? .feed
+                    let fallback = newTabs.first ?? .feed
+                    selectedTab = fallback
+                    scrolledTab = fallback
+                }
+            }
+            .onChange(of: scrolledTab) { _, newTab in
+                if let newTab, newTab != selectedTab, visibleTabs.contains(newTab) {
+                    selectedTab = newTab
                 }
             }
             .onChange(of: activeTab) { _, newTab in
+                if scrolledTab != newTab {
+                    withAnimation(.snappy(duration: 0.25)) {
+                        scrolledTab = newTab
+                    }
+                }
+                if isFabCollapsed {
+                    withAnimation(.snappy(duration: 0.22)) {
+                        isFabCollapsed = false
+                    }
+                }
                 withAnimation(.snappy(duration: 0.25)) {
                     proxy.scrollTo("tab-chip-\(newTab.rawValue)", anchor: .center)
                 }
@@ -76,12 +133,40 @@ public struct HomeView: View {
             .onChange(of: appState.homeDoubleTapTrigger) { _, _ in
                 withAnimation(.snappy) {
                     proxy.scrollTo("home-top-\(activeTab.rawValue)", anchor: .top)
+                    isFabCollapsed = false
                 }
                 Task {
                     await viewModel.loadInitial(tab: activeTab, appState: appState, force: true)
                 }
             }
         }
+    }
+
+    private var publishFloatingButton: some View {
+        Button {
+            if appState.accounts.isLoggedIn {
+                appState.composeMode = .newFeed
+            } else {
+                appState.showLoginSheet = true
+            }
+        } label: {
+            HStack(spacing: isFabCollapsed ? 0 : 7) {
+                Image(systemName: "square.and.pencil")
+                    .font(.body.weight(.semibold))
+                if !isFabCollapsed {
+                    Text("发布动态")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .transition(.opacity.combined(with: .move(edge: .trailing)))
+                }
+            }
+            .padding(.horizontal, isFabCollapsed ? 14 : 16)
+            .frame(height: 46)
+            .glassEffect(.regular.interactive(), in: .capsule)
+            .foregroundStyle(Color.accentColor)
+        }
+        .buttonStyle(.plain)
+        .animation(.snappy(duration: 0.24), value: isFabCollapsed)
     }
 
     private func floatingCategoryStrip(
@@ -98,10 +183,12 @@ public struct HomeView: View {
                             if isSelected {
                                 withAnimation(.snappy) {
                                     proxy.scrollTo("home-top-\(tab.rawValue)", anchor: .top)
+                                    isFabCollapsed = false
                                 }
                             } else {
                                 withAnimation(.snappy(duration: 0.24)) {
                                     selectedTab = tab
+                                    scrolledTab = tab
                                 }
                             }
                         } label: {
@@ -167,7 +254,21 @@ public struct HomeView: View {
                             .padding(.vertical, 16)
                     }
                 }
-                .padding(.vertical, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 92)
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top
+            } action: { oldOffset, newOffset in
+                guard tab == selectedTab else { return }
+                let delta = newOffset - oldOffset
+                if newOffset <= 12 {
+                    if isFabCollapsed { isFabCollapsed = false }
+                } else if delta > 8 && newOffset > 40 {
+                    if !isFabCollapsed { isFabCollapsed = true }
+                } else if delta < -8 {
+                    if isFabCollapsed { isFabCollapsed = false }
+                }
             }
             .refreshable {
                 await viewModel.loadInitial(tab: tab, appState: appState, force: true)

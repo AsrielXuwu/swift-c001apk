@@ -4,18 +4,27 @@ import SwiftUI
 public struct FollowView: View {
     @Environment(AppState.self) private var appState
     @State private var viewModel = FollowViewModel()
+    @State private var scrolledSegment: FollowSegment? = .all
 
     public init() {}
 
     public var body: some View {
         ScrollViewReader { proxy in
-            TabView(selection: $viewModel.segment) {
-                ForEach(FollowSegment.allCases) { seg in
-                    segmentContent(for: seg)
-                        .tag(seg)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 0) {
+                    ForEach(FollowSegment.allCases) { seg in
+                        segmentContent(for: seg)
+                            .containerRelativeFrame(.horizontal)
+                            .frame(maxHeight: .infinity)
+                            .id(seg)
+                    }
                 }
+                .scrollTargetLayout()
             }
-            .tabViewStyle(.page(indexDisplayMode: .never))
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $scrolledSegment)
+            .scrollClipDisabled()
+            .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .safeAreaInset(edge: .top, spacing: 0) {
                 VStack(spacing: 6) {
@@ -27,13 +36,24 @@ public struct FollowView: View {
             }
             .navigationTitle("关注")
             .navigationBarTitleDisplayMode(.inline)
-            .c001NavBarStyle()
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         appState.push(.localFollowList)
                     } label: {
                         Label("本机关注名单", systemImage: "person.badge.shield.checkmark")
+                    }
+                }
+            }
+            .onChange(of: scrolledSegment) { _, newSeg in
+                if let newSeg, newSeg != viewModel.segment {
+                    viewModel.segment = newSeg
+                }
+            }
+            .onChange(of: viewModel.segment) { _, newSeg in
+                if scrolledSegment != newSeg {
+                    withAnimation(.snappy(duration: 0.24)) {
+                        scrolledSegment = newSeg
                     }
                 }
             }
@@ -158,7 +178,8 @@ public struct FollowView: View {
                             .padding(.vertical, 16)
                     }
                 }
-                .padding(.vertical, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 88)
             }
             .refreshable {
                 await viewModel.loadInitial(appState: appState, force: true)

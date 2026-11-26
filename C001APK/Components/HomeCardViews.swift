@@ -108,39 +108,47 @@ struct BannerCarouselView: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        TabView {
-            ForEach(banners) { banner in
-                Button {
-                    if !banner.url.isEmpty { appState.openRawLink(banner.url) }
-                } label: {
-                    ZStack(alignment: .bottomLeading) {
-                        RemoteImageView(url: banner.image, maxPixelSize: 1080)
-                            .frame(height: 172)
-                            .frame(maxWidth: .infinity)
-                            .clipped()
-
-                        if !banner.title.isEmpty {
-                            LinearGradient(
-                                colors: [.clear, .black.opacity(0.65)],
-                                startPoint: .center,
-                                endPoint: .bottom
-                            )
-                            Text(banner.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.white)
-                                .lineLimit(1)
-                                .padding(12)
-                        }
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 10) {
+                ForEach(banners) { banner in
+                    Button {
+                        if !banner.url.isEmpty { appState.openRawLink(banner.url) }
+                    } label: {
+                        Color.clear
+                            .frame(height: 176)
+                            .overlay {
+                                RemoteImageView(url: banner.image, maxPixelSize: 1080)
+                            }
+                            .overlay(alignment: .bottomLeading) {
+                                if !banner.title.isEmpty {
+                                    LinearGradient(
+                                        colors: [.clear, .black.opacity(0.65)],
+                                        startPoint: .center,
+                                        endPoint: .bottom
+                                    )
+                                    Text(banner.title)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.white)
+                                        .lineLimit(1)
+                                        .padding(12)
+                                }
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                            }
+                            .containerRelativeFrame(.horizontal) { width, _ in
+                                banners.count > 1 ? max(220, width - 38) : max(220, width - 24)
+                            }
                     }
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .padding(.horizontal, 16)
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             }
+            .scrollTargetLayout()
+            .padding(.horizontal, 12)
         }
-        .tabViewStyle(.page(indexDisplayMode: banners.count > 1 ? .automatic : .never))
-        .frame(height: 184)
-        .padding(.vertical, 6)
+        .scrollTargetBehavior(.viewAligned)
     }
 }
 

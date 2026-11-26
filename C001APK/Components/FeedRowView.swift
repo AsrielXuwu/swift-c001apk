@@ -48,12 +48,11 @@ public struct FeedRowView: View {
         .c001CardStyle(cornerRadius: 16)
         .padding(.horizontal, 12)
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .applyZoomSource(id: "feed-\(transitionSeed)", in: zoomNamespace)
         .onTapGesture {
             if let onSelectFeed {
                 onSelectFeed()
             } else {
-                appState.push(.feed(id: feed.id, initial: feed, transitionID: "feed-\(transitionSeed)"))
+                appState.push(.feed(id: feed.id, initial: feed))
             }
         }
         .onChange(of: feed.isLiked) { _, newValue in
@@ -286,7 +285,7 @@ public struct FeedRowView: View {
                     if let onSelectFeed {
                         onSelectFeed()
                     } else {
-                        appState.push(.feed(id: feed.id, initial: feed, transitionID: "feed-\(transitionSeed)"))
+                        appState.push(.feed(id: feed.id, initial: feed))
                     }
                 } label: {
                     HStack(spacing: 5) {

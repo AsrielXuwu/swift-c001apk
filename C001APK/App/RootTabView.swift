@@ -25,14 +25,6 @@ public struct RootTabView: View {
                 }
             }
 
-            Tab("消息", systemImage: "bubble.left.and.bubble.right", value: RootTab.messages) {
-                NavigationStack(path: $state.messagesNavigationPath) {
-                    MessagesView()
-                        .navigationDestination(for: AppRoute.self, destination: destinationView)
-                }
-            }
-            .badge(appState.badge.total)
-
             Tab("我的", systemImage: "person.crop.circle", value: RootTab.profile) {
                 NavigationStack(path: $state.profileNavigationPath) {
                     ProfileTabView()
@@ -104,8 +96,6 @@ public struct RootTabView: View {
                         } else {
                             appState.followDoubleTapTrigger += 1
                         }
-                    case .messages:
-                        appState.messagesNavigationPath.removeAll()
                     case .profile:
                         appState.profileNavigationPath.removeAll()
                     case .search:
@@ -149,6 +139,8 @@ public struct RootTabView: View {
             PageFeedView(link: link, title: title)
         case let .coolpic(tag):
             CoolPicView(initialTag: tag)
+        case .messages:
+            MessagesView()
         case let .chat(ukey, uid, username, avatar):
             ChatThreadView(ukey: ukey, peerUID: uid, peerName: username, peerAvatar: avatar)
         case .history:

@@ -22,7 +22,6 @@ public final class AppState {
     public var selectedTab: RootTab = .home
     public var homeNavigationPath: [AppRoute] = []
     public var followNavigationPath: [AppRoute] = []
-    public var messagesNavigationPath: [AppRoute] = []
     public var profileNavigationPath: [AppRoute] = []
     public var searchNavigationPath: [AppRoute] = []
 
@@ -113,7 +112,6 @@ public final class AppState {
         sessionVersion += 1
         homeNavigationPath.removeAll()
         followNavigationPath.removeAll()
-        messagesNavigationPath.removeAll()
         profileNavigationPath.removeAll()
         searchNavigationPath.removeAll()
         Task { await refreshLoginAndBadge() }
@@ -125,7 +123,6 @@ public final class AppState {
         switch selectedTab {
         case .home: homeNavigationPath.append(route)
         case .follow: followNavigationPath.append(route)
-        case .messages: messagesNavigationPath.append(route)
         case .profile: profileNavigationPath.append(route)
         case .search: searchNavigationPath.append(route)
         }

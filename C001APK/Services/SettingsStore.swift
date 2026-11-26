@@ -59,6 +59,20 @@ public enum MediaAutoLoadMode: Int, CaseIterable, Codable, Identifiable, Sendabl
     }
 }
 
+public enum MediaDisplayStyle: Int, CaseIterable, Codable, Identifiable, Sendable {
+    case stackedCards = 0
+    case grid = 1
+
+    public var id: Int { rawValue }
+
+    public var label: String {
+        switch self {
+        case .stackedCards: return "堆叠卡片 (iMessage)"
+        case .grid: return "传统九宫格"
+        }
+    }
+}
+
 public struct BrandPreset: Identifiable, Sendable {
     public let id: Int
     public let name: String
@@ -110,6 +124,9 @@ public final class SettingsStore {
     }
     public var mediaAutoLoadMode: MediaAutoLoadMode {
         didSet { defaults.set(mediaAutoLoadMode.rawValue, forKey: "settings.mediaAutoLoadMode") }
+    }
+    public var mediaDisplayStyle: MediaDisplayStyle {
+        didSet { defaults.set(mediaDisplayStyle.rawValue, forKey: "settings.mediaDisplayStyle") }
     }
     public var disableHDR: Bool {
         didSet { defaults.set(disableHDR, forKey: "settings.disableHDR") }
@@ -174,6 +191,7 @@ public final class SettingsStore {
         self.showEmoji = defaults.object(forKey: "settings.showEmoji") as? Bool ?? true
         self.foldCoinReplies = defaults.bool(forKey: "settings.foldCoinReplies")
         self.mediaAutoLoadMode = MediaAutoLoadMode(rawValue: defaults.integer(forKey: "settings.mediaAutoLoadMode")) ?? .always
+        self.mediaDisplayStyle = MediaDisplayStyle(rawValue: defaults.integer(forKey: "settings.mediaDisplayStyle")) ?? .stackedCards
         self.disableHDR = defaults.bool(forKey: "settings.disableHDR")
         self.livePhotoAutoPlay = defaults.object(forKey: "settings.livePhotoAutoPlay") as? Bool ?? true
         self.recordHistory = defaults.object(forKey: "settings.recordHistory") as? Bool ?? true

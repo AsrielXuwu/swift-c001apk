@@ -21,7 +21,6 @@ public struct SearchView: View {
         }
         .navigationTitle("搜索")
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
         .searchable(text: $state.searchQuery, prompt: "搜索动态、话题、用户、应用")
         .onSubmit(of: .search) {
             Task { await viewModel.submitSearch(appState.searchQuery, appState: appState) }
@@ -149,10 +148,11 @@ public struct SearchView: View {
                     }
                     .padding(.vertical, 8)
                 }
+                .contentMargins(.top, 52, for: .scrollContent)
             }
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .safeAreaInset(edge: .top, spacing: 0) {
+        .background(Color(.systemGroupedBackground))
+        .overlay(alignment: .top) {
             GlassEffectContainer(spacing: 4) {
                 HStack(spacing: 4) {
                     ForEach(SearchCategory.allCases) { cat in
@@ -176,7 +176,7 @@ public struct SearchView: View {
                 .glassEffect(.regular.interactive(), in: .capsule)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 6)
+            .padding(.top, 6)
             .onChange(of: viewModel.category) { _, _ in
                 Task { await viewModel.submitSearch(appState.searchQuery, appState: appState) }
             }

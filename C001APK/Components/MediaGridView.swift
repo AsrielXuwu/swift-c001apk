@@ -8,6 +8,7 @@ public struct MediaGridView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
     @State private var transitionSeed = UUID().uuidString
+    @State private var activeCardIndex: Int? = 0
 
     public init(items: [FeedMedia], onTapItem: ((Int) -> Void)? = nil) {
         self.items = items
@@ -19,43 +20,103 @@ public struct MediaGridView: View {
             EmptyView()
         } else if items.count == 1 {
             singleImage(items[0], index: 0)
+        } else if appState.settings.mediaDisplayStyle == .stackedCards {
+            stackedCardsView(items)
         } else {
-            let displayItems = Array(items.prefix(9))
-            let columnCount = displayItems.count == 2 || displayItems.count == 4 ? 2 : 3
-            let columns = Array(repeating: GridItem(.flexible(), spacing: 5), count: columnCount)
+            gridView(items)
+        }
+    }
 
-            LazyVGrid(columns: columns, spacing: 5) {
-                ForEach(Array(displayItems.enumerated()), id: \.offset) { index, item in
+    private func stackedCardsView(_ items: [FeedMedia]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 10) {
+                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                     let sourceID = onTapItem == nil ? "media-\(transitionSeed)-\(index)" : nil
-                    ZStack(alignment: .topTrailing) {
-                        Button {
-                            triggerTap(at: index)
-                        } label: {
-                            Color.clear
-                                .aspectRatio(1, contentMode: .fit)
-                                .overlay {
-                                    RemoteImageView(
-                                        url: item.thumbnailUrl,
-                                        maxPixelSize: 420
-                                    )
+                    Button {
+                        triggerTap(at: index)
+                    } label: {
+                        Color.clear
+                            .frame(height: 224)
+                            .overlay {
+                                RemoteImageView(
+                                    url: item.thumbnailUrl,
+                                    maxPixelSize: 1080
+                                )
+                            }
+                            .overlay(alignment: .topTrailing) {
+                                HStack(spacing: 4) {
+                                    if item.isLivePhoto { badgePill("LIVE") }
+                                    if item.isHdr && !appState.settings.disableHDR { badgePill("HDR") }
+                                    if item.isGif { badgePill("GIF") }
+                                    badgePill("\(index + 1)/\(items.count)")
                                 }
-                                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                                .applyZoomSource(id: sourceID, in: zoomNamespace)
-                        }
-                        .buttonStyle(.plain)
-
-                        badgeStack(for: item)
-
-                        if index == 8 && items.count > 9 {
-                            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                .fill(.black.opacity(0.45))
-                                .overlay {
-                                    Text("+\(items.count - 9)")
-                                        .font(.headline.weight(.semibold))
-                                        .foregroundStyle(.white)
-                                }
+                                .padding(8)
                                 .allowsHitTesting(false)
-                        }
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                            }
+                            .containerRelativeFrame(.horizontal) { width, _ in
+                                max(200, width - 22)
+                            }
+                            .applyZoomSource(id: sourceID, in: zoomNamespace)
+                            .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                                content
+                                    .scaleEffect(phase.isIdentity ? 1.0 : 0.93)
+                                    .rotationEffect(.degrees(phase.value * -2.2))
+                                    .opacity(phase.isIdentity ? 1.0 : 0.82)
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .id(index)
+                }
+            }
+            .scrollTargetLayout()
+            .padding(.trailing, 18)
+        }
+        .scrollTargetBehavior(.viewAligned)
+        .scrollPosition(id: $activeCardIndex)
+        .scrollClipDisabled()
+    }
+
+    private func gridView(_ items: [FeedMedia]) -> some View {
+        let displayItems = Array(items.prefix(9))
+        let columnCount = displayItems.count == 2 || displayItems.count == 4 ? 2 : 3
+        let columns = Array(repeating: GridItem(.flexible(), spacing: 5), count: columnCount)
+
+        return LazyVGrid(columns: columns, spacing: 5) {
+            ForEach(Array(displayItems.enumerated()), id: \.offset) { index, item in
+                let sourceID = onTapItem == nil ? "media-\(transitionSeed)-\(index)" : nil
+                ZStack(alignment: .topTrailing) {
+                    Button {
+                        triggerTap(at: index)
+                    } label: {
+                        Color.clear
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay {
+                                RemoteImageView(
+                                    url: item.thumbnailUrl,
+                                    maxPixelSize: 420
+                                )
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                            .applyZoomSource(id: sourceID, in: zoomNamespace)
+                    }
+                    .buttonStyle(.plain)
+
+                    badgeStack(for: item)
+
+                    if index == 8 && items.count > 9 {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill(.black.opacity(0.45))
+                            .overlay {
+                                Text("+\(items.count - 9)")
+                                    .font(.headline.weight(.semibold))
+                                    .foregroundStyle(.white)
+                            }
+                            .allowsHitTesting(false)
                     }
                 }
             }

@@ -98,10 +98,9 @@ public struct TopicDetailView: View {
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(Color(.systemGroupedBackground))
         .navigationTitle("#\(tag)#")
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
         .task {
             topic = try? await API.topicDetail(tag: tag)
             await reloadFeeds()
@@ -196,10 +195,9 @@ public struct ProductDetailView: View {
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(product?.title ?? "数码产品")
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
         .task {
             product = try? await API.productDetail(id: productID)
             let link = (product?.url.isEmpty == false ? product!.url : "#/feed/productFeedList?id=\(productID)")
@@ -310,10 +308,9 @@ public struct AppDetailView: View {
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(app?.title ?? "应用详情")
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
         .task {
             app = try? await API.appDetail(id: appID)
             comments = (try? await API.appComments(id: appID, page: 1)) ?? []
@@ -384,10 +381,9 @@ public struct DyhDetailView: View {
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(dyh?.title ?? "看看号")
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
         .task {
             dyh = try? await API.dyhDetail(id: dyhID)
             rows = (try? await API.dyhArticles(id: dyhID, page: 1)) ?? []
@@ -471,10 +467,9 @@ public struct CollectionDetailView: View {
             }
             .padding(.vertical, 10)
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(collection?.title ?? "收藏夹")
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
         .task {
             collection = try? await API.collectionDetail(id: collectionID)
             rows = (try? await API.collectionItems(id: collectionID, page: 1)) ?? []
@@ -582,10 +577,9 @@ public struct PageFeedView: View {
                 .padding(.vertical, 10)
             }
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(Color(.systemGroupedBackground))
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
         .task {
             isLoading = true
             defer { isLoading = false }
@@ -679,7 +673,6 @@ public struct CoolPicView: View {
         }
         .navigationTitle("酷图")
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
         .task { await reload() }
     }
 

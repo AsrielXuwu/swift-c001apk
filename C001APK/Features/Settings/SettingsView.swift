@@ -67,6 +67,11 @@ public struct SettingsView: View {
             }
 
             Section("图片与媒体") {
+                Picker("多图展示样式", selection: $settings.mediaDisplayStyle) {
+                    ForEach(MediaDisplayStyle.allCases) { style in
+                        Text(style.label).tag(style)
+                    }
+                }
                 Picker("图片加载策略", selection: $settings.mediaAutoLoadMode) {
                     ForEach(MediaAutoLoadMode.allCases) { mode in
                         Text(mode.label).tag(mode)

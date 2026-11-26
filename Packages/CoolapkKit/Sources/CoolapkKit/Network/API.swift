@@ -213,11 +213,11 @@ public enum API: Sendable {
         }
 
         if template == "iconButtonGridCard" {
-            let banners = entities.compactMap { entity -> HomeBanner? in
+            let banners = entities.enumerated().compactMap { offset, entity -> HomeBanner? in
                 let image = entity.pic.string
                 guard !image.isEmpty else { return nil }
                 return HomeBanner(
-                    id: "\(entity.entityId.identifier)-\(index)",
+                    id: "bgrid-\(index)-\(offset)-\(entity.entityId.identifier)",
                     title: entity.title.string,
                     subtitle: "",
                     image: image,
@@ -228,7 +228,9 @@ public enum API: Sendable {
         }
 
         if iconCardTemplates.contains(template) {
-            let links = entities.map(iconLink(from:)).filter { !$0.image.isEmpty || !$0.title.isEmpty }
+            let links = entities.enumerated().map { offset, entity in
+                iconLink(from: entity, keyPrefix: "icon-\(index)-\(offset)")
+            }.filter { !$0.image.isEmpty || !$0.title.isEmpty }
             if links.isEmpty { return [] }
             if links.allSatisfy({ $0.image.isEmpty }) {
                 let sections = links.map { HomeSection(id: $0.id, title: $0.title, subtitle: $0.subtitle, url: $0.url, style: "") }
@@ -238,10 +240,10 @@ public enum API: Sendable {
         }
 
         if linkBarTemplates.contains(template) {
-            let links = entities
-                .map { entity in
+            let links = entities.enumerated()
+                .map { offset, entity in
                     HomeSection(
-                        id: "\(entity.entityId.identifier)-\(entity.title.string)",
+                        id: "lbar-\(index)-\(offset)-\(entity.entityId.identifier)",
                         title: entity.title.string,
                         subtitle: entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string,
                         url: entity.url.string,
@@ -254,11 +256,11 @@ public enum API: Sendable {
 
         switch template {
         case "imageCarouselCard_1", "imageCarouselCard_2", "imageCarouselCard":
-            let banners = entities.compactMap { entity -> HomeBanner? in
+            let banners = entities.enumerated().compactMap { offset, entity -> HomeBanner? in
                 let image = entity.pic.string
                 guard !image.isEmpty else { return nil }
                 return HomeBanner(
-                    id: "\(entity.entityId.identifier)-\(entity.title.string)",
+                    id: "car-\(index)-\(offset)-\(entity.entityId.identifier)",
                     title: entity.title.string.isEmpty ? entity.description.string : entity.title.string,
                     subtitle: entity.sub_title.string,
                     image: image,
@@ -268,9 +270,9 @@ public enum API: Sendable {
             return banners.isEmpty ? [] : [.banners("banner-\(index)", banners)]
 
         case "imageTextScrollCard":
-            let sections = entities.map { entity in
+            let sections = entities.enumerated().map { offset, entity in
                 HomeSection(
-                    id: "\(entity.entityId.identifier)-\(entity.title.string)",
+                    id: "sec-\(index)-\(offset)-\(entity.entityId.identifier)",
                     title: entity.title.string,
                     subtitle: entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string,
                     url: entity.url.string,
@@ -280,10 +282,10 @@ public enum API: Sendable {
             return sections.isEmpty ? [] : [.sections("sections-\(index)", sections)]
 
         case "verticalColumnsFullPageCard":
-            let columns = entities
-                .map { entity in
+            let columns = entities.enumerated()
+                .map { offset, entity in
                     HomeSection(
-                        id: "\(entity.entityId.identifier)-\(entity.title.string)",
+                        id: "col-\(index)-\(offset)-\(entity.entityId.identifier)",
                         title: entity.title.string,
                         subtitle: entity.sub_title.string,
                         url: entity.url.string,
@@ -310,16 +312,18 @@ public enum API: Sendable {
             return title.isEmpty ? [] : [.sectionTitle(key: "\(index)", title: title, url: moreURL, subtitle: "")]
 
         default:
-            let links = entities.map(iconLink(from:)).filter { !$0.image.isEmpty }
+            let links = entities.enumerated().map { offset, entity in
+                iconLink(from: entity, keyPrefix: "def-\(index)-\(offset)")
+            }.filter { !$0.image.isEmpty }
             if !links.isEmpty { return titled([.icons("icons-\(index)", links)]) }
             if !title.isEmpty, entities.isEmpty { return [.text("text-\(index)", title)] }
         }
         return []
     }
 
-    private static func iconLink(from entity: JSON) -> HomeIconLink {
+    private static func iconLink(from entity: JSON, keyPrefix: String = "icon") -> HomeIconLink {
         HomeIconLink(
-            id: "\(entity.entityId.identifier)-\(entity.title.string)",
+            id: "\(keyPrefix)-\(entity.entityId.identifier)-\(entity.title.string)",
             title: entity.title.string,
             image: entity.logo.string.isEmpty ? entity.pic.string : entity.logo.string,
             url: entity.url.string,

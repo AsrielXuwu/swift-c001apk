@@ -77,8 +77,7 @@ public struct FeedDetailView: View {
         }
         .navigationTitle(viewModel.feed?.feedTypeName ?? "动态详情")
         .navigationBarTitleDisplayMode(.inline)
-        .c001NavBarStyle()
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .background(Color(.systemGroupedBackground))
         .toolbar {
             if let feed = viewModel.feed {
                 ToolbarItemGroup(placement: .topBarTrailing) {

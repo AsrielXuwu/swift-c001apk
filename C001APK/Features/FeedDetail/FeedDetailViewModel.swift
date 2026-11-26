@@ -43,26 +43,38 @@ public final class FeedDetailViewModel {
     }
 
     public func loadAll(appState: AppState) async {
-        isLoadingFeed = feed == nil
+        isLoadingFeed = (feed == nil)
+        isLoadingReplies = replies.isEmpty
         errorMessage = nil
+        currentReplyPage = 1
+        hasMoreReplies = true
 
-        do {
-            let loaded = try await API.feedDetail(id: feedID)
+        async let detailFetch: FeedItem? = fetchFeedDetail(appState: appState)
+        async let repliesFetch: Void = fetchReplies(page: 1, append: false, appState: appState)
+
+        let loaded = await detailFetch
+        if let loaded {
             feed = loaded
             appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
+        }
+        isLoadingFeed = false
+
+        _ = await repliesFetch
+        isLoadingReplies = false
+    }
+
+    private func fetchFeedDetail(appState: AppState) async -> FeedItem? {
+        do {
+            return try await API.feedDetail(id: feedID)
         } catch {
             let retried = await appState.handleAPIError(error)
             if retried {
-                if let loaded = try? await API.feedDetail(id: feedID) {
-                    feed = loaded
-                    appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
-                }
+                return try? await API.feedDetail(id: feedID)
             } else if feed == nil {
                 errorMessage = error.localizedDescription
             }
+            return nil
         }
-        isLoadingFeed = false
-        await reloadReplies(appState: appState)
     }
 
     public func reloadReplies(appState: AppState) async {
