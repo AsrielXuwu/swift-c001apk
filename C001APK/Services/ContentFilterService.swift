@@ -49,8 +49,9 @@ public final class ContentFilterService {
         self.enabled = isEnabled
         self.level = savedLevel
 
+        let disabledKinds = Set((defaults.stringArray(forKey: Self.disabledKindsKey) ?? []).compactMap(FilterRuleKind.init(rawValue:)))
         self.disabledRuleIDs = Set(defaults.stringArray(forKey: Self.disabledRulesKey) ?? [])
-        self.disabledListKinds = Set((defaults.stringArray(forKey: Self.disabledKindsKey) ?? []).compactMap(FilterRuleKind.init(rawValue:)))
+        self.disabledListKinds = disabledKinds
         self.allowedAuthorUIDs = Set(defaults.stringArray(forKey: Self.allowedAuthorsKey) ?? [])
         self.allowedContentKeys = Set(defaults.stringArray(forKey: Self.allowedContentKey) ?? [])
 
@@ -69,13 +70,15 @@ public final class ContentFilterService {
         }
         self.ruleSet = loadedRuleSet
 
+        var loadedPersonalRules: [FilterRule] = []
         if let pData = defaults.data(forKey: Self.personalRulesKey),
            let parsedPersonal = try? decoder.decode([FilterRule].self, from: pData) {
-            self.personalRules = parsedPersonal.filter { $0.id.hasPrefix("personal.") }
+            loadedPersonalRules = parsedPersonal.filter { $0.id.hasPrefix("personal.") }
         }
+        self.personalRules = loadedPersonalRules
 
-        self.subscriptionEngine = ContentFilterEngine(ruleSet: Self.filteredRuleSet(loadedRuleSet, disabledKinds: self.disabledListKinds))
-        self.personalEngine = ContentFilterEngine(ruleSet: FilterRuleSet(revision: 1, publishedAt: Date(), rules: self.personalRules))
+        self.subscriptionEngine = ContentFilterEngine(ruleSet: Self.filteredRuleSet(loadedRuleSet, disabledKinds: disabledKinds))
+        self.personalEngine = ContentFilterEngine(ruleSet: FilterRuleSet(revision: 1, publishedAt: Date(), rules: loadedPersonalRules))
     }
 
     public func isListEnabled(_ kind: FilterRuleKind) -> Bool {
