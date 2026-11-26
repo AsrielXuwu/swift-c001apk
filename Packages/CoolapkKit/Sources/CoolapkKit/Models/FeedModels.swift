@@ -297,6 +297,28 @@ public struct ReplyItem: Identifiable, Hashable, Sendable, Codable {
     }
 }
 
+public struct FeedRelationEntity: Identifiable, Hashable, Sendable, Codable {
+    public let id: String
+    public var title: String
+    public var url: String
+    public var pic: String
+    public var entityType: String
+
+    public init(
+        id: String,
+        title: String,
+        url: String,
+        pic: String = "",
+        entityType: String = ""
+    ) {
+        self.id = id
+        self.title = title
+        self.url = url
+        self.pic = pic
+        self.entityType = entityType
+    }
+}
+
 public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public enum Kind: String, Sendable, Codable {
         case feed
@@ -363,6 +385,7 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public var questionAnswerNum: Int
     public var topicTags: [String]
     public var topicIDs: [String]
+    public var relationEntities: [FeedRelationEntity]
     public var changeCount: Int
     public var totalPicCount: Int
     public var isTruncated: Bool
@@ -693,10 +716,54 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         var tIDs: [String] = []
         if !json.tid.identifier.isEmpty { tIDs.append(json.tid.identifier) }
         for rel in json.relationRows.array {
-            let rid = rel.entityId.identifier
+            let rid = rel.entityId.identifier.isEmpty ? rel.id.identifier : rel.entityId.identifier
             if !rid.isEmpty { tIDs.append(rid) }
         }
         topicIDs = tIDs
+
+        var builtRelations: [FeedRelationEntity] = []
+        var seenRelationKeys = Set<String>()
+        func appendRelation(id: String, title: String, url: String, pic: String, entityType: String) {
+            let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let cleanURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !cleanTitle.isEmpty || !cleanURL.isEmpty else { return }
+            let dedupeKey = cleanTitle.isEmpty ? cleanURL.lowercased() : cleanTitle.lowercased()
+            guard seenRelationKeys.insert(dedupeKey).inserted else { return }
+            let resolvedURL = cleanURL.isEmpty ? "/t/\(cleanTitle)" : cleanURL
+            let entityID = id.isEmpty ? "rel-\(builtRelations.count)-\(dedupeKey)" : id
+            builtRelations.append(FeedRelationEntity(
+                id: entityID,
+                title: cleanTitle.isEmpty ? resolvedURL : cleanTitle,
+                url: resolvedURL,
+                pic: coolapkNormalizedURL(pic),
+                entityType: entityType
+            ))
+        }
+
+        if !targetTitle.isEmpty || !targetURL.isEmpty {
+            appendRelation(
+                id: json.targetRow.id.identifier.isEmpty ? json.tid.identifier : json.targetRow.id.identifier,
+                title: targetTitle,
+                url: targetURL,
+                pic: targetPic,
+                entityType: json.targetRow.targetType.string.isEmpty ? json.targetRow.entityType.string : json.targetRow.targetType.string
+            )
+        }
+        for rel in json.relationRows.array {
+            let relPic = rel.logo.string.isEmpty ? rel.pic.string : rel.logo.string
+            let relID = rel.id.identifier.isEmpty ? rel.entityId.identifier : rel.id.identifier
+            appendRelation(
+                id: relID,
+                title: rel.title.string,
+                url: rel.url.string,
+                pic: relPic,
+                entityType: rel.entityType.string
+            )
+        }
+        for tag in tags {
+            appendRelation(id: "", title: tag, url: "/t/\(tag)", pic: "", entityType: "topic")
+        }
+        relationEntities = builtRelations
     }
 
     public var forwardLabel: String {
@@ -760,6 +827,18 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         questionAnswerNum = try c.decodeIfPresent(Int.self, forKey: .questionAnswerNum) ?? 0
         topicTags = try c.decodeIfPresent([String].self, forKey: .topicTags) ?? []
         topicIDs = try c.decodeIfPresent([String].self, forKey: .topicIDs) ?? []
+        if let decodedRelations = try c.decodeIfPresent([FeedRelationEntity].self, forKey: .relationEntities) {
+            relationEntities = decodedRelations
+        } else if !targetTitle.isEmpty || !targetURL.isEmpty {
+            relationEntities = [FeedRelationEntity(
+                id: "target-\(targetTitle)",
+                title: targetTitle.isEmpty ? targetURL : targetTitle,
+                url: targetURL.isEmpty ? "/t/\(targetTitle)" : targetURL,
+                pic: targetPic
+            )]
+        } else {
+            relationEntities = []
+        }
         changeCount = try c.decodeIfPresent(Int.self, forKey: .changeCount) ?? 0
         totalPicCount = try c.decodeIfPresent(Int.self, forKey: .totalPicCount) ?? mediaItems.count
         isTruncated = try c.decodeIfPresent(Bool.self, forKey: .isTruncated) ?? false

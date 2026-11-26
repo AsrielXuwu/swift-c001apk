@@ -579,6 +579,8 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
     public var feedNumText: String
     public var hotNumText: String
     public var isFollowed: Bool
+    public var selectedTab: String
+    public var tabs: [HomeSection]
 
     public init(json: JSON) {
         id = json.id.exists ? json.id.identifier : json.entityId.identifier
@@ -605,6 +607,26 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
         hotNumText = rawHotTxt
         isFollowed = json.isFollowed.int > 0 || json.follow.int > 0
             || json.extraData.parsed.showCancelFollowMenu.int > 0
+        selectedTab = json.selectedTab.string.isEmpty ? json.selected_tab.string : json.selectedTab.string
+        var parsedTabs: [HomeSection] = []
+        var seenTabIDs = Set<String>()
+        for (idx, entry) in json.tabList.array.enumerated() {
+            let tabTitle = entry.title.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            let pageName = entry.page_name.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            let rawURL = entry.url.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            let tabURL = rawURL.isEmpty ? pageName : rawURL
+            guard !tabTitle.isEmpty, (!tabURL.isEmpty || !pageName.isEmpty) else { continue }
+            let baseID = !pageName.isEmpty ? pageName : tabURL
+            let uniqueID = seenTabIDs.insert(baseID).inserted ? baseID : "\(baseID)-\(idx)"
+            parsedTabs.append(HomeSection(
+                id: uniqueID,
+                title: tabTitle,
+                subtitle: pageName,
+                url: tabURL,
+                style: entry.pic.string
+            ))
+        }
+        tabs = parsedTabs
     }
 
     private static func parseCompactCount(_ raw: String) -> Int {

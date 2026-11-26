@@ -78,8 +78,15 @@ public struct UserDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if compactNavProgress > 0.08, (profile != nil || initialAvatar != nil) {
+                    let loginPrimary = profile?.loginTime.map { "活跃 · \(Formatting.relativeTime($0))" }
+                        ?? (profile?.location.isEmpty == false ? profile!.location : "UID \(uid)")
+                    let deviceSecondary = profile?.deviceTitle.isEmpty == false
+                        ? profile!.deviceTitle
+                        : (profile.map { "\(Formatting.count($0.fansNum)) 粉丝" } ?? "酷友主页")
                     CollapsedNavEntityToolbar(
                         avatarURL: profile?.avatar ?? initialAvatar ?? "",
+                        primaryLine: loginPrimary,
+                        secondaryLine: deviceSecondary,
                         isFollowed: profile.map(isFollowingUser) ?? appState.localFollow.contains(uid: uid),
                         showFollowButton: profile != nil && uid != appState.accounts.activeUID,
                         isDisabled: isTogglingFollow,

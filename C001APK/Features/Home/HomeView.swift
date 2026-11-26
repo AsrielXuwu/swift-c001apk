@@ -149,9 +149,22 @@ public struct HomeView: View {
                     scrolledTab = appState.homeSelectedTab
                 }
             }
-            .task(id: "\(appState.isSessionBootstrapped)|\(appState.sessionVersion)|\(activeTab.rawValue)") {
-                guard appState.isSessionBootstrapped else { return }
+            .task(id: "\(appState.isSessionBootstrapped)|\(appState.settings.onboardingCompleted)|\(appState.sessionVersion)|\(activeTab.rawValue)") {
+                guard appState.isSessionBootstrapped, appState.settings.onboardingCompleted else { return }
                 await viewModel.loadInitial(tab: activeTab, appState: appState)
+            }
+            .onChange(of: appState.settings.onboardingCompleted) { wasDone, isDone in
+                if !wasDone && isDone {
+                    Task {
+                        await viewModel.loadInitial(tab: activeTab, appState: appState, force: true)
+                    }
+                }
+            }
+            .onChange(of: appState.feedRefreshTrigger) { _, _ in
+                guard appState.settings.onboardingCompleted else { return }
+                Task {
+                    await viewModel.loadInitial(tab: activeTab, appState: appState, force: true)
+                }
             }
             .onChange(of: appState.homeDoubleTapTrigger) { _, _ in
                 withAnimation(.snappy) {

@@ -27,6 +27,14 @@ public struct RootTabView: View {
                 }
             }
 
+            Tab("刷动态", systemImage: "rectangle.stack", value: RootTab.swipe) {
+                NavigationStack(path: $state.swipeNavigationPath) {
+                    SwipeDeckView()
+                        .c001NativeTopBar()
+                        .navigationDestination(for: AppRoute.self, destination: destinationView)
+                }
+            }
+
             Tab("我的", systemImage: "person.crop.circle", value: RootTab.profile) {
                 NavigationStack(path: $state.profileNavigationPath) {
                     ProfileTabView()
@@ -102,6 +110,12 @@ public struct RootTabView: View {
                             appState.followNavigationPath.removeAll()
                         } else {
                             appState.followDoubleTapTrigger += 1
+                        }
+                    case .swipe:
+                        if !appState.swipeNavigationPath.isEmpty {
+                            appState.swipeNavigationPath.removeAll()
+                        } else {
+                            appState.swipeDoubleTapTrigger += 1
                         }
                     case .profile:
                         appState.profileNavigationPath.removeAll()

@@ -87,8 +87,15 @@ public struct FeedDetailView: View {
                     let isFollowed = appState.accounts.isLoggedIn
                         ? feed.isAuthorFollowed
                         : appState.localFollow.contains(uid: feed.uid)
+                    let primaryStatus = feed.authorLoginTime.map { "活跃 · \(Formatting.relativeTime($0))" }
+                        ?? Formatting.relativeTime(feed.dateline, fallback: feed.datelineText)
+                    let secondaryDevice = !feed.deviceTitle.isEmpty
+                        ? feed.deviceTitle
+                        : (!feed.ipLocation.isEmpty ? feed.ipLocation : "楼主")
                     CollapsedNavEntityToolbar(
                         avatarURL: feed.avatar,
+                        primaryLine: primaryStatus,
+                        secondaryLine: secondaryDevice,
                         isFollowed: isFollowed,
                         showFollowButton: !feed.uid.isEmpty && feed.uid != appState.accounts.activeUID,
                         isDisabled: viewModel.isTogglingAuthorFollow,
@@ -289,34 +296,8 @@ public struct FeedDetailView: View {
                         SecondHandOrExtraCard(feed: feed)
                     }
 
-                    if !feed.targetTitle.isEmpty {
-                        Button {
-                            if !feed.targetURL.isEmpty {
-                                appState.openRawLink(feed.targetURL)
-                            } else {
-                                appState.push(.topic(tag: feed.targetTitle))
-                            }
-                        } label: {
-                            HStack(spacing: 8) {
-                                if !feed.targetPic.isEmpty {
-                                    RemoteImageView(url: feed.targetPic, maxPixelSize: 80)
-                                        .frame(width: 24, height: 24)
-                                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                                } else {
-                                    Image(systemName: "number")
-                                        .foregroundStyle(Color.accentColor)
-                                }
-                                Text(feed.targetTitle)
-                                    .font(.subheadline.weight(.medium))
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .font(.caption)
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .padding(10)
-                            .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        }
-                        .buttonStyle(.plain)
+                    if !feed.relationEntities.isEmpty {
+                        FeedRelationEntitiesView(entities: feed.relationEntities, style: .detail)
                     }
 
                     metadataSummary(feed)

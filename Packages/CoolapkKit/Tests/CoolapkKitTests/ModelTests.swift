@@ -193,4 +193,42 @@ final class ModelTests: XCTestCase {
         XCTAssertTrue(FeedItem.isXianyuOrTradeURL(feed.extraURL))
         XCTAssertFalse(feed.needsDetailRefresh)
     }
+
+    func testTopicTabListAndFeedMultipleRelationEntitiesParsing() throws {
+        let topicJSON = Data("""
+        {
+          "id": 12345,
+          "title": "薅羊毛小分队",
+          "selectedTab": "deals",
+          "tabList": [
+            {"title": "精选", "page_name": "selected", "url": "#/page?url=/topic/selected"},
+            {"title": "搜神券", "page_name": "deals", "url": "#/page?url=/topic/deals"},
+            {"title": "讨论", "page_name": "discuss", "url": "#/topic/feedList?tag=薅羊毛小分队"}
+          ]
+        }
+        """.utf8)
+        let topic = TopicItem(json: try JSON(data: topicJSON))
+        XCTAssertEqual(topic.selectedTab, "deals")
+        XCTAssertEqual(topic.tabs.map(\.title), ["精选", "搜神券", "讨论"])
+        XCTAssertEqual(topic.tabs.map(\.subtitle), ["selected", "deals", "discuss"])
+
+        let multiTagFeedJSON = Data("""
+        {
+          "id": 654321,
+          "uid": 100,
+          "username": "多话题玩家",
+          "message": "分享好价与评测",
+          "targetRow": {"id": "1", "title": "小米15", "url": "/product/1001", "targetType": "product"},
+          "relationRows": [
+            {"id": "1", "title": "小米15", "url": "/product/1001", "entityType": "product"},
+            {"id": "2", "title": "薅羊毛小分队", "url": "/t/薅羊毛小分队", "entityType": "topic"},
+            {"id": "3", "title": "好物推荐", "url": "/t/好物推荐", "entityType": "topic"}
+          ],
+          "tags": "好物推荐,摄影打卡"
+        }
+        """.utf8)
+        let feed = FeedItem(json: try JSON(data: multiTagFeedJSON))
+        XCTAssertEqual(feed.relationEntities.map(\.title), ["小米15", "薅羊毛小分队", "好物推荐", "摄影打卡"])
+        XCTAssertEqual(feed.relationEntities.last?.url, "/t/摄影打卡")
+    }
 }

@@ -397,7 +397,7 @@ private struct MediaPageItemView: View {
                 onLivePlayingChanged(false)
             } else if liveVideoURL != nil && (autoPlayLivePhoto || isLoopingLivePhoto) && !showLiveVideo {
                 let hasHDR = !disableHDR && ((loadedResult?.hasHDRGainMap ?? false) || item.isHdr)
-                scheduleLivePlayback(delaySeconds: isLoopingLivePhoto ? 0 : (hasHDR ? 1.5 : 0.35))
+                scheduleLivePlayback(delaySeconds: isLoopingLivePhoto ? 0 : (hasHDR ? 1.0 : 0.35))
             }
         }
         .onChange(of: replayTrigger) { oldVal, newVal in
@@ -562,7 +562,7 @@ private struct MediaPageItemView: View {
 
         if isCurrentPage && (autoPlayLivePhoto || isLoopingLivePhoto) {
             let activeHDR = hasHDR && !disableHDR
-            scheduleLivePlayback(delaySeconds: isLoopingLivePhoto ? 0 : (activeHDR ? 1.5 : 0.35))
+            scheduleLivePlayback(delaySeconds: isLoopingLivePhoto ? 0 : (activeHDR ? 1.0 : 0.35))
         }
     }
 

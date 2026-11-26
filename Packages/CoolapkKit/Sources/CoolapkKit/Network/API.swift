@@ -946,6 +946,36 @@ public enum API: Sendable {
         return rows(from: json.data.array)
     }
 
+    public static func topicTabFeeds(
+        tag: String,
+        topicID: String? = nil,
+        tab: HomeSection,
+        listType: String = "lastupdate_desc",
+        page: Int
+    ) async throws -> [HomeFeedRow] {
+        let trimmedURL = tab.url.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedURL.isEmpty || (tab.title == "讨论" && listType != "lastupdate_desc") {
+            return try await topicFeeds(tag: tag, page: page, listType: listType)
+        }
+        if trimmedURL.hasPrefix("/v6/") {
+            var params: [String: String] = ["page": String(page), "tag": tag]
+            if let topicID, !topicID.isEmpty { params["id"] = topicID }
+            if !listType.isEmpty { params["listType"] = listType }
+            let json = try await client.get(trimmedURL, params)
+            return rows(from: json.data.array)
+        }
+        let parsed = parsePageLink(trimmedURL)
+        var extra = parsed.extra
+        if !tab.title.isEmpty, extra["title"] == nil {
+            extra["title"] = tab.title
+        }
+        if !listType.isEmpty, tab.title == "讨论", extra["listType"] == nil {
+            extra["listType"] = listType
+        }
+        let items = try await client.dataList(url: parsed.url, page: page, extra: extra)
+        return rows(from: items)
+    }
+
     public static func topicDetail(tag: String) async throws -> TopicItem {
         do {
             let json = try await client.get("/v6/topic/newTagDetail", ["tag": tag])

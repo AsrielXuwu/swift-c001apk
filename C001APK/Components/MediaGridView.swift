@@ -316,14 +316,17 @@ extension MediaGridView {
     }
 }
 
-private struct PhotoStackCardView<MenuContent: View>: View {
-    let items: [FeedMedia]
-    @Binding var deckPhase: CGFloat
-    let transitionSeed: String
-    let enableZoomSource: Bool
-    let disableHDR: Bool
-    let onTapCard: (Int) -> Void
-    @ViewBuilder let contextMenuBuilder: (FeedMedia, Int) -> MenuContent
+public struct PhotoStackCardView<MenuContent: View>: View {
+    public let items: [FeedMedia]
+    @Binding public var deckPhase: CGFloat
+    public let transitionSeed: String
+    public let enableZoomSource: Bool
+    public let disableHDR: Bool
+    public var cardHeight: CGFloat = 218
+    public var cornerRadius: CGFloat = 18
+    public var adaptiveContentMode: Bool = false
+    public let onTapCard: (Int) -> Void
+    @ViewBuilder public let contextMenuBuilder: (FeedMedia, Int) -> MenuContent
 
     @Environment(\.zoomNamespace) private var zoomNamespace
     @Environment(\.replySwipeLock) private var replySwipeLock
@@ -332,6 +335,30 @@ private struct PhotoStackCardView<MenuContent: View>: View {
     @State private var isHorizontalDragging = false
     @State private var lastDragEndedAt: Date = .distantPast
 
+    public init(
+        items: [FeedMedia],
+        deckPhase: Binding<CGFloat>,
+        transitionSeed: String,
+        enableZoomSource: Bool,
+        disableHDR: Bool,
+        cardHeight: CGFloat = 218,
+        cornerRadius: CGFloat = 18,
+        adaptiveContentMode: Bool = false,
+        onTapCard: @escaping (Int) -> Void,
+        @ViewBuilder contextMenuBuilder: @escaping (FeedMedia, Int) -> MenuContent
+    ) {
+        self.items = items
+        self._deckPhase = deckPhase
+        self.transitionSeed = transitionSeed
+        self.enableZoomSource = enableZoomSource
+        self.disableHDR = disableHDR
+        self.cardHeight = cardHeight
+        self.cornerRadius = cornerRadius
+        self.adaptiveContentMode = adaptiveContentMode
+        self.onTapCard = onTapCard
+        self.contextMenuBuilder = contextMenuBuilder
+    }
+
     private var currentNearestIndex: Int {
         let count = items.count
         guard count > 0 else { return 0 }
@@ -339,7 +366,7 @@ private struct PhotoStackCardView<MenuContent: View>: View {
         return ((rounded % count) + count) % count
     }
 
-    var body: some View {
+    public var body: some View {
         let count = items.count
         let visibleLayers = min(count, 3)
         let activeIdx = currentNearestIndex
@@ -349,24 +376,36 @@ private struct PhotoStackCardView<MenuContent: View>: View {
             OrbitalDeckStage(
                 phase: deckPhase + dragProgress,
                 count: count,
-                cardHeight: 218
+                cardHeight: cardHeight
             ) { itemIndex, isFront in
                 let item = items[itemIndex]
                 let sourceID = (isFront && enableZoomSource) ? "media-\(transitionSeed)-\(itemIndex)" : nil
+                let ratio = MediaGridView.inferredAspectRatio(from: item.thumbnailUrl)
+                let shouldLetterboxWide = adaptiveContentMode && (ratio ?? 1.0) > 1.38
 
                 Color(.secondarySystemGroupedBackground)
-                    .frame(height: 218)
+                    .frame(height: cardHeight)
                     .overlay {
-                        RemoteImageView(
-                            url: item.thumbnailUrl,
-                            maxPixelSize: 1080
-                        )
+                        if shouldLetterboxWide {
+                            ZStack {
+                                RemoteImageView(url: item.thumbnailUrl, maxPixelSize: 320, contentMode: .fill)
+                                    .blur(radius: 20)
+                                    .opacity(0.45)
+                                RemoteImageView(url: item.sourceUrl, maxPixelSize: 1200, contentMode: .fit)
+                            }
+                        } else {
+                            RemoteImageView(
+                                url: adaptiveContentMode ? item.sourceUrl : item.thumbnailUrl,
+                                maxPixelSize: adaptiveContentMode ? 1200 : 1080,
+                                contentMode: .fill
+                            )
+                        }
                     }
                     .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
                     .overlay {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                             .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
                     }
                     .applyZoomSource(id: sourceID, in: zoomNamespace)
@@ -447,7 +486,7 @@ private struct PhotoStackCardView<MenuContent: View>: View {
             .padding(.leading, visibleLayers > 2 ? 26 : 10)
             .padding(.trailing, (visibleLayers > 1 ? 20 : 0) + 10)
         }
-        .frame(height: visibleLayers > 1 ? 236 : 218)
+        .frame(height: visibleLayers > 1 ? cardHeight + 18 : cardHeight)
         .background {
             if let replyCardCoordinateSpace, count > 1 {
                 Color.clear
@@ -461,8 +500,8 @@ private struct PhotoStackCardView<MenuContent: View>: View {
                     }
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .contextMenu {
             contextMenuBuilder(activeItem, activeIdx)
         } preview: {
@@ -833,7 +872,7 @@ public struct MediaContextMenuPreview: View {
             liveVideoURL = vidFile
 
             let activeHDR = !disableHDR && (item.isHdr || (displayResult?.hasHDRGainMap ?? false))
-            let delayNs: UInt64 = activeHDR ? 1_500_000_000 : 350_000_000
+            let delayNs: UInt64 = activeHDR ? 1_000_000_000 : 350_000_000
             try? await Task.sleep(nanoseconds: delayNs)
             guard !Task.isCancelled else { return }
 

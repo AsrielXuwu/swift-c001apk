@@ -80,6 +80,12 @@ public struct OnboardingView: View {
                         appState.settings.hideHomePublishButton = hidePublish
                         appState.settings.onboardingCompleted = true
                         dismiss()
+                        Task { @MainActor in
+                            await CoolapkClient.shared.updateParameters(appState.settings.protocolParameters)
+                            await ImagePipeline.shared.updateUserAgent(appState.settings.protocolParameters.userAgent)
+                            await appState.refreshLoginAndBadge()
+                            appState.feedRefreshTrigger += 1
+                        }
                     }
                     .fontWeight(.semibold)
                 }

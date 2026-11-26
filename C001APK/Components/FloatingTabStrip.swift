@@ -69,9 +69,11 @@ public struct FloatingTabStrip<Item: Identifiable & Hashable>: View where Item.I
     }
 }
 
-/// Compact circular avatar + tight follow button for collapsed navigation toolbars.
+/// Compact circular avatar + two-line metadata + tight follow button for collapsed navigation toolbars.
 public struct CollapsedNavEntityToolbar: ToolbarContent {
     public let avatarURL: String
+    public let primaryLine: String
+    public let secondaryLine: String
     public let isFollowed: Bool
     public let showFollowButton: Bool
     public let isDisabled: Bool
@@ -80,6 +82,8 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
 
     public init(
         avatarURL: String,
+        primaryLine: String = "",
+        secondaryLine: String = "",
         isFollowed: Bool,
         showFollowButton: Bool,
         isDisabled: Bool = false,
@@ -87,6 +91,8 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
         onTapFollow: @escaping () -> Void
     ) {
         self.avatarURL = avatarURL
+        self.primaryLine = primaryLine
+        self.secondaryLine = secondaryLine
         self.isFollowed = isFollowed
         self.showFollowButton = showFollowButton
         self.isDisabled = isDisabled
@@ -97,7 +103,27 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
     public var body: some ToolbarContent {
         ToolbarItemGroup(placement: .topBarLeading) {
             Button(action: onTapAvatar) {
-                AvatarView(url: avatarURL, size: 28)
+                HStack(spacing: 7) {
+                    AvatarView(url: avatarURL, size: 28)
+
+                    if !primaryLine.isEmpty || !secondaryLine.isEmpty {
+                        VStack(alignment: .leading, spacing: 1) {
+                            if !primaryLine.isEmpty {
+                                Text(primaryLine)
+                                    .font(.caption2.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                            }
+                            if !secondaryLine.isEmpty {
+                                Text(secondaryLine)
+                                    .font(.system(size: 10, weight: .regular))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .frame(maxWidth: 112, alignment: .leading)
+                    }
+                }
             }
             .accessibilityLabel("回到顶部")
 

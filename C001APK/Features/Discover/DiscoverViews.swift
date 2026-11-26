@@ -15,54 +15,68 @@ public struct TopicDetailView: View {
 
     @Environment(AppState.self) private var appState
     @State private var topic: TopicItem?
-    @State private var listType = "lastupdate_desc"
-    @State private var scrolledType: String? = "lastupdate_desc"
-    @State private var rowsBySort: [String: [HomeFeedRow]] = [:]
-    @State private var loadedSorts: Set<String> = []
-    @State private var loadingSorts: Set<String> = []
-    @State private var pageBySort: [String: Int] = [:]
-    @State private var hasMoreBySort: [String: Bool] = [:]
+    @State private var activeTabID = "lastupdate_desc"
+    @State private var scrolledTabID: String? = "lastupdate_desc"
+    @State private var sortMode = "lastupdate_desc"
+    @State private var rowsByTab: [String: [HomeFeedRow]] = [:]
+    @State private var loadedTabs: Set<String> = []
+    @State private var loadingTabs: Set<String> = []
+    @State private var pageByTab: [String: Int] = [:]
+    @State private var hasMoreByTab: [String: Bool] = [:]
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
     @State private var hasInitialized = false
 
-    private let sortOptions: [ChoiceChip] = [
-        ChoiceChip(id: "lastupdate_desc", title: "最新回复"),
-        ChoiceChip(id: "dateline_desc", title: "最新发布"),
-        ChoiceChip(id: "popular", title: "热门")
+    private let fallbackTabs: [HomeSection] = [
+        HomeSection(id: "lastupdate_desc", title: "最新回复", subtitle: "lastupdate_desc", url: "", style: ""),
+        HomeSection(id: "dateline_desc", title: "最新发布", subtitle: "dateline_desc", url: "", style: ""),
+        HomeSection(id: "popular", title: "热门", subtitle: "popular", url: "", style: "")
     ]
 
     public init(tag: String) { self.tag = tag }
 
-    private var selectedChoice: ChoiceChip {
-        sortOptions.first { $0.id == listType } ?? sortOptions[0]
+    private var activeTabs: [HomeSection] {
+        if let apiTabs = topic?.tabs, !apiTabs.isEmpty {
+            return apiTabs
+        }
+        return fallbackTabs
+    }
+
+    private var selectedTabItem: HomeSection {
+        activeTabs.first { $0.id == activeTabID } ?? activeTabs[0]
+    }
+
+    private var isSortMenuAvailable: Bool {
+        let tabs = activeTabs
+        if tabs == fallbackTabs { return false }
+        return selectedTabItem.title == "讨论"
     }
 
     public var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 0) {
-                    ForEach(sortOptions) { option in
-                        topicFeedScrollPage(sortType: option.id)
+                    ForEach(activeTabs) { tabItem in
+                        topicFeedScrollPage(for: tabItem)
                             .containerRelativeFrame(.horizontal)
                             .frame(maxHeight: .infinity)
-                            .id(option.id)
+                            .id(tabItem.id)
                     }
                 }
                 .scrollTargetLayout()
             }
             .scrollTargetBehavior(.paging)
-            .scrollPosition(id: $scrolledType)
+            .scrollPosition(id: $scrolledTabID)
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .background(Color(.systemGroupedBackground).ignoresSafeArea())
             .safeAreaBar(edge: .top, spacing: 0) {
                 FloatingTabStrip(
-                    items: sortOptions,
-                    selection: selectedChoice,
+                    items: activeTabs,
+                    selection: selectedTabItem,
                     titleProvider: \.title,
                     onSelect: { option in
-                        listType = option.id
+                        activeTabID = option.id
                     },
                     onReselect: { option in
                         withAnimation(.snappy) {
@@ -75,14 +89,17 @@ public struct TopicDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let topic, compactNavProgress > 0.08 {
+                    let navLines = topicNavLines(topic)
                     CollapsedNavEntityToolbar(
                         avatarURL: topic.logo,
+                        primaryLine: navLines.primary,
+                        secondaryLine: navLines.secondary,
                         isFollowed: topic.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
                         onTapAvatar: {
                             withAnimation(.snappy) {
-                                proxy.scrollTo("topic-top-\(listType)", anchor: .top)
+                                proxy.scrollTo("topic-top-\(selectedTabItem.id)", anchor: .top)
                             }
                         },
                         onTapFollow: {
@@ -90,43 +107,73 @@ public struct TopicDetailView: View {
                         }
                     )
                 }
-            }
-            .onChange(of: scrolledType) { _, newValue in
-                if let newValue, newValue != listType {
-                    listType = newValue
-                }
-            }
-            .onChange(of: listType) { _, newValue in
-                appState.pageTabSelections["topic-\(tag)"] = newValue
-                if scrolledType != newValue {
-                    withAnimation(.snappy(duration: 0.24)) {
-                        scrolledType = newValue
+
+                if isSortMenuAvailable {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Picker("排序方式", selection: $sortMode) {
+                                Text("最新回复").tag("lastupdate_desc")
+                                Text("最新发布").tag("dateline_desc")
+                                Text("热门排序").tag("popular")
+                            }
+                        } label: {
+                            Image(systemName: "arrow.up.arrow.down")
+                        }
+                        .accessibilityLabel("排序方式")
                     }
                 }
-                Task { await reloadFeeds(for: newValue, force: false) }
+            }
+            .onChange(of: scrolledTabID) { _, newValue in
+                if let newValue, newValue != activeTabID {
+                    activeTabID = newValue
+                }
+            }
+            .onChange(of: activeTabID) { _, newValue in
+                appState.pageTabSelections["topic-\(tag)"] = newValue
+                if scrolledTabID != newValue {
+                    withAnimation(.snappy(duration: 0.24)) {
+                        scrolledTabID = newValue
+                    }
+                }
+                if let target = activeTabs.first(where: { $0.id == newValue }) {
+                    Task { await reloadFeeds(for: target, force: false) }
+                }
+            }
+            .onChange(of: sortMode) { _, _ in
+                Task { await reloadFeeds(for: selectedTabItem, force: true) }
             }
             .task(id: tag) {
-                if let saved = appState.pageTabSelections["topic-\(tag)"],
-                   sortOptions.contains(where: { $0.id == saved }),
-                   saved != listType {
-                    listType = saved
-                    scrolledType = saved
-                }
                 guard !hasInitialized || topic == nil else { return }
                 hasInitialized = true
-                topic = try? await API.topicDetail(tag: tag)
-                await reloadFeeds(for: listType, force: !loadedSorts.contains(listType))
+                let loadedTopic = try? await API.topicDetail(tag: tag)
+                topic = loadedTopic
+
+                let tabs = activeTabs
+                let saved = appState.pageTabSelections["topic-\(tag)"]
+                let initialTab: HomeSection? = if let saved, let matchedSaved = tabs.first(where: { $0.id == saved }) {
+                    matchedSaved
+                } else if let apiSel = loadedTopic?.selectedTab, !apiSel.isEmpty,
+                          let matchedAPI = tabs.first(where: { $0.subtitle == apiSel || $0.id == apiSel || $0.title == apiSel }) {
+                    matchedAPI
+                } else {
+                    tabs.first
+                }
+                if let initialTab {
+                    activeTabID = initialTab.id
+                    scrolledTabID = initialTab.id
+                    await reloadFeeds(for: initialTab, force: !loadedTabs.contains(initialTab.id))
+                }
             }
         }
     }
 
-    private func topicFeedScrollPage(sortType: String) -> some View {
-        let rows = rowsBySort[sortType] ?? []
-        let isLoadingSort = loadingSorts.contains(sortType)
-        let hasLoaded = loadedSorts.contains(sortType)
+    private func topicFeedScrollPage(for tabItem: HomeSection) -> some View {
+        let rows = rowsByTab[tabItem.id] ?? []
+        let isLoadingTab = loadingTabs.contains(tabItem.id)
+        let hasLoaded = loadedTabs.contains(tabItem.id)
 
         return ScrollView {
-            Color.clear.frame(height: 0).id("topic-top-\(sortType)")
+            Color.clear.frame(height: 0).id("topic-top-\(tabItem.id)")
             LazyVStack(alignment: .leading, spacing: 10) {
                 if let topic {
                     HStack(spacing: 12) {
@@ -164,7 +211,7 @@ public struct TopicDetailView: View {
                     .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
                 }
 
-                if (!hasLoaded || isLoadingSort) && rows.isEmpty {
+                if (!hasLoaded || isLoadingTab) && rows.isEmpty {
                     ProgressView()
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 48)
@@ -175,7 +222,7 @@ public struct TopicDetailView: View {
                     ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
                         HomeRowRenderer(row: row)
                             .onAppear {
-                                if idx >= rows.count - 4 { Task { await loadMore(for: sortType) } }
+                                if idx >= rows.count - 4 { Task { await loadMore(for: tabItem) } }
                             }
                     }
                 }
@@ -186,7 +233,7 @@ public struct TopicDetailView: View {
         .onScrollGeometryChange(for: CGFloat.self) { geo in
             geo.contentOffset.y + geo.contentInsets.top
         } action: { _, offset in
-            guard sortType == listType else { return }
+            guard tabItem.id == activeTabID else { return }
             let progress = min(1, max(0, (offset - 36) / 70))
             if abs(progress - compactNavProgress) > 0.02 {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -196,8 +243,31 @@ public struct TopicDetailView: View {
         }
         .refreshable {
             topic = try? await API.topicDetail(tag: tag)
-            await reloadFeeds(for: sortType, force: true)
+            await reloadFeeds(for: tabItem, force: true)
         }
+    }
+
+    private func topicNavLines(_ topic: TopicItem) -> (primary: String, secondary: String) {
+        let primary: String
+        if !topic.hotNumText.isEmpty {
+            primary = "\(topic.hotNumText) 热度"
+        } else if topic.hotNum > 0 {
+            primary = "\(Formatting.count(topic.hotNum)) 热度"
+        } else if topic.feedNum > 0 {
+            primary = "\(Formatting.count(topic.feedNum)) 讨论"
+        } else if !topic.feedNumText.isEmpty {
+            primary = "\(topic.feedNumText) 讨论"
+        } else {
+            primary = "#\(topic.title)#"
+        }
+        let discussPart = topic.feedNum > 0
+            ? "\(Formatting.count(topic.feedNum)) 讨论"
+            : (!topic.feedNumText.isEmpty ? "\(topic.feedNumText) 讨论" : "")
+        let followPart = "\(Formatting.count(topic.followNum)) 关注"
+        let secondary = discussPart.isEmpty || primary.contains("讨论")
+            ? followPart
+            : "\(discussPart) · \(followPart)"
+        return (primary, secondary)
     }
 
     private func topicStatsText(_ topic: TopicItem) -> String {
@@ -216,34 +286,55 @@ public struct TopicDetailView: View {
         return "\(primary) · \(Formatting.count(topic.followNum)) 关注"
     }
 
-    private func reloadFeeds(for sort: String, force: Bool) async {
-        if !force && loadedSorts.contains(sort) { return }
-        loadingSorts.insert(sort)
-        defer {
-            loadingSorts.remove(sort)
-            loadedSorts.insert(sort)
+    private func effectiveListType(for tabItem: HomeSection) -> String {
+        if activeTabs == fallbackTabs {
+            return tabItem.id
         }
-        pageBySort[sort] = 1
-        hasMoreBySort[sort] = true
+        return tabItem.title == "讨论" ? sortMode : "lastupdate_desc"
+    }
+
+    private func reloadFeeds(for tabItem: HomeSection, force: Bool) async {
+        if !force && loadedTabs.contains(tabItem.id) { return }
+        loadingTabs.insert(tabItem.id)
+        defer {
+            loadingTabs.remove(tabItem.id)
+            loadedTabs.insert(tabItem.id)
+        }
+        pageByTab[tabItem.id] = 1
+        hasMoreByTab[tabItem.id] = true
+        let activeTag = topic?.title.isEmpty == false ? topic!.title : tag
         do {
-            let fetched = try await API.topicFeeds(tag: tag, page: 1, listType: sort)
-            rowsBySort[sort] = fetched
-            hasMoreBySort[sort] = !fetched.isEmpty
+            let fetched = try await API.topicTabFeeds(
+                tag: activeTag,
+                topicID: topic?.id,
+                tab: tabItem,
+                listType: effectiveListType(for: tabItem),
+                page: 1
+            )
+            rowsByTab[tabItem.id] = fetched
+            hasMoreByTab[tabItem.id] = !fetched.isEmpty
         } catch {
             _ = await appState.handleAPIError(error)
         }
     }
 
-    private func loadMore(for sort: String) async {
-        guard hasMoreBySort[sort] != false, !loadingSorts.contains(sort) else { return }
-        let next = (pageBySort[sort] ?? 1) + 1
-        if let fetched = try? await API.topicFeeds(tag: tag, page: next, listType: sort) {
-            let current = rowsBySort[sort] ?? []
+    private func loadMore(for tabItem: HomeSection) async {
+        guard hasMoreByTab[tabItem.id] != false, !loadingTabs.contains(tabItem.id) else { return }
+        let next = (pageByTab[tabItem.id] ?? 1) + 1
+        let activeTag = topic?.title.isEmpty == false ? topic!.title : tag
+        if let fetched = try? await API.topicTabFeeds(
+            tag: activeTag,
+            topicID: topic?.id,
+            tab: tabItem,
+            listType: effectiveListType(for: tabItem),
+            page: next
+        ) {
+            let current = rowsByTab[tabItem.id] ?? []
             var seen = Set(current.map(\.id))
             let unique = fetched.filter { seen.insert($0.id).inserted }
-            rowsBySort[sort] = current + unique
-            hasMoreBySort[sort] = !unique.isEmpty
-            if !unique.isEmpty { pageBySort[sort] = next }
+            rowsByTab[tabItem.id] = current + unique
+            hasMoreByTab[tabItem.id] = !unique.isEmpty
+            if !unique.isEmpty { pageByTab[tabItem.id] = next }
         }
     }
 
@@ -364,8 +455,16 @@ public struct ProductDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let product, compactNavProgress > 0.08 {
+                    let line1 = [
+                        product.score.isEmpty ? nil : "评分 \(product.score)",
+                        product.priceText.isEmpty ? nil : product.priceText
+                    ].compactMap { $0 }.joined(separator: " · ")
+                    let line2 = "\(Formatting.count(product.followNum)) 关注"
+                        + (product.feedNum > 0 ? " · \(Formatting.count(product.feedNum)) 讨论" : "")
                     CollapsedNavEntityToolbar(
                         avatarURL: product.logo,
+                        primaryLine: line1.isEmpty ? "数码产品" : line1,
+                        secondaryLine: line2,
                         isFollowed: product.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
@@ -1021,6 +1120,8 @@ public struct DyhDetailView: View {
                 if let dyh, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: dyh.logo,
+                        primaryLine: "\(Formatting.count(dyh.followNum)) 订阅",
+                        secondaryLine: dyh.likeNum > 0 ? "\(Formatting.count(dyh.likeNum)) 获赞" : "看看号",
                         isFollowed: dyh.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
@@ -1174,6 +1275,8 @@ public struct CollectionDetailView: View {
                 if let collection, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: collection.logo,
+                        primaryLine: "\(collection.itemNum) 项内容",
+                        secondaryLine: "\(Formatting.count(collection.followNum)) 关注",
                         isFollowed: collection.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,

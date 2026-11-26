@@ -22,6 +22,7 @@ public final class AppState {
     public var selectedTab: RootTab = .home
     public var homeNavigationPath: [AppRoute] = []
     public var followNavigationPath: [AppRoute] = []
+    public var swipeNavigationPath: [AppRoute] = []
     public var profileNavigationPath: [AppRoute] = []
     public var searchNavigationPath: [AppRoute] = []
 
@@ -45,6 +46,7 @@ public final class AppState {
     public var searchQuery: String = ""
     public var homeDoubleTapTrigger: Int = 0
     public var followDoubleTapTrigger: Int = 0
+    public var swipeDoubleTapTrigger: Int = 0
     public var feedRefreshTrigger: Int = 0
     public var pageTabSelections: [String: String] = [:]
     public var homeSelectedTab: HomeTabType = .feed
@@ -129,6 +131,7 @@ public final class AppState {
         sessionVersion += 1
         homeNavigationPath.removeAll()
         followNavigationPath.removeAll()
+        swipeNavigationPath.removeAll()
         profileNavigationPath.removeAll()
         searchNavigationPath.removeAll()
         Task { await refreshLoginAndBadge() }
@@ -140,6 +143,7 @@ public final class AppState {
         switch selectedTab {
         case .home: homeNavigationPath.append(route)
         case .follow: followNavigationPath.append(route)
+        case .swipe: swipeNavigationPath.append(route)
         case .profile: profileNavigationPath.append(route)
         case .search: searchNavigationPath.append(route)
         }

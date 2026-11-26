@@ -61,6 +61,7 @@ public extension View {
 public enum RootTab: Hashable, Sendable {
     case home
     case follow
+    case swipe
     case profile
     case search
 }

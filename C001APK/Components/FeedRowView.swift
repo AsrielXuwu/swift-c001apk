@@ -39,8 +39,8 @@ public struct FeedRowView: View {
             if feed.isSecondHand || !feed.extraURL.isEmpty {
                 SecondHandOrExtraCard(feed: feed)
             }
-            if !feed.targetTitle.isEmpty {
-                targetEntityStrip
+            if !feed.relationEntities.isEmpty {
+                FeedRelationEntitiesView(entities: feed.relationEntities, style: .card)
             }
             if let hotReply = feed.replyRows.first {
                 hotReplyPreview(hotReply)
@@ -249,39 +249,7 @@ public struct FeedRowView: View {
         }
     }
 
-    private var targetEntityStrip: some View {
-        Button {
-            if !feed.targetURL.isEmpty {
-                appState.openRawLink(feed.targetURL)
-            } else {
-                appState.push(.topic(tag: feed.targetTitle))
-            }
-        } label: {
-            HStack(spacing: 8) {
-                if !feed.targetPic.isEmpty {
-                    RemoteImageView(url: feed.targetPic, maxPixelSize: 80)
-                        .frame(width: 22, height: 22)
-                        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                } else {
-                    Image(systemName: "number")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
-                }
-                Text(feed.targetTitle)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                Image(systemName: "chevron.right")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .buttonStyle(.plain)
-    }
+    // Subview helper kept above is replaced by shared FeedRelationEntitiesView below.
 
     private func hotReplyPreview(_ reply: ReplyItem) -> some View {
         HStack(alignment: .top, spacing: 6) {
@@ -505,6 +473,124 @@ public struct SecondHandOrExtraCard: View {
             }
         } else {
             appState.openRawLink(raw)
+        }
+    }
+}
+
+public struct FeedRelationEntitiesView: View {
+    public enum Style {
+        case card
+        case detail
+    }
+
+    public let entities: [FeedRelationEntity]
+    public var style: Style = .card
+
+    @Environment(AppState.self) private var appState
+
+    public init(entities: [FeedRelationEntity], style: Style = .card) {
+        self.entities = entities
+        self.style = style
+    }
+
+    public var body: some View {
+        WrappingChipsLayout(spacing: 6, lineSpacing: 6) {
+            ForEach(entities) { entity in
+                Button {
+                    if !entity.url.isEmpty {
+                        appState.openRawLink(entity.url)
+                    } else {
+                        appState.push(.topic(tag: entity.title))
+                    }
+                } label: {
+                    HStack(spacing: 5) {
+                        if !entity.pic.isEmpty {
+                            RemoteImageView(url: entity.pic, maxPixelSize: 64)
+                                .frame(width: style == .detail ? 20 : 18, height: style == .detail ? 20 : 18)
+                                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        } else {
+                            Image(systemName: iconName(for: entity))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(Color.accentColor)
+                        }
+                        Text(entity.title)
+                            .font(style == .detail ? .caption.weight(.medium) : .caption.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, style == .detail ? 6 : 5)
+                    .background(
+                        Color(style == .detail ? .tertiarySystemGroupedBackground : .secondarySystemBackground),
+                        in: Capsule()
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func iconName(for entity: FeedRelationEntity) -> String {
+        let lowerType = entity.entityType.lowercased()
+        let lowerURL = entity.url.lowercased()
+        if lowerType == "product" || lowerURL.contains("/product/") { return "iphone" }
+        if lowerType == "apk" || lowerURL.contains("/apk/") || lowerURL.contains("/game/") { return "app" }
+        if lowerType == "dyh" || lowerURL.contains("/dyh/") { return "newspaper" }
+        if lowerType == "collection" || lowerURL.contains("/collection/") { return "star" }
+        return "number"
+    }
+}
+
+public struct WrappingChipsLayout: Layout {
+    public var spacing: CGFloat = 6
+    public var lineSpacing: CGFloat = 6
+
+    public init(spacing: CGFloat = 6, lineSpacing: CGFloat = 6) {
+        self.spacing = spacing
+        self.lineSpacing = lineSpacing
+    }
+
+    public func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var rowHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX > 0 && currentX + size.width > maxWidth {
+                totalWidth = max(totalWidth, currentX - spacing)
+                currentX = 0
+                currentY += rowHeight + lineSpacing
+                rowHeight = 0
+            }
+            currentX += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
+        }
+        totalWidth = max(totalWidth, max(0, currentX - spacing))
+        return CGSize(width: maxWidth.isFinite ? maxWidth : totalWidth, height: currentY + rowHeight)
+    }
+
+    public func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var currentX = bounds.minX
+        var currentY = bounds.minY
+        var rowHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if currentX > bounds.minX && currentX + size.width > bounds.maxX {
+                currentX = bounds.minX
+                currentY += rowHeight + lineSpacing
+                rowHeight = 0
+            }
+            subview.place(
+                at: CGPoint(x: currentX, y: currentY),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: min(size.width, bounds.width), height: size.height)
+            )
+            currentX += size.width + spacing
+            rowHeight = max(rowHeight, size.height)
         }
     }
 }
