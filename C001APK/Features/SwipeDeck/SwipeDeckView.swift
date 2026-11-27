@@ -512,6 +512,8 @@ private struct SwipeFeedCardItemView: View {
                         },
                         onShareFile: onShareFile
                     )
+                } preview: {
+                    MediaContextMenuPreview(item: item, disableHDR: appState.settings.disableHDR)
                 }
 
             if showLive || showHDR || item.isGif || isLong {

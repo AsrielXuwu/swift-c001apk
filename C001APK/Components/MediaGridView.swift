@@ -623,6 +623,8 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .contextMenu {
             contextMenuBuilder(activeItem, activeIdx)
+        } preview: {
+            MediaContextMenuPreview(item: activeItem, disableHDR: disableHDR)
         }
     }
 
