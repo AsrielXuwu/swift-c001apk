@@ -478,12 +478,17 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                 HorizontalDeckPanOverlay(
                     isEnabled: count > 1,
                     activeCardSize: activeCardSize,
-                    activeItem: activeItem,
-                    cornerRadius: cornerRadius,
-                    adaptiveContentMode: adaptiveContentMode,
-                    shouldLetterboxWide: shouldLetterboxActive,
-                    disableHDR: disableHDR,
-                    appState: appState,
+                    previewConfig: DeckContextPreviewConfig(
+                        activeItem: activeItem,
+                        cornerRadius: cornerRadius,
+                        shouldLetterboxWide: shouldLetterboxActive,
+                        disableHDR: disableHDR,
+                        appState: appState,
+                        onPreviewLiftedChanged: { lifted in
+                            isPreviewLifted = lifted
+                        },
+                        onShareFile: onShareFile
+                    ),
                     onTap: {
                         guard !isHorizontalDragging,
                               abs(dragProgress) < 0.04,
@@ -522,11 +527,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                         withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
                             deckPhase = base + deltaStep
                         }
-                    },
-                    onPreviewLiftedChanged: { lifted in
-                        isPreviewLifted = lifted
-                    },
-                    onShareFile: onShareFile
+                    }
                 )
                 .frame(width: activeCardSize.width, height: activeCardSize.height)
                 .padding(.leading, leftInset)
@@ -671,6 +672,13 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
             }
+    }
+
+    private func updateDetectedRatio(index: Int, size: CGSize) {
+        guard size.width > 0, size.height > 0 else { return }
+        let ratio = size.width / size.height
+        if let existing = detectedRatios[index], abs(existing - ratio) < 0.01 { return }
+        detectedRatios[index] = ratio
     }
 
     private func stepDeck(by delta: CGFloat) {
@@ -1057,36 +1065,48 @@ private struct MediaShareActivityView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
 
-struct HorizontalDeckPanOverlay: UIViewRepresentable {
-    let isEnabled: Bool
-    let activeCardSize: CGSize
+struct DeckContextPreviewConfig {
     let activeItem: FeedMedia
     let cornerRadius: CGFloat
-    let adaptiveContentMode: Bool
     let shouldLetterboxWide: Bool
     let disableHDR: Bool
     let appState: AppState
+    let onPreviewLiftedChanged: (Bool) -> Void
+    let onShareFile: ((URL) -> Void)?
+}
+
+struct HorizontalDeckPanOverlay: UIViewRepresentable {
+    let isEnabled: Bool
+    let activeCardSize: CGSize
+    let previewConfig: DeckContextPreviewConfig?
     let onTap: () -> Void
     let onDragChanged: (CGFloat) -> Void
     let onDragEnded: (CGFloat, CGFloat, Bool) -> Void
-    let onPreviewLiftedChanged: (Bool) -> Void
-    let onShareFile: ((URL) -> Void)?
+
+    init(
+        isEnabled: Bool,
+        activeCardSize: CGSize,
+        previewConfig: DeckContextPreviewConfig? = nil,
+        onTap: @escaping () -> Void,
+        onDragChanged: @escaping (CGFloat) -> Void,
+        onDragEnded: @escaping (CGFloat, CGFloat, Bool) -> Void
+    ) {
+        self.isEnabled = isEnabled
+        self.activeCardSize = activeCardSize
+        self.previewConfig = previewConfig
+        self.onTap = onTap
+        self.onDragChanged = onDragChanged
+        self.onDragEnded = onDragEnded
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             isEnabled: isEnabled,
             activeCardSize: activeCardSize,
-            activeItem: activeItem,
-            cornerRadius: cornerRadius,
-            adaptiveContentMode: adaptiveContentMode,
-            shouldLetterboxWide: shouldLetterboxWide,
-            disableHDR: disableHDR,
-            appState: appState,
+            previewConfig: previewConfig,
             onTap: onTap,
             onDragChanged: onDragChanged,
-            onDragEnded: onDragEnded,
-            onPreviewLiftedChanged: onPreviewLiftedChanged,
-            onShareFile: onShareFile
+            onDragEnded: onDragEnded
         )
     }
 
@@ -1097,7 +1117,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         view.isMultipleTouchEnabled = false
         view.activeCardSize = activeCardSize
         view.cardBackingView.frame = CGRect(origin: .zero, size: activeCardSize)
-        view.cardBackingView.layer.cornerRadius = cornerRadius
+        view.cardBackingView.layer.cornerRadius = previewConfig?.cornerRadius ?? 18
 
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
         pan.delegate = context.coordinator
@@ -1107,13 +1127,14 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         tap.require(toFail: pan)
 
-        let contextMenu = UIContextMenuInteraction(delegate: context.coordinator)
-
         context.coordinator.panRecognizer = pan
         context.coordinator.overlayView = view
         view.addGestureRecognizer(pan)
         view.addGestureRecognizer(tap)
-        view.addInteraction(contextMenu)
+        if previewConfig != nil {
+            let contextMenu = UIContextMenuInteraction(delegate: context.coordinator)
+            view.addInteraction(contextMenu)
+        }
         return view
     }
 
@@ -1121,21 +1142,14 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         uiView.activeCardSize = activeCardSize
         uiView.isUserInteractionEnabled = isEnabled
         uiView.cardBackingView.frame = CGRect(origin: .zero, size: activeCardSize)
-        uiView.cardBackingView.layer.cornerRadius = cornerRadius
+        uiView.cardBackingView.layer.cornerRadius = previewConfig?.cornerRadius ?? 18
 
         context.coordinator.isEnabled = isEnabled
         context.coordinator.activeCardSize = activeCardSize
-        context.coordinator.activeItem = activeItem
-        context.coordinator.cornerRadius = cornerRadius
-        context.coordinator.adaptiveContentMode = adaptiveContentMode
-        context.coordinator.shouldLetterboxWide = shouldLetterboxWide
-        context.coordinator.disableHDR = disableHDR
-        context.coordinator.appState = appState
+        context.coordinator.previewConfig = previewConfig
         context.coordinator.onTap = onTap
         context.coordinator.onDragChanged = onDragChanged
         context.coordinator.onDragEnded = onDragEnded
-        context.coordinator.onPreviewLiftedChanged = onPreviewLiftedChanged
-        context.coordinator.onShareFile = onShareFile
         context.coordinator.overlayView = uiView
     }
 
@@ -1189,17 +1203,10 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
     final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIContextMenuInteractionDelegate {
         var isEnabled: Bool
         var activeCardSize: CGSize
-        var activeItem: FeedMedia
-        var cornerRadius: CGFloat
-        var adaptiveContentMode: Bool
-        var shouldLetterboxWide: Bool
-        var disableHDR: Bool
-        var appState: AppState
+        var previewConfig: DeckContextPreviewConfig?
         var onTap: () -> Void
         var onDragChanged: (CGFloat) -> Void
         var onDragEnded: (CGFloat, CGFloat, Bool) -> Void
-        var onPreviewLiftedChanged: (Bool) -> Void
-        var onShareFile: ((URL) -> Void)?
         var isPreviewMenuActive = false
         weak var panRecognizer: UIPanGestureRecognizer?
         weak var overlayView: OverlayView?
@@ -1207,31 +1214,17 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         init(
             isEnabled: Bool,
             activeCardSize: CGSize,
-            activeItem: FeedMedia,
-            cornerRadius: CGFloat,
-            adaptiveContentMode: Bool,
-            shouldLetterboxWide: Bool,
-            disableHDR: Bool,
-            appState: AppState,
+            previewConfig: DeckContextPreviewConfig?,
             onTap: @escaping () -> Void,
             onDragChanged: @escaping (CGFloat) -> Void,
-            onDragEnded: @escaping (CGFloat, CGFloat, Bool) -> Void,
-            onPreviewLiftedChanged: @escaping (Bool) -> Void,
-            onShareFile: ((URL) -> Void)?
+            onDragEnded: @escaping (CGFloat, CGFloat, Bool) -> Void
         ) {
             self.isEnabled = isEnabled
             self.activeCardSize = activeCardSize
-            self.activeItem = activeItem
-            self.cornerRadius = cornerRadius
-            self.adaptiveContentMode = adaptiveContentMode
-            self.shouldLetterboxWide = shouldLetterboxWide
-            self.disableHDR = disableHDR
-            self.appState = appState
+            self.previewConfig = previewConfig
             self.onTap = onTap
             self.onDragChanged = onDragChanged
             self.onDragEnded = onDragEnded
-            self.onPreviewLiftedChanged = onPreviewLiftedChanged
-            self.onShareFile = onShareFile
         }
 
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
@@ -1281,7 +1274,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                 && !(otherGestureRecognizer is UIScreenEdgePanGestureRecognizer)
         }
 
-        private func cachedDisplayImage(for item: FeedMedia) -> UIImage? {
+        private func cachedDisplayImage(for item: FeedMedia, disableHDR: Bool) -> UIImage? {
             let loaded = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
                 ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
                 ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
@@ -1293,18 +1286,18 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             return loaded?.image
         }
 
-        private func prepareCardBackingView() -> OverlayView? {
+        private func prepareCardBackingView(cfg: DeckContextPreviewConfig) -> OverlayView? {
             guard let overlay = overlayView else { return nil }
             let iv = overlay.cardBackingView
             iv.frame = CGRect(origin: .zero, size: activeCardSize)
-            iv.contentMode = shouldLetterboxWide ? .scaleAspectFit : .scaleAspectFill
-            iv.layer.cornerRadius = cornerRadius
-            iv.image = cachedDisplayImage(for: activeItem)
+            iv.contentMode = cfg.shouldLetterboxWide ? .scaleAspectFit : .scaleAspectFill
+            iv.layer.cornerRadius = cfg.cornerRadius
+            iv.image = cachedDisplayImage(for: cfg.activeItem, disableHDR: cfg.disableHDR)
             iv.isHidden = false
             return overlay
         }
 
-        private func targetedCardPreview(for overlay: OverlayView) -> UITargetedPreview {
+        private func targetedCardPreview(for overlay: OverlayView, cornerRadius: CGFloat) -> UITargetedPreview {
             let params = UIPreviewParameters()
             params.backgroundColor = .clear
             params.visiblePath = UIBezierPath(
@@ -1318,13 +1311,13 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             _ interaction: UIContextMenuInteraction,
             configurationForMenuAtLocation location: CGPoint
         ) -> UIContextMenuConfiguration? {
-            guard isEnabled else { return nil }
-            let item = activeItem
-            let cachedImg = cachedDisplayImage(for: item)
+            guard isEnabled, let cfg = previewConfig else { return nil }
+            let item = cfg.activeItem
+            let cachedImg = cachedDisplayImage(for: item, disableHDR: cfg.disableHDR)
             let previewSize = MediaContextMenuPreview.preferredSize(for: item, imageSize: cachedImg?.size)
-            let disableHDR = self.disableHDR
-            let appState = self.appState
-            let hasShareHandler = (self.onShareFile != nil)
+            let disableHDR = cfg.disableHDR
+            let appState = cfg.appState
+            let hasShareHandler = (cfg.onShareFile != nil)
 
             return UIContextMenuConfiguration(identifier: nil) {
                 let host = UIHostingController(
@@ -1377,7 +1370,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                             image: UIImage(systemName: "square.and.arrow.up")
                         ) { [weak self] _ in
                             Task { @MainActor [weak self] in
-                                guard let self, let share = self.onShareFile else { return }
+                                guard let self, let share = self.previewConfig?.onShareFile else { return }
                                 await MediaActionsContextMenu.shareImageFile(
                                     item,
                                     appState: appState,
@@ -1395,20 +1388,31 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             _ interaction: UIContextMenuInteraction,
             previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration
         ) -> UITargetedPreview? {
-            guard let overlay = prepareCardBackingView() else { return nil }
+            guard let cfg = previewConfig,
+                  let overlay = prepareCardBackingView(cfg: cfg) else { return nil }
             isPreviewMenuActive = true
-            onPreviewLiftedChanged(true)
-            return targetedCardPreview(for: overlay)
+            cfg.onPreviewLiftedChanged(true)
+            return targetedCardPreview(for: overlay, cornerRadius: cfg.cornerRadius)
         }
 
         func contextMenuInteraction(
             _ interaction: UIContextMenuInteraction,
             previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration
         ) -> UITargetedPreview? {
-            guard let overlay = overlayView else { return nil }
+            guard let overlay = overlayView, let cfg = previewConfig else { return nil }
             overlay.cardBackingView.frame = CGRect(origin: .zero, size: activeCardSize)
-            overlay.cardBackingView.layer.cornerRadius = cornerRadius
-            return targetedCardPreview(for: overlay)
+            overlay.cardBackingView.layer.cornerRadius = cfg.cornerRadius
+            return targetedCardPreview(for: overlay, cornerRadius: cfg.cornerRadius)
+        }
+
+        private func completePreviewDismissal() {
+            previewConfig?.onPreviewLiftedChanged(false)
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                if self?.isPreviewMenuActive == false {
+                    self?.overlayView?.cardBackingView.isHidden = true
+                }
+            }
         }
 
         func contextMenuInteraction(
@@ -1417,15 +1421,14 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             animator: (any UIContextMenuInteractionAnimating)?
         ) {
             isPreviewMenuActive = false
-            animator?.addCompletion { [weak self] in
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.onPreviewLiftedChanged(false)
-                    try? await Task.sleep(nanoseconds: 50_000_000)
-                    if !self.isPreviewMenuActive {
-                        self.overlayView?.cardBackingView.isHidden = true
+            if let animator {
+                animator.addCompletion { [weak self] in
+                    Task { @MainActor [weak self] in
+                        self?.completePreviewDismissal()
                     }
                 }
+            } else {
+                completePreviewDismissal()
             }
         }
     }
