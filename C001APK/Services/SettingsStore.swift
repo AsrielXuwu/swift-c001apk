@@ -168,6 +168,9 @@ public final class SettingsStore {
     public var openInBrowser: Bool {
         didSet { defaults.set(openInBrowser, forKey: "settings.openInBrowser") }
     }
+    public var autoDetectClipboardLink: Bool {
+        didSet { defaults.set(autoDetectClipboardLink, forKey: "settings.autoDetectClipboardLink") }
+    }
     public var autoCheckUpdate: Bool {
         didSet { defaults.set(autoCheckUpdate, forKey: "settings.autoCheckUpdate") }
     }
@@ -263,6 +266,7 @@ public final class SettingsStore {
         self.livePhotoAutoPlay = defaults.object(forKey: "settings.livePhotoAutoPlay") as? Bool ?? true
         self.recordHistory = defaults.object(forKey: "settings.recordHistory") as? Bool ?? true
         self.openInBrowser = defaults.bool(forKey: "settings.openInBrowser")
+        self.autoDetectClipboardLink = defaults.object(forKey: "settings.autoDetectClipboardLink") as? Bool ?? true
         self.autoCheckUpdate = defaults.object(forKey: "settings.autoCheckUpdate") as? Bool ?? true
         self.defaultFavoriteTarget = FavoriteStorageMode(rawValue: defaults.integer(forKey: "settings.defaultFavoriteTarget")) ?? .local
         self.defaultFollowTarget = FollowStorageMode(rawValue: defaults.integer(forKey: "settings.defaultFollowTarget")) ?? .local

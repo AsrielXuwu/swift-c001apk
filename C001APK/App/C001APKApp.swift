@@ -16,6 +16,10 @@ struct C001APKApp: App {
                 .preferredColorScheme(appState.settings.appearanceMode.colorScheme)
                 .task {
                     await appState.bootstrap()
+                    appState.checkClipboardForCoolapkLink()
+                }
+                .onOpenURL { url in
+                    appState.handleIncomingOpenURL(url)
                 }
                 .onChange(of: scenePhase) { _, newPhase in
                     switch newPhase {
@@ -23,6 +27,7 @@ struct C001APKApp: App {
                         backgroundEnteredAt = Date()
                     case .active:
                         backgroundEnteredAt = nil
+                        appState.checkClipboardForCoolapkLink()
                         Task {
                             await CoolapkClient.shared.prepareForForeground(flushConnections: false)
                         }

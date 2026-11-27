@@ -13,7 +13,7 @@ public final class ChatThreadViewModel {
     public private(set) var resolvedImages: [String: URL] = [:]
     public private(set) var isLoading = false
     public private(set) var isLoadingMore = false
-    public private(set) var hasMore = true
+    public private(set) var hasMore = false
 
     private var currentPage = 1
     private var resolvingIDs: Set<String> = []
@@ -25,7 +25,7 @@ public final class ChatThreadViewModel {
 
     public func loadInitial(appState: AppState) async {
         currentPage = 1
-        hasMore = true
+        hasMore = false
         isLoading = true
         defer { isLoading = false }
         await fetch(page: 1, append: false, appState: appState)
@@ -43,22 +43,25 @@ public final class ChatThreadViewModel {
             let fetched = try await API.chatMessages(ukey: ukey, peerUID: peerUID, page: page)
             let chronological = fetched
                 .reversed()
-                .filter { !($0.isLongTimeFlag && $0.message.isEmpty && $0.messagePic.isEmpty) }
+                .filter { !$0.isLongTimeFlag && $0.hasVisibleMessageContent }
             if append {
                 var seen = Set(messages.map(\.id))
                 let unique = chronological.filter { seen.insert($0.id).inserted }
                 withAnimation(.smooth(duration: 0.22)) {
                     messages.insert(contentsOf: unique, at: 0)
                 }
-                hasMore = !unique.isEmpty
+                hasMore = !unique.isEmpty && chronological.count >= 15
             } else {
                 withAnimation(.smooth(duration: 0.22)) {
                     messages = Array(chronological)
                 }
-                hasMore = !fetched.isEmpty
+                hasMore = chronological.count >= 15
             }
             currentPage = page
         } catch {
+            if !append {
+                hasMore = false
+            }
             _ = await appState.handleAPIError(error)
         }
     }
@@ -182,38 +185,17 @@ public struct ChatThreadView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var lastObservedTailID: String?
     @State private var showEmojiPanel = false
-    @State private var keyboardEndMinY: CGFloat = 0
-    @State private var containerGlobalMaxY: CGFloat = 0
-    @State private var restingContainerMaxY: CGFloat = 0
-    @State private var lastKnownKeyboardLift: CGFloat = 276
+    @State private var keyboardHeight: CGFloat = 0
+    @State private var lastKnownKeyboardHeight: CGFloat = 290
     @State private var isHoldingSlotForKeyboard = false
     @FocusState private var isComposerFocused: Bool
 
-    private var currentKeyboardOverlap: CGFloat {
-        guard keyboardEndMinY > 0, containerGlobalMaxY > keyboardEndMinY else { return 0 }
-        let overlap = containerGlobalMaxY - keyboardEndMinY
-        return overlap > 24 ? overlap : 0
-    }
-
-    private var currentSystemLift: CGFloat {
-        guard restingContainerMaxY > 0, containerGlobalMaxY > 0, restingContainerMaxY > containerGlobalMaxY else { return 0 }
-        return restingContainerMaxY - containerGlobalMaxY
-    }
-
     private var activeBottomSlotHeight: CGFloat {
-        let kbOverlap = currentKeyboardOverlap
-        if showEmojiPanel || isHoldingSlotForKeyboard {
-            if showEmojiPanel && kbOverlap > 40 {
-                return 202 + kbOverlap
-            }
-            if showEmojiPanel && currentSystemLift > 40 {
-                return 202
-            }
-            let targetLift = max(256, lastKnownKeyboardLift)
-            let needed = max(0, targetLift - currentSystemLift)
-            return max(kbOverlap, needed)
+        if showEmojiPanel && keyboardHeight > 40 {
+            return 184 + keyboardHeight
         }
-        return kbOverlap
+        let emojiHeight = (showEmojiPanel || isHoldingSlotForKeyboard) ? max(260, lastKnownKeyboardHeight) : 0
+        return max(keyboardHeight, emojiHeight)
     }
 
     private let bottomAnchorID = "chat-bottom-anchor"
@@ -227,7 +209,7 @@ public struct ChatThreadView: View {
     }
 
     private var visibleMessages: [ChatMessage] {
-        viewModel.messages.filter { !($0.isLongTimeFlag && $0.message.isEmpty && $0.messagePic.isEmpty) }
+        viewModel.messages.filter { !$0.isLongTimeFlag && $0.hasVisibleMessageContent }
     }
 
     private var resolvedPeerAvatar: String {
@@ -246,7 +228,10 @@ public struct ChatThreadView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        if viewModel.hasMore {
+                        Color.clear
+                            .frame(height: 18)
+
+                        if !items.isEmpty && viewModel.hasMore {
                             Button("加载更早消息") {
                                 Task { await viewModel.loadOlder(appState: appState) }
                             }
@@ -282,21 +267,14 @@ public struct ChatThreadView: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 10)
                     .frame(maxWidth: .infinity, minHeight: 200, alignment: .bottom)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
+                }
+                .defaultScrollAnchor(.bottom)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if isComposerFocused || showEmojiPanel || isHoldingSlotForKeyboard || keyboardHeight > 0 {
                         dismissKeyboardAndEmoji()
                     }
                 }
-                .defaultScrollAnchor(.bottom)
-                .scrollDismissesKeyboard(.interactively)
-                .contentShape(Rectangle())
-                .simultaneousGesture(
-                    TapGesture().onEnded {
-                        if isComposerFocused || showEmojiPanel || isHoldingSlotForKeyboard {
-                            dismissKeyboardAndEmoji()
-                        }
-                    }
-                )
                 .onChange(of: items.last?.id) { _, lastID in
                     guard let lastID, lastID != lastObservedTailID else { return }
                     let shouldAnimate = (lastObservedTailID != nil)
@@ -338,15 +316,6 @@ public struct ChatThreadView: View {
             composerBar
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
-        .onGeometryChange(for: CGFloat.self) { proxy in
-            proxy.frame(in: .global).maxY
-        } action: { _, newMaxY in
-            guard newMaxY > 100 else { return }
-            containerGlobalMaxY = newMaxY
-            if newMaxY > restingContainerMaxY {
-                restingContainerMaxY = newMaxY
-            }
-        }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
             handleKeyboardFrameNotification(note, isHiding: false)
         }
@@ -354,10 +323,10 @@ public struct ChatThreadView: View {
             handleKeyboardFrameNotification(note, isHiding: true)
         }
         .c001PageBackground()
-        .navigationTitle(peerName.isEmpty ? "私信" : peerName)
+        .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .principal) {
                 Button {
                     appState.push(.user(
                         uid: peerUID,
@@ -366,10 +335,31 @@ public struct ChatThreadView: View {
                         transitionID: navAvatarID
                     ))
                 } label: {
-                    AvatarView(url: resolvedPeerAvatar, size: 32)
-                        .applyZoomSource(id: navAvatarID, in: zoomNamespace, cornerRadius: 16)
+                    VStack(spacing: -8) {
+                        AvatarView(url: resolvedPeerAvatar, size: 46)
+                            .shadow(color: .black.opacity(0.16), radius: 3, y: 1.5)
+                            .zIndex(1)
+
+                        HStack(spacing: 3) {
+                            Text(peerName.isEmpty ? "私信" : peerName)
+                                .font(.system(size: 12.5, weight: .semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 9.5, weight: .bold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 11)
+                        .padding(.top, 7)
+                        .padding(.bottom, 4)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                    }
+                    .fixedSize()
+                    .applyZoomSource(id: navAvatarID, in: zoomNamespace, cornerRadius: 23)
                 }
                 .buttonStyle(.plain)
+                .offset(y: 8)
             }
         }
         .task {
@@ -476,7 +466,7 @@ public struct ChatThreadView: View {
                             .applyZoomSource(id: "\(chatPicPrefix)-0", in: zoomNamespace, cornerRadius: 20)
                     }
                     .buttonStyle(.plain)
-                } else if msg.message.contains("[图片]") || msg.message.isEmpty {
+                } else if msg.message.contains("[图片]") {
                     Color.clear
                         .frame(width: 1, height: 1)
                         .task { await viewModel.resolveImageIfNeeded(for: msg) }
@@ -586,45 +576,51 @@ public struct ChatThreadView: View {
     }
 
     private func dismissKeyboardAndEmoji() {
-        if isComposerFocused || keyboardEndMinY > 0 {
-            isComposerFocused = false
-            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-        }
-        if showEmojiPanel || isHoldingSlotForKeyboard {
-            withAnimation(.snappy(duration: 0.22)) {
-                showEmojiPanel = false
-                isHoldingSlotForKeyboard = false
-            }
+        isComposerFocused = false
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        withAnimation(.interpolatingSpring(stiffness: 340, damping: 34)) {
+            showEmojiPanel = false
+            isHoldingSlotForKeyboard = false
+            keyboardHeight = 0
         }
     }
 
     private func handleKeyboardFrameNotification(_ note: Notification, isHiding: Bool) {
-        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        let screenHeight = (UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.screen.bounds.height) ?? 852
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let keyWindow = scenes.flatMap(\.windows).first(where: \.isKeyWindow) ?? scenes.flatMap(\.windows).first
+        let screenHeight = keyWindow?.bounds.height ?? scenes.first?.screen.bounds.height ?? 852
+        let bottomSafe = keyWindow?.safeAreaInsets.bottom ?? currentBottomSafeAreaInset()
         let endFrame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
-        let refMaxY = restingContainerMaxY > 100
-            ? restingContainerMaxY
-            : (containerGlobalMaxY > 100 ? containerGlobalMaxY : (screenHeight - currentBottomSafeAreaInset()))
-        let rawLiftFromResting = isHiding ? 0 : max(0, refMaxY - endFrame.minY)
-        let isKeyboardVisible = !isHiding && endFrame.minY > 0 && endFrame.minY < screenHeight - 40 && rawLiftFromResting > 40
+        let isHidden = isHiding || endFrame.height <= 0 || endFrame.minY >= screenHeight - 20
+        let rawOverlap = isHidden ? 0 : max(0, screenHeight - endFrame.minY - bottomSafe)
+        let nextHeight = rawOverlap > 40 ? rawOverlap : 0
 
-        if isKeyboardVisible && rawLiftFromResting > 160 {
-            lastKnownKeyboardLift = rawLiftFromResting
+        if nextHeight > 180 {
+            lastKnownKeyboardHeight = nextHeight
         }
 
-        if isKeyboardVisible {
-            var transaction = Transaction(animation: .easeOut(duration: max(0.18, duration)))
-            transaction.disablesAnimations = (showEmojiPanel || isHoldingSlotForKeyboard) && abs(rawLiftFromResting - lastKnownKeyboardLift) < 4
-            withTransaction(transaction) {
-                keyboardEndMinY = endFrame.minY
-                isHoldingSlotForKeyboard = false
+        if nextHeight > 40 {
+            if isHoldingSlotForKeyboard && abs(nextHeight - lastKnownKeyboardHeight) < 6 {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    keyboardHeight = nextHeight
+                    isHoldingSlotForKeyboard = false
+                }
+            } else {
+                withAnimation(.interpolatingSpring(stiffness: 340, damping: 34)) {
+                    keyboardHeight = nextHeight
+                    isHoldingSlotForKeyboard = false
+                }
             }
         } else {
-            if showEmojiPanel {
-                keyboardEndMinY = 0
+            if showEmojiPanel || isHoldingSlotForKeyboard {
+                withAnimation(.interpolatingSpring(stiffness: 340, damping: 34)) {
+                    keyboardHeight = 0
+                }
             } else {
-                withAnimation(.easeOut(duration: max(0.18, duration))) {
-                    keyboardEndMinY = 0
+                withAnimation(.interpolatingSpring(stiffness: 340, damping: 34)) {
+                    keyboardHeight = 0
                     isHoldingSlotForKeyboard = false
                 }
             }
@@ -633,27 +629,23 @@ public struct ChatThreadView: View {
 
     private func toggleEmojiAndKeyboard() {
         if showEmojiPanel {
-            // Emoji -> Keyboard: hold the bottom slot at the exact current height while the keyboard rises
             isHoldingSlotForKeyboard = true
             showEmojiPanel = false
             isComposerFocused = true
-        } else if isComposerFocused || currentKeyboardOverlap > 40 || currentSystemLift > 40 {
-            // Keyboard -> Emoji: swap in place at the exact current keyboard height without moving the button bar
-            let activeLift = max(currentKeyboardOverlap + currentSystemLift, lastKnownKeyboardLift)
-            if activeLift > 160 {
-                lastKnownKeyboardLift = activeLift
+        } else if isComposerFocused || keyboardHeight > 40 {
+            if keyboardHeight > 180 {
+                lastKnownKeyboardHeight = keyboardHeight
             }
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {
                 showEmojiPanel = true
-                keyboardEndMinY = 0
+                keyboardHeight = 0
             }
             isComposerFocused = false
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         } else {
-            // Both closed -> Open Emoji smoothly
-            withAnimation(.snappy(duration: 0.24)) {
+            withAnimation(.interpolatingSpring(stiffness: 340, damping: 34)) {
                 showEmojiPanel = true
             }
         }
@@ -719,9 +711,8 @@ public struct ChatThreadView: View {
             .padding(.bottom, 8)
 
             if slotHeight > 0 {
-                let kbOverlap = currentKeyboardOverlap
-                let isEmojiKeyboardActive = showEmojiPanel && (kbOverlap > 40 || currentSystemLift > 40)
-                let pickerHeight: CGFloat = isEmojiKeyboardActive ? 196 : max(252, slotHeight - 6)
+                let isEmojiKeyboardActive = showEmojiPanel && keyboardHeight > 40
+                let pickerHeight: CGFloat = isEmojiKeyboardActive ? 178 : max(252, slotHeight - 6)
                 VStack(spacing: 0) {
                     if showEmojiPanel || isHoldingSlotForKeyboard {
                         EmojiPickerView(height: pickerHeight) { name in
@@ -734,9 +725,9 @@ public struct ChatThreadView: View {
                         }
                         .padding(.bottom, 6)
 
-                        if showEmojiPanel && kbOverlap > 40 {
+                        if isEmojiKeyboardActive {
                             Color.clear
-                                .frame(height: kbOverlap)
+                                .frame(height: keyboardHeight)
                         }
                     } else {
                         Color.clear

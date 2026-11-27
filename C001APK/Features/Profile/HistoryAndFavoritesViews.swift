@@ -298,7 +298,10 @@ private struct MergedFavoriteFolderItem: Identifiable, Hashable {
     var id: String { key }
     var hasLocal: Bool { localFolder != nil }
     var hasCloud: Bool { cloudCollection != nil }
-    var logoURL: String { cloudCollection?.logo ?? "" }
+    var logoURL: String {
+        if let logo = cloudCollection?.logo, !logo.isEmpty { return logo }
+        return ""
+    }
 
     var isDeletable: Bool {
         let localCanDelete = (localFolder != nil && localFolder?.id != HistoryAndFavStore.defaultFolderID)
@@ -825,19 +828,22 @@ public struct FavoritesListView: View {
 
         HStack(spacing: 0) {
             HStack(spacing: 12) {
-                if !folder.logoURL.isEmpty {
-                    RemoteImageView(url: folder.logoURL, maxPixelSize: 132, contentMode: .fill)
-                        .frame(width: 44, height: 44)
-                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                } else {
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .fill((folder.hasCloud ? Color.blue : Color.accentColor).opacity(0.14))
-                        .frame(width: 44, height: 44)
-                        .overlay {
-                            Image(systemName: folder.hasCloud && folder.hasLocal ? "folder.fill.badge.person.crop" : (folder.hasCloud ? "icloud.fill" : "bookmark.fill"))
-                                .foregroundStyle(folder.hasCloud ? Color.blue : Color.accentColor)
-                        }
-                }
+                let resolvedLogo: String = {
+                    if !folder.logoURL.isEmpty { return folder.logoURL }
+                    if let cid = folder.cloudCollection?.id,
+                       let cachedLogo = appState.cachedCollectionDetail(id: cid)?.logo,
+                       !cachedLogo.isEmpty {
+                        return cachedLogo
+                    }
+                    return ""
+                }()
+                CollectionCoverView(
+                    logoURL: resolvedLogo,
+                    hasLocal: folder.hasLocal,
+                    hasCloud: folder.hasCloud,
+                    size: 44,
+                    cornerRadius: 11
+                )
 
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 6) {
@@ -1197,6 +1203,9 @@ public struct FavoritesListView: View {
                     }
                     collected.append(contentsOf: entries)
                 }
+            }
+            for col in cols {
+                appState.cacheCollectionDetail(col)
             }
             if !cols.isEmpty || force {
                 appState.historyAndFav.updateCloudCache(collections: cols, entries: collected)

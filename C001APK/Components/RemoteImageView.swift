@@ -102,20 +102,41 @@ public struct RemoteImageView: View {
 public struct AvatarView: View {
     public let url: String
     public var size: CGFloat = 36
+    public var fallbackSystemImage: String? = nil
+    public var fallbackTint: Color = .accentColor
 
-    public init(url: String, size: CGFloat = 36) {
+    public init(
+        url: String,
+        size: CGFloat = 36,
+        fallbackSystemImage: String? = nil,
+        fallbackTint: Color = .accentColor
+    ) {
         self.url = coolapkNormalizedURL(url.trimmingCharacters(in: .whitespacesAndNewlines))
         self.size = size
+        self.fallbackSystemImage = fallbackSystemImage
+        self.fallbackTint = fallbackTint
     }
 
     public var body: some View {
-        // Use a unified 240px decode target across all avatar sizes (28pt..64pt) so navigating
-        // from feed rows, comments, or chat bubbles into UserDetailView always hits NSCache synchronously.
-        RemoteImageView(url: url, maxPixelSize: 240)
-            .frame(width: size, height: size)
-            .clipShape(Circle())
-            .overlay {
-                Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+        Group {
+            if url.isEmpty {
+                Circle()
+                    .fill(fallbackTint.opacity(0.16))
+                    .overlay {
+                        Image(systemName: fallbackSystemImage ?? "person.fill")
+                            .font(.system(size: max(10, size * 0.46), weight: .semibold))
+                            .foregroundStyle(fallbackTint)
+                    }
+            } else {
+                // Use a unified 240px decode target across all avatar sizes (28pt..64pt) so navigating
+                // from feed rows, comments, or chat bubbles into UserDetailView always hits NSCache synchronously.
+                RemoteImageView(url: url, maxPixelSize: 240)
             }
+        }
+        .frame(width: size, height: size)
+        .clipShape(Circle())
+        .overlay {
+            Circle().strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+        }
     }
 }

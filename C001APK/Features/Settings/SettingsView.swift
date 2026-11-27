@@ -139,6 +139,7 @@ public struct SettingsView: View {
 
             Section("浏览与隐私") {
                 Toggle("记录本机浏览历史", isOn: $settings.recordHistory)
+                Toggle("自动读取剪贴板酷安链接跳转", isOn: $settings.autoDetectClipboardLink)
                 Toggle("使用系统浏览器打开外部链接", isOn: $settings.openInBrowser)
             }
 

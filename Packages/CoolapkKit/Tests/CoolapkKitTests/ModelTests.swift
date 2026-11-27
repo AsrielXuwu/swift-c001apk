@@ -365,5 +365,14 @@ final class ModelTests: XCTestCase {
         """.utf8)
         let topicDetail = TopicItem(json: try JSON(data: topicDetailRaw))
         XCTAssertTrue(topicDetail.isFollowed)
+
+        // Clipboard Coolapk link extraction & URL scheme resolution
+        let shareClipboard = "【酷安分享】来看看这条动态 https://www.coolapk.com/feed/75244205?shareKey=abc123 分享自@酷安"
+        let extracted = FeedLink.extractFirstCoolapkLink(from: shareClipboard)
+        XCTAssertEqual(extracted?.link, .feed("75244205"))
+        XCTAssertEqual(FeedLink.resolve("coolmarket://www.coolapk.com/feed/75026859"), .feed("75026859"))
+        XCTAssertEqual(FeedLink.resolve("coolapk://feed?id=75016216"), .feed("75016216"))
+        XCTAssertEqual(FeedLink.resolve("c001apk://u/123456"), .user("123456"))
+        XCTAssertEqual(FeedLink.resolve("https://m.coolapk.com/mp/feed/75277352"), .feed("75277352"))
     }
 }

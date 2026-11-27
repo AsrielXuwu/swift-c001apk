@@ -416,6 +416,12 @@ public struct ChatMessage: Identifiable, Hashable, Sendable {
         isLongTimeFlag = json.entityTemplate.string == "time" || json.entityType.string == "time"
         deliveryState = .sent
     }
+
+    public var hasVisibleMessageContent: Bool {
+        let trimmedText = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (!id.isEmpty && !fromUID.isEmpty && (!trimmedText.isEmpty || !messagePic.isEmpty || !messageCard.isEmpty))
+            || isLongTimeFlag
+    }
 }
 
 public struct NotificationBadge: Equatable, Hashable, Sendable {

@@ -82,10 +82,14 @@ public final class AppState {
     @ObservationIgnored private var knownFollowedEntityKeys: Set<String> = []
     @ObservationIgnored private var modalPushStack: [(id: UUID, handler: (AppRoute) -> Void)] = []
 
+    @ObservationIgnored private var lastCheckedPasteboardChangeCount: Int = -1
+    @ObservationIgnored private var lastHandledClipboardLinkKey: String = UserDefaults.standard.string(forKey: "c001apk.lastHandledClipboardLinkKey.v1") ?? ""
+
     private static let readNotificationsDefaultsKey = "c001apk.readNotifications.v1"
     private static let unreadNotificationsDefaultsKey = "c001apk.unreadNotifications.v1"
     private static let readThreadsDefaultsKey = "c001apk.readThreads.v1"
     private static let unreadThreadsDefaultsKey = "c001apk.unreadThreads.v1"
+    private static let lastClipboardKeyDefaultsKey = "c001apk.lastHandledClipboardLinkKey.v1"
 
     public init() {
         self.showOnboarding = !settings.onboardingCompleted
@@ -269,6 +273,13 @@ public final class AppState {
         guard !collection.id.isEmpty else { return }
         let keys = [collection.id, collection.title].filter { !$0.isEmpty }
         var resolved = collection
+        if resolved.logo.isEmpty {
+            if let existingLogo = cachedCollections[collection.id]?.logo, !existingLogo.isEmpty {
+                resolved.logo = existingLogo
+            } else if let cachedCloudLogo = historyAndFav.cachedCloudCollections.first(where: { $0.id == collection.id })?.logo, !cachedCloudLogo.isEmpty {
+                resolved.logo = cachedCloudLogo
+            }
+        }
         if collection.isFollowed {
             markEntityFollowed(kind: "collection", keys: keys, isFollowed: true)
         } else if explicitFollowChange {
@@ -668,7 +679,100 @@ public final class AppState {
             UIApplication.shared.open(url)
             return
         }
+        if isCurrentTopRouteMatching(resolved) {
+            return
+        }
         push(route)
+    }
+
+    private func currentActiveNavigationPath() -> [AppRoute] {
+        switch selectedTab {
+        case .home: return homeNavigationPath
+        case .follow: return followNavigationPath
+        case .swipe: return swipeNavigationPath
+        case .profile: return profileNavigationPath
+        case .search: return searchNavigationPath
+        }
+    }
+
+    private func isCurrentTopRouteMatching(_ link: FeedLink) -> Bool {
+        guard let top = currentActiveNavigationPath().last else { return false }
+        switch (top, link) {
+        case let (.feed(id1, _, _), .feed(id2)),
+             let (.feed(id1, _, _), .question(id2)),
+             let (.feed(id1, _, _), .vote(id2)):
+            return id1 == id2
+        case let (.topic(t1, _), .topic(t2)):
+            return TopicItem.cleanTitle(t1).lowercased() == TopicItem.cleanTitle(t2).lowercased()
+        case let (.user(u1, _, _, _, _), .user(u2)):
+            return u1.lowercased() == u2.lowercased()
+        case let (.product(p1, _, _), .product(p2)):
+            return p1 == p2
+        case let (.app(a1, _, _), .app(a2)):
+            return a1.lowercased() == a2.lowercased()
+        case let (.collection(c1, _, _), .collection(c2)):
+            return c1 == c2
+        case let (.dyh(d1, _, _), .dyh(d2)):
+            return d1 == d2
+        case let (.event(e1, _, _), .event(e2)):
+            return e1 == e2
+        default:
+            return false
+        }
+    }
+
+    public func copyLinkToPasteboard(_ urlString: String, toastMessage: String = "已复制链接") {
+        if let extracted = FeedLink.extractFirstCoolapkLink(from: urlString) {
+            lastHandledClipboardLinkKey = extracted.link.canonicalKey
+            UserDefaults.standard.set(lastHandledClipboardLinkKey, forKey: Self.lastClipboardKeyDefaultsKey)
+        }
+        UIPasteboard.general.string = urlString
+        lastCheckedPasteboardChangeCount = UIPasteboard.general.changeCount
+        showToast(toastMessage)
+    }
+
+    public func handleIncomingOpenURL(_ url: URL) {
+        let raw = url.absoluteString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return }
+        if let extracted = FeedLink.extractFirstCoolapkLink(from: raw) {
+            lastHandledClipboardLinkKey = extracted.link.canonicalKey
+            UserDefaults.standard.set(lastHandledClipboardLinkKey, forKey: Self.lastClipboardKeyDefaultsKey)
+        }
+        if mediaViewer != nil {
+            mediaViewer = nil
+        }
+        if composeMode != nil {
+            composeMode = nil
+        }
+        openRawLink(raw)
+    }
+
+    public func checkClipboardForCoolapkLink() {
+        guard settings.autoDetectClipboardLink, !showOnboarding else { return }
+        let pb = UIPasteboard.general
+        let currentCount = pb.changeCount
+        guard currentCount != lastCheckedPasteboardChangeCount else { return }
+        lastCheckedPasteboardChangeCount = currentCount
+
+        guard pb.hasStrings || pb.hasURLs else { return }
+        let candidateText: String = {
+            if let str = pb.string, !str.isEmpty { return str }
+            if let url = pb.url { return url.absoluteString }
+            return ""
+        }()
+        guard !candidateText.isEmpty,
+              let extracted = FeedLink.extractFirstCoolapkLink(from: candidateText) else {
+            return
+        }
+
+        let key = extracted.link.canonicalKey
+        guard !key.isEmpty, key != lastHandledClipboardLinkKey else { return }
+        lastHandledClipboardLinkKey = key
+        UserDefaults.standard.set(key, forKey: Self.lastClipboardKeyDefaultsKey)
+
+        guard !isCurrentTopRouteMatching(extracted.link) else { return }
+        openRawLink(extracted.rawURL)
+        showToast("已从剪贴板打开酷安链接")
     }
 
     public func openMedia(_ items: [FeedMedia], at index: Int, sourcePrefix: String? = nil) {

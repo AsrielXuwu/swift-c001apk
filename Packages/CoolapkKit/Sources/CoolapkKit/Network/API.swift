@@ -1937,7 +1937,7 @@ public enum API: Sendable {
         for query in queries {
             do {
                 let json = try await client.get("/v6/message/chat", query)
-                return json.data.array.map { ChatMessage(json: $0) }
+                return json.data.array.map { ChatMessage(json: $0) }.filter { $0.hasVisibleMessageContent }
             } catch let error as APIError {
                 lastError = error
                 if case let .message(msg) = error,

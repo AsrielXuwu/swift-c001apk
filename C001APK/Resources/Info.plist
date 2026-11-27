@@ -39,6 +39,32 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>app.awavenue.c001apk.ios</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>coolmarket</string>
+				<string>coolapk</string>
+				<string>c001apk</string>
+			</array>
+		</dict>
+	</array>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>coolmarket</string>
+		<string>coolapk</string>
+		<string>fleamarket</string>
+		<string>tbopen</string>
+		<string>taobao</string>
+		<string>bilibili</string>
+		<string>zhuanzhuan</string>
+		<string>zzopen</string>
+	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

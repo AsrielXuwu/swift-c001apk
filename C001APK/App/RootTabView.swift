@@ -192,6 +192,7 @@ public struct AppRouteDestinationView: View {
         case let .chat(ukey, uid, username, avatar, transitionID):
             ChatThreadView(ukey: ukey, peerUID: uid, peerName: username, peerAvatar: avatar)
                 .c001NativeTopBar()
+                .toolbar(.hidden, for: .tabBar)
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case .history:
             HistoryListView()

@@ -194,6 +194,7 @@ public struct TopicDetailView: View {
                         isFollowed: topic.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
+                        fallbackSystemImage: "number",
                         onTapAvatar: {
                             withAnimation(.snappy) {
                                 proxy.scrollTo("topic-top-\(selectedTabItem.id)", anchor: .top)
@@ -794,6 +795,7 @@ public struct ProductDetailView: View {
                         isFollowed: product.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
+                        fallbackSystemImage: "iphone",
                         onTapAvatar: {
                             withAnimation(.snappy) {
                                 proxy.scrollTo("product-top-\(activeTabID)", anchor: .top)
@@ -1523,6 +1525,7 @@ public struct AppDetailView: View {
                         isFollowed: app.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
+                        fallbackSystemImage: "app.fill",
                         onTapAvatar: {
                             withAnimation(.snappy) { proxy.scrollTo("app-top", anchor: .top) }
                         },
@@ -1798,6 +1801,7 @@ public struct DyhDetailView: View {
                         isFollowed: dyh.isFollowed,
                         showFollowButton: true,
                         isDisabled: isTogglingFollow,
+                        fallbackSystemImage: "newspaper.fill",
                         onTapAvatar: {
                             withAnimation(.snappy) { proxy.scrollTo("dyh-top", anchor: .top) }
                         },
@@ -2004,12 +2008,28 @@ public struct CollectionDetailView: View {
         return matchingLocalEntries.filter { !cIDs.contains($0.id) }
     }
 
+    private var resolvedCollectionLogoURL: String {
+        if let logo = collection?.logo, !logo.isEmpty { return logo }
+        if !isLocalOnlyRoute {
+            if let cachedLogo = appState.cachedCollectionDetail(id: collectionID)?.logo, !cachedLogo.isEmpty {
+                return cachedLogo
+            }
+            if let cloudCachedLogo = appState.historyAndFav.cachedCloudCollections.first(where: { $0.id == collectionID })?.logo, !cloudCachedLogo.isEmpty {
+                return cloudCachedLogo
+            }
+        }
+        return ""
+    }
+
     public var body: some View {
         let localEntries = matchingLocalEntries
         let localOnly = localOnlyEntries
         let localMap = localFeedByID
         let hasLocalFolder = matchedLocalFolder != nil || !localEntries.isEmpty
         let hasCloudFolder = !isLocalOnlyRoute && (collection != nil || !rows.isEmpty)
+        let coverURL = resolvedCollectionLogoURL
+        let fallbackIcon = CollectionCoverView.fallbackSymbol(hasLocal: hasLocalFolder, hasCloud: hasCloudFolder)
+        let fallbackColor = CollectionCoverView.fallbackTint(hasCloud: hasCloudFolder)
 
         ScrollViewReader { proxy in
             ScrollView {
@@ -2017,21 +2037,13 @@ public struct CollectionDetailView: View {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if let collection {
                         HStack(spacing: 12) {
-                            if !collection.logo.isEmpty {
-                                RemoteImageView(url: collection.logo, maxPixelSize: 180)
-                                    .frame(width: 56, height: 56)
-                                    .clipped()
-                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                            } else {
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.blue.opacity(0.14))
-                                    .frame(width: 56, height: 56)
-                                    .overlay {
-                                        Image(systemName: hasLocalFolder ? "folder.fill.badge.person.crop" : "icloud.fill")
-                                            .font(.title3)
-                                            .foregroundStyle(Color.blue)
-                                    }
-                            }
+                            CollectionCoverView(
+                                logoURL: coverURL,
+                                hasLocal: hasLocalFolder,
+                                hasCloud: true,
+                                size: 56,
+                                cornerRadius: 12
+                            )
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack(spacing: 6) {
                                     Text(collection.title).font(.headline)
@@ -2073,14 +2085,13 @@ public struct CollectionDetailView: View {
                         .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
                     } else if hasLocalFolder {
                         HStack(spacing: 12) {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.accentColor.opacity(0.14))
-                                .frame(width: 56, height: 56)
-                                .overlay {
-                                    Image(systemName: "bookmark.fill")
-                                        .font(.title3)
-                                        .foregroundStyle(Color.accentColor)
-                                }
+                            CollectionCoverView(
+                                logoURL: coverURL,
+                                hasLocal: true,
+                                hasCloud: hasCloudFolder,
+                                size: 56,
+                                cornerRadius: 12
+                            )
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack(spacing: 6) {
                                     Text(effectiveTitle).font(.headline)
@@ -2171,21 +2182,40 @@ public struct CollectionDetailView: View {
             .navigationTitle(effectiveTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if let collection, compactNavProgress > 0.08 {
-                    CollapsedNavEntityToolbar(
-                        avatarURL: collection.logo,
-                        primaryLine: "\(max(collection.itemNum, cloudFeedIDSet.count) + localOnly.count) 项内容",
-                        secondaryLine: "\(Formatting.count(collection.followNum)) 关注",
-                        isFollowed: collection.isFollowed,
-                        showFollowButton: true,
-                        isDisabled: isTogglingFollow,
-                        onTapAvatar: {
-                            withAnimation(.snappy) { proxy.scrollTo("col-top", anchor: .top) }
-                        },
-                        onTapFollow: {
-                            Task { await toggleFollow(collection) }
-                        }
-                    )
+                if compactNavProgress > 0.08 {
+                    if let collection {
+                        CollapsedNavEntityToolbar(
+                            avatarURL: coverURL,
+                            primaryLine: "\(max(collection.itemNum, cloudFeedIDSet.count) + localOnly.count) 项内容",
+                            secondaryLine: "\(Formatting.count(collection.followNum)) 关注",
+                            isFollowed: collection.isFollowed,
+                            showFollowButton: true,
+                            isDisabled: isTogglingFollow,
+                            fallbackSystemImage: fallbackIcon,
+                            fallbackTint: fallbackColor,
+                            onTapAvatar: {
+                                withAnimation(.snappy) { proxy.scrollTo("col-top", anchor: .top) }
+                            },
+                            onTapFollow: {
+                                Task { await toggleFollow(collection) }
+                            }
+                        )
+                    } else if hasLocalFolder {
+                        CollapsedNavEntityToolbar(
+                            avatarURL: coverURL,
+                            primaryLine: "\(localEntries.count) 条本机收藏",
+                            secondaryLine: effectiveTitle,
+                            isFollowed: false,
+                            showFollowButton: false,
+                            isDisabled: false,
+                            fallbackSystemImage: fallbackIcon,
+                            fallbackTint: fallbackColor,
+                            onTapAvatar: {
+                                withAnimation(.snappy) { proxy.scrollTo("col-top", anchor: .top) }
+                            },
+                            onTapFollow: {}
+                        )
+                    }
                 }
             }
             .onAppear {

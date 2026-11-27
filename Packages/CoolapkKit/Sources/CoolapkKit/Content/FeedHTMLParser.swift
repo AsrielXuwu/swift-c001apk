@@ -26,23 +26,33 @@ public enum FeedLink: Hashable, Sendable {
         }
 
         var normalized = FeedItem.unwrapCoolapkRedirectURL(trimmed)
-        if normalized.hasPrefix("coolmarket://") {
-            normalized = String(normalized.dropFirst("coolmarket://".count))
-        } else if normalized.hasPrefix("coolapk://") {
-            normalized = String(normalized.dropFirst("coolapk://".count))
+        let lowerNorm = normalized.lowercased()
+        for schemePrefix in ["coolmarket://", "coolapk://", "c001apk://"] {
+            if lowerNorm.hasPrefix(schemePrefix) {
+                normalized = String(normalized.dropFirst(schemePrefix.count))
+                break
+            }
         }
-        while normalized.hasPrefix("//") {
+        while normalized.hasPrefix("/") && !normalized.hasPrefix("/#/") && normalized.dropFirst().hasPrefix("/") {
             normalized.removeFirst()
         }
         if normalized.hasPrefix("/#/") {
             normalized.removeFirst()
+        }
+        // Strip leading coolapk host if present after scheme removal (e.g. coolmarket://www.coolapk.com/feed/123)
+        for hostPrefix in ["www.coolapk.com", "m.coolapk.com", "coolapk.com", "www.coolapk1s.com", "coolapk1s.com"] {
+            if normalized.lowercased().hasPrefix(hostPrefix) {
+                normalized = String(normalized.dropFirst(hostPrefix.count))
+                if normalized.isEmpty { normalized = "/" }
+                break
+            }
         }
         if !normalized.hasPrefix("/"),
            !normalized.hasPrefix("#"),
            !normalized.hasPrefix("http://"),
            !normalized.hasPrefix("https://"),
            !normalized.contains("://"),
-           normalized.contains("/") || normalized.hasPrefix("page?") {
+           (normalized.contains("/") || normalized.contains("?") || normalized.hasPrefix("page?")) {
             normalized = "/" + normalized
         }
         let parsedURL = URL(string: normalized)
@@ -59,13 +69,16 @@ public enum FeedLink: Hashable, Sendable {
             }
         }
 
-        // Inspect entity routes whether prefixed with `/`, `/v6/`, or `#/`
+        // Inspect entity routes whether prefixed with `/`, `/v6/`, `/mp/`, or `#/`
         var inspectPath = normalized
         if inspectPath.hasPrefix("#/") {
             inspectPath = String(inspectPath.dropFirst(1))
         }
-        if inspectPath.hasPrefix("/v6/") {
+        if inspectPath.lowercased().hasPrefix("/v6/") {
             inspectPath = "/" + String(inspectPath.dropFirst("/v6/".count))
+        }
+        if inspectPath.lowercased().hasPrefix("/mp/") {
+            inspectPath = "/" + String(inspectPath.dropFirst("/mp/".count))
         }
 
         let queryDict = parseQueryParameters(from: inspectPath)
@@ -126,7 +139,7 @@ public enum FeedLink: Hashable, Sendable {
         }
 
         // 3. Feed / Reply / Article / Picture / Answer detail links
-        if lowerPath == "/feed/detail" || lowerPath == "/feed/replydetail" || lowerPath == "/feed/replylist" {
+        if ["/feed", "/feed/detail", "/feed/replydetail", "/feed/replylist", "/picture", "/dyharticle", "/answer"].contains(lowerPath) {
             let targetID = [queryDict["fid"], queryDict["feed_id"], queryDict["feedId"], queryDict["id"]]
                 .compactMap { $0 }
                 .first { isNumericID($0) && $0 != "0" }
@@ -260,6 +273,71 @@ public enum FeedLink: Hashable, Sendable {
         if let queryIndex = value.firstIndex(of: "?") { value = String(value[..<queryIndex]) }
         if let slashIndex = value.firstIndex(of: "/") { value = String(value[..<slashIndex]) }
         return value.isEmpty ? nil : value
+    }
+
+    public var canonicalKey: String {
+        switch self {
+        case let .feed(id), let .question(id), let .vote(id):
+            return "feed:\(id)"
+        case let .topic(tag):
+            return "topic:\(TopicItem.cleanTitle(tag).lowercased())"
+        case let .user(uid):
+            return "user:\(uid.lowercased())"
+        case let .product(id):
+            return "product:\(id)"
+        case let .app(id):
+            return "app:\(id.lowercased())"
+        case let .collection(id):
+            return "collection:\(id)"
+        case let .dyh(id):
+            return "dyh:\(id)"
+        case let .event(id):
+            return "event:\(id)"
+        case let .page(link):
+            return "page:\(link)"
+        case let .web(url):
+            return "web:\(url.absoluteString)"
+        }
+    }
+
+    public var isInAppCoolapkDestination: Bool {
+        switch self {
+        case .feed, .topic, .user, .product, .app, .collection, .dyh, .question, .vote, .event:
+            return true
+        case .page, .web:
+            return false
+        }
+    }
+
+    /// Scans clipboard or shared text for a Coolapk URL or URL scheme (`https://www.coolapk.com/feed/...`, `coolmarket://...`, etc.)
+    public static func extractFirstCoolapkLink(from text: String) -> (rawURL: String, link: FeedLink)? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let pattern = #"(?:(?:https?://(?:www\.|m\.)?coolapk(?:1s)?\.com/[^\s"'<>\[\]()，。；！？、]+)|(?:(?:coolmarket|coolapk|c001apk)://[^\s"'<>\[\]()，。；！？、]+))"#
+        if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) {
+            let nsRange = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+            for match in regex.matches(in: trimmed, range: nsRange) {
+                guard let range = Range(match.range, in: trimmed) else { continue }
+                let candidate = String(trimmed[range])
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ".,;)]}>\"'"))
+                if let resolved = resolve(candidate), resolved.isInAppCoolapkDestination {
+                    return (candidate, resolved)
+                }
+            }
+        }
+
+        if !trimmed.contains(" ") && !trimmed.contains("\n"),
+           (trimmed.lowercased().hasPrefix("/feed/")
+            || trimmed.lowercased().hasPrefix("coolmarket://")
+            || trimmed.lowercased().hasPrefix("coolapk://")
+            || trimmed.lowercased().hasPrefix("c001apk://")),
+           let resolved = resolve(trimmed),
+           resolved.isInAppCoolapkDestination {
+            return (trimmed, resolved)
+        }
+
+        return nil
     }
 }
 

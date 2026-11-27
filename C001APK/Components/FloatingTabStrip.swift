@@ -89,6 +89,8 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
     public let isFollowed: Bool
     public let showFollowButton: Bool
     public let isDisabled: Bool
+    public let fallbackSystemImage: String
+    public let fallbackTint: Color
     public let onTapAvatar: () -> Void
     public let onTapFollow: () -> Void
 
@@ -99,6 +101,8 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
         isFollowed: Bool,
         showFollowButton: Bool,
         isDisabled: Bool = false,
+        fallbackSystemImage: String = "person.fill",
+        fallbackTint: Color = .accentColor,
         onTapAvatar: @escaping () -> Void,
         onTapFollow: @escaping () -> Void
     ) {
@@ -108,6 +112,8 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
         self.isFollowed = isFollowed
         self.showFollowButton = showFollowButton
         self.isDisabled = isDisabled
+        self.fallbackSystemImage = fallbackSystemImage
+        self.fallbackTint = fallbackTint
         self.onTapAvatar = onTapAvatar
         self.onTapFollow = onTapFollow
     }
@@ -117,7 +123,12 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
             HStack(spacing: 6) {
                 Button(action: onTapAvatar) {
                     HStack(spacing: 6) {
-                        AvatarView(url: avatarURL, size: 24)
+                        AvatarView(
+                            url: avatarURL,
+                            size: 24,
+                            fallbackSystemImage: fallbackSystemImage,
+                            fallbackTint: fallbackTint
+                        )
 
                         if !primaryLine.isEmpty || !secondaryLine.isEmpty {
                             VStack(alignment: .leading, spacing: 0) {

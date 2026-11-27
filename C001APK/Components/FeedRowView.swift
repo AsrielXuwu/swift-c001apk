@@ -174,8 +174,7 @@ public struct FeedRowView: View {
                 }
 
                 Button {
-                    UIPasteboard.general.string = "https://www.coolapk.com/feed/\(feed.id)"
-                    appState.showToast("已复制链接")
+                    appState.copyLinkToPasteboard("https://www.coolapk.com/feed/\(feed.id)")
                 } label: {
                     Label("复制链接", systemImage: "link")
                 }

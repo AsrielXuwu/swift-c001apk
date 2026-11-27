@@ -1147,6 +1147,66 @@ public struct BrowseRowView: View {
     }
 }
 
+public struct CollectionCoverView: View {
+    public let logoURL: String
+    public var hasLocal: Bool = false
+    public var hasCloud: Bool = true
+    public var size: CGFloat = 46
+    public var cornerRadius: CGFloat = 12
+
+    public init(
+        logoURL: String,
+        hasLocal: Bool = false,
+        hasCloud: Bool = true,
+        size: CGFloat = 46,
+        cornerRadius: CGFloat = 12
+    ) {
+        self.logoURL = coolapkNormalizedURL(logoURL.trimmingCharacters(in: .whitespacesAndNewlines))
+        self.hasLocal = hasLocal
+        self.hasCloud = hasCloud
+        self.size = size
+        self.cornerRadius = cornerRadius
+    }
+
+    public static func fallbackSymbol(hasLocal: Bool, hasCloud: Bool) -> String {
+        if hasCloud && hasLocal {
+            return "folder.fill.badge.person.crop"
+        } else if hasCloud {
+            return "icloud.fill"
+        } else {
+            return "bookmark.fill"
+        }
+    }
+
+    public static func fallbackTint(hasCloud: Bool) -> Color {
+        hasCloud ? .blue : .accentColor
+    }
+
+    public var body: some View {
+        let tint = Self.fallbackTint(hasCloud: hasCloud)
+        let symbol = Self.fallbackSymbol(hasLocal: hasLocal, hasCloud: hasCloud)
+        Group {
+            if !logoURL.isEmpty {
+                RemoteImageView(url: logoURL, maxPixelSize: 180, contentMode: .fill)
+            } else {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(tint.opacity(0.14))
+                    .overlay {
+                        Image(systemName: symbol)
+                            .font(.system(size: max(14, size * 0.40), weight: .semibold))
+                            .foregroundStyle(tint)
+                    }
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+        }
+    }
+}
+
 public struct CollectionRowView: View {
     public let item: CollectionItem
     @Environment(AppState.self) private var appState
@@ -1155,19 +1215,38 @@ public struct CollectionRowView: View {
 
     public init(item: CollectionItem) { self.item = item }
 
+    private var resolvedLogoURL: String {
+        if !item.logo.isEmpty { return item.logo }
+        if let cached = appState.cachedCollectionDetail(id: item.id)?.logo, !cached.isEmpty {
+            return cached
+        }
+        if let cloudCached = appState.historyAndFav.cachedCloudCollections.first(where: { $0.id == item.id })?.logo, !cloudCached.isEmpty {
+            return cloudCached
+        }
+        return ""
+    }
+
+    private var hasMatchingLocalFolder: Bool {
+        let norm = HistoryAndFavStore.normalizedFolderTitle(item.title)
+        guard !norm.isEmpty else { return false }
+        return appState.historyAndFav.folders.contains {
+            !$0.isCloudLinked && HistoryAndFavStore.normalizedFolderTitle($0.title) == norm
+        }
+    }
+
     public var body: some View {
         Button {
             appState.cacheCollectionDetail(item)
             appState.push(.collection(id: item.id, initialTitle: item.title, transitionID: "col-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
-                RemoteImageView(url: item.logo, maxPixelSize: 144)
-                    .frame(width: 46, height: 46)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
-                    }
+                CollectionCoverView(
+                    logoURL: resolvedLogoURL,
+                    hasLocal: hasMatchingLocalFolder,
+                    hasCloud: true,
+                    size: 46,
+                    cornerRadius: 12
+                )
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.title)
                         .font(.body.weight(.medium))
@@ -1178,6 +1257,9 @@ public struct CollectionRowView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
             .padding(14)
             .c001CardStyle(cornerRadius: 20)

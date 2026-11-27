@@ -251,11 +251,13 @@ public struct ComposeSheet: View {
     }
 
     private func handleKeyboardFrameNotification(_ note: Notification, isHiding: Bool) {
-        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
-        let screenHeight = (UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.screen.bounds.height) ?? 852
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let keyWindow = scenes.flatMap(\.windows).first(where: \.isKeyWindow) ?? scenes.flatMap(\.windows).first
+        let screenHeight = keyWindow?.bounds.height ?? scenes.first?.screen.bounds.height ?? 852
         let endFrame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
-        let bottomSafe = currentBottomSafeAreaInset()
-        let rawOverlap = isHiding ? 0 : max(0, screenHeight - endFrame.minY - bottomSafe)
+        let bottomSafe = keyWindow?.safeAreaInsets.bottom ?? currentBottomSafeAreaInset()
+        let isHidden = isHiding || endFrame.height <= 0 || endFrame.minY >= screenHeight - 20
+        let rawOverlap = isHidden ? 0 : max(0, screenHeight - endFrame.minY - bottomSafe)
         let nextHeight = rawOverlap > 40 ? rawOverlap : 0
 
         if nextHeight > 180 {
@@ -263,18 +265,23 @@ public struct ComposeSheet: View {
         }
 
         if nextHeight > 40 {
-            var transaction = Transaction(animation: .easeOut(duration: max(0.18, duration)))
-            transaction.disablesAnimations = (showEmojiPanel || isHoldingSlotForKeyboard) && abs(nextHeight - activeBottomSlotHeight) < 2
-            withTransaction(transaction) {
-                keyboardHeight = nextHeight
-                isHoldingSlotForKeyboard = false
+            if isHoldingSlotForKeyboard && abs(nextHeight - lastKnownKeyboardHeight) < 6 {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    keyboardHeight = nextHeight
+                    isHoldingSlotForKeyboard = false
+                }
+            } else {
+                withAnimation(.interpolatingSpring(stiffness: 340, damping: 34)) {
+                    keyboardHeight = nextHeight
+                    isHoldingSlotForKeyboard = false
+                }
             }
         } else {
-            if showEmojiPanel || isHoldingSlotForKeyboard {
+            withAnimation(.interpolatingSpring(stiffness: 340, damping: 34)) {
                 keyboardHeight = 0
-            } else {
-                withAnimation(.easeOut(duration: max(0.18, duration))) {
-                    keyboardHeight = 0
+                if !showEmojiPanel {
                     isHoldingSlotForKeyboard = false
                 }
             }
