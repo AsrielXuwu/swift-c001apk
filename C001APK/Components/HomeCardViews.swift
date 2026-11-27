@@ -171,6 +171,7 @@ struct BannerCarouselView: View {
                             }
                             .frame(width: itemSize.width, height: itemSize.height)
                             .clipped()
+                            .allowsHitTesting(false)
                         }
                         .clipped()
                         .overlay(alignment: .bottomLeading) {
@@ -370,6 +371,7 @@ struct IconLinksScrollView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
+        .scrollClipDisabled()
     }
 }
 
@@ -656,12 +658,18 @@ struct LinkBarRowView: View {
                 HStack(spacing: 8) {
                     ForEach(sections) { item in
                         Button {
-                            if !item.url.isEmpty { appState.openRawLink(item.url, title: item.title) }
+                            let target = item.url.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if !target.isEmpty {
+                                appState.openRawLink(target, title: item.title)
+                            } else if !item.title.isEmpty {
+                                appState.openRawLink("/t/\(TopicItem.cleanTitle(item.title))", title: item.title)
+                            }
                         } label: {
                             Text(item.title)
                                 .font(.subheadline)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
+                                .padding(.horizontal, 13)
+                                .padding(.vertical, 7)
+                                .contentShape(Capsule())
                                 .glassEffect(.regular.interactive(), in: .capsule)
                         }
                         .buttonStyle(.plain)
@@ -669,8 +677,9 @@ struct LinkBarRowView: View {
                 }
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
         }
+        .scrollClipDisabled()
     }
 }
 
@@ -710,6 +719,7 @@ struct GoodsStripView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
         }
+        .scrollClipDisabled()
     }
 }
 
@@ -749,6 +759,7 @@ struct LivesStripView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
         }
+        .scrollClipDisabled()
     }
 }
 

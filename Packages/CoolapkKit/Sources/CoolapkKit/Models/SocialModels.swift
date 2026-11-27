@@ -163,6 +163,8 @@ public struct AppItem: Identifiable, Hashable, Sendable {
     public var description: String
     public var commentCount: Int
     public var followCount: String
+    public var followNum: Int
+    public var isFollowed: Bool
     public var packageName: String
     public var url: String
     public var updateFlag: String
@@ -170,8 +172,9 @@ public struct AppItem: Identifiable, Hashable, Sendable {
     public var changelog: String
 
     public init(json: JSON) {
-        id = json.id.exists ? json.id.identifier : json.entityId.identifier
-        title = json.title.string
+        id = [json.id.identifier, json.entityId.identifier, json.aid.identifier]
+            .first { !$0.isEmpty && $0 != "0" } ?? ""
+        title = json.title.string.isEmpty ? json.shorttitle.string : json.title.string
         subtitle = json.shorttitle.string.isEmpty ? json.subtitle.string : json.shorttitle.string
         logo = coolapkNormalizedURL(json.logo.string)
         score = json.score.string
@@ -182,7 +185,17 @@ public struct AppItem: Identifiable, Hashable, Sendable {
         downloadCount = json.downCount.string.isEmpty ? json.downnum.string : json.downCount.string
         description = json.description.string.isEmpty ? json.introduce.string : json.description.string
         commentCount = json.commentnum.int
-        followCount = json.followCount.string
+        followCount = json.followCount.string.isEmpty ? json.follownum.string : json.followCount.string
+        followNum = [
+            json.follownum.int,
+            json.follow_num.int,
+            json.followNum.int,
+            Int(json.followCount.string) ?? 0
+        ].first { $0 > 0 } ?? 0
+        let followFlag = json.userAction.follow.exists
+            ? json.userAction.follow
+            : (json.isFollowed.exists ? json.isFollowed : (json.is_follow.exists ? json.is_follow : json.follow))
+        isFollowed = followFlag.bool || followFlag.int > 0
         packageName = json.packageName.string.isEmpty ? json.apkname.string : json.packageName.string
         url = json.url.string
         updateFlag = json.updateFlag.string
@@ -708,16 +721,43 @@ public struct DyhItem: Identifiable, Hashable, Sendable {
     public var isFollowed: Bool
 
     public init(json: JSON) {
-        id = json.id.exists ? json.id.identifier : json.dyh_id.identifier
-        title = json.title.string
-        description = json.description.string
+        let rawURL = json.url.string
+        let urlDyhID: String = {
+            if let range = rawURL.range(of: "/dyh/") {
+                let tail = String(rawURL[range.upperBound...])
+                let seg = tail.split(whereSeparator: { $0 == "/" || $0 == "?" || $0 == "&" }).first.map(String.init) ?? ""
+                if !seg.isEmpty && seg.allSatisfy(\.isNumber) {
+                    return seg
+                }
+            }
+            if let range = rawURL.range(of: "dyhId=") {
+                let tail = String(rawURL[range.upperBound...])
+                let seg = tail.split(whereSeparator: { $0 == "&" || $0 == "#" }).first.map(String.init) ?? ""
+                if !seg.isEmpty && seg.allSatisfy(\.isNumber) {
+                    return seg
+                }
+            }
+            return ""
+        }()
+        id = [
+            json.dyh_id.identifier,
+            json.dyhId.identifier,
+            json.id.identifier,
+            json.entityId.identifier,
+            urlDyhID
+        ].first { !$0.isEmpty && $0 != "0" } ?? ""
+        title = json.title.string.isEmpty ? json.dyh_name.string : json.title.string
+        description = json.description.string.isEmpty ? json.sub_title.string : json.description.string
         logo = coolapkNormalizedURL(json.logo.string.isEmpty ? json.pic.string : json.logo.string)
-        username = json.username.string
+        username = json.username.string.isEmpty ? json.author.string : json.username.string
         avatar = coolapkNormalizedURL(json.userAvatar.string)
         uid = json.uid.identifier
-        followNum = json.follownum.int
-        likeNum = json.likenum.int
-        isFollowed = json.isFollowed.int > 0 || json.follow.int > 0 || json.is_follow.int > 0
+        followNum = [json.follownum.int, json.follow_num.int, json.followNum.int].first { $0 > 0 } ?? 0
+        likeNum = [json.likenum.int, json.like_num.int, json.likeNum.int].first { $0 > 0 } ?? 0
+        let followFlag = json.userAction.follow.exists
+            ? json.userAction.follow
+            : (json.isFollowed.exists ? json.isFollowed : (json.is_follow.exists ? json.is_follow : json.follow))
+        isFollowed = followFlag.bool || followFlag.int > 0
     }
 }
 

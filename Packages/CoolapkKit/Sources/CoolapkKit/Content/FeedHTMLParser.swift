@@ -45,7 +45,9 @@ public enum FeedLink: Hashable, Sendable {
            normalized.contains("/") || normalized.hasPrefix("page?") {
             normalized = "/" + normalized
         }
-        if let url = URL(string: normalized), let host = url.host?.lowercased() {
+        let parsedURL = URL(string: normalized)
+            ?? normalized.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed).flatMap(URL.init(string:))
+        if let url = parsedURL, let host = url.host?.lowercased() {
             if host.contains("coolapk.com") || host.contains("coolapk1s.com") {
                 if (url.path.isEmpty || url.path == "/"), let frag = url.fragment, !frag.isEmpty {
                     normalized = "#\(frag)"
@@ -70,11 +72,11 @@ public enum FeedLink: Hashable, Sendable {
         let pathOnly = inspectPath.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? inspectPath
         let lowerPath = pathOnly.lowercased()
 
-        // Unwrap `/page?url=...` when the inner target is a direct entity detail link
-        if lowerPath == "/page" || inspectPath.hasPrefix("page?"),
+        // Unwrap `/page?url=...` or `/page/dataList?url=...` when the inner target is a direct entity detail link
+        if lowerPath == "/page" || lowerPath == "/page/datalist" || inspectPath.hasPrefix("page?"),
            let innerURL = queryDict["url"],
            !innerURL.isEmpty,
-           !innerURL.hasPrefix("V"),
+           !innerURL.uppercased().hasPrefix("V"),
            let innerResolved = resolve(innerURL) {
             if case .page = innerResolved {
                 // Keep outer `/page?url=...` so title/extra query params are preserved
@@ -84,7 +86,7 @@ public enum FeedLink: Hashable, Sendable {
         }
 
         // 1. Topic detail links
-        if let tag = extractSegment(from: inspectPath, prefix: "/t/") {
+        if let tag = extractLeadingSegment(from: pathOnly, prefix: "/t/") {
             return .topic(tag.removingPercentEncoding ?? tag)
         }
         if lowerPath == "/topic/tagdetail" || lowerPath == "/topic/newtagdetail",
@@ -92,21 +94,33 @@ public enum FeedLink: Hashable, Sendable {
             return .topic(tag)
         }
 
-        // 2. User space / profile links (`/u/<uid>`, `/user/<uid>`, `/user/space?uid=`, `/user/profile?uid=`, `/u?uid=`)
+        // 2. User space / profile links (`/u/<uid>`, `/user/<numeric_uid>`, `/user/space?uid=`, `/user/profile?uid=`, `/u?uid=`)
+        // Note: In Coolapk (`TG-Twilight/c001apk` Constants.PREFIX_USER = '/u/', Constants.PREFIX_USER_LIST = '/user/'),
+        // `/user/<endpoint>` paths such as `/user/dyhFollowList`, `/user/apkFollowList`, `/user/followTagList`, etc.
+        // are list endpoints (not usernames!) and must route to `.page(...)`.
         let reservedUserPaths: Set<String> = [
             "user", "space", "profile", "home", "index", "login",
             "feedlist", "followlist", "fanslist", "likelist", "replylist",
             "replytomelist", "recenthistorylist", "hithistorylist",
-            "dyhsubscribe", "followtaglist", "search"
+            "dyhsubscribe", "dyhfollowlist", "apkfollowlist", "userfollowlist",
+            "followtaglist", "collectionlist", "search"
         ]
         if lowerPath == "/user/space" || lowerPath == "/user/profile" || lowerPath == "/u",
            let uid = queryDict["uid"] ?? queryDict["id"],
            !uid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return .user(uid.trimmingCharacters(in: .whitespacesAndNewlines))
         }
-        if let rawUser = extractSegment(from: inspectPath, prefix: "/u/") ?? extractSegment(from: inspectPath, prefix: "/user/") {
+        if let rawUser = extractLeadingSegment(from: pathOnly, prefix: "/u/") {
             let decodedUser = (rawUser.removingPercentEncoding ?? rawUser).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !decodedUser.isEmpty, !reservedUserPaths.contains(decodedUser.lowercased()) {
+            if !decodedUser.isEmpty,
+               !reservedUserPaths.contains(decodedUser.lowercased()),
+               !decodedUser.lowercased().hasSuffix("list") {
+                return .user(decodedUser)
+            }
+        }
+        if let rawUser = extractLeadingSegment(from: pathOnly, prefix: "/user/") {
+            let decodedUser = (rawUser.removingPercentEncoding ?? rawUser).trimmingCharacters(in: .whitespacesAndNewlines)
+            if isNumericID(decodedUser) {
                 return .user(decodedUser)
             }
         }
@@ -121,7 +135,7 @@ public enum FeedLink: Hashable, Sendable {
             }
         }
         for feedPrefix in ["/feed/", "/picture/", "/dyharticle/", "/answer/"] {
-            if let fid = extractSegmentCaseInsensitive(from: inspectPath, prefix: feedPrefix), isNumericID(fid) {
+            if let fid = extractLeadingSegmentCaseInsensitive(from: pathOnly, prefix: feedPrefix), isNumericID(fid) {
                 return .feed(fid)
             }
         }
@@ -130,54 +144,54 @@ public enum FeedLink: Hashable, Sendable {
         if lowerPath == "/product/detail", let pid = queryDict["id"], isNumericID(pid) {
             return .product(pid)
         }
-        if let pid = extractSegment(from: inspectPath, prefix: "/product/"), isNumericID(pid) {
+        if let pid = extractLeadingSegment(from: pathOnly, prefix: "/product/"), isNumericID(pid) {
             return .product(pid)
         }
         if lowerPath == "/apk/detail" || lowerPath == "/game/detail",
            let aid = queryDict["id"], !aid.isEmpty {
             return .app(aid)
         }
-        if let appID = extractSegment(from: inspectPath, prefix: "/apk/") ?? extractSegment(from: inspectPath, prefix: "/game/"),
-           !["index", "list", "rankList", "categoryList", "detail"].contains(appID) {
-            return .app(appID)
+        if let appID = extractLeadingSegment(from: pathOnly, prefix: "/apk/") ?? extractLeadingSegment(from: pathOnly, prefix: "/game/") {
+            let lowerApp = appID.lowercased()
+            if !["index", "list", "ranklist", "categorylist", "detail", "userfollowlist", "followlist", "commentlist"].contains(lowerApp),
+               !lowerApp.hasSuffix("list") {
+                return .app(appID)
+            }
         }
         if lowerPath == "/collection/detail", let cid = queryDict["id"], isNumericID(cid) {
             return .collection(cid)
         }
-        if let cid = extractSegment(from: inspectPath, prefix: "/collection/"), isNumericID(cid) {
+        if let cid = extractLeadingSegment(from: pathOnly, prefix: "/collection/"), isNumericID(cid) {
             return .collection(cid)
         }
         if lowerPath == "/dyh/detail",
            let did = queryDict["dyhId"] ?? queryDict["id"], isNumericID(did) {
             return .dyh(did)
         }
-        if let did = extractSegment(from: inspectPath, prefix: "/dyh/"), isNumericID(did) {
+        if let did = extractLeadingSegment(from: pathOnly, prefix: "/dyh/"), isNumericID(did) {
             return .dyh(did)
         }
         if lowerPath == "/event/detail", let eid = queryDict["id"], isNumericID(eid) {
             return .event(eid)
         }
-        if let eid = extractSegment(from: inspectPath, prefix: "/event/"), isNumericID(eid) {
+        if let eid = extractLeadingSegment(from: pathOnly, prefix: "/event/"), isNumericID(eid) {
             return .event(eid)
         }
-        if let qid = extractSegment(from: inspectPath, prefix: "/question/"), isNumericID(qid) {
+        if let qid = extractLeadingSegment(from: pathOnly, prefix: "/question/"), isNumericID(qid) {
             return .question(qid)
         }
-        if let vid = extractSegment(from: inspectPath, prefix: "/vote/"), isNumericID(vid) {
+        if let vid = extractLeadingSegment(from: pathOnly, prefix: "/vote/"), isNumericID(vid) {
             return .vote(vid)
         }
 
-        if normalized.hasPrefix("/page?url=") || normalized.hasPrefix("page?url=") || normalized.hasPrefix("#/") {
-            return .page(normalized)
-        }
-        if normalized.hasPrefix("/") || normalized.hasPrefix("#") {
-            return .page(normalized)
-        }
-        if let url = URL(string: trimmed) {
+        if let url = parsedURL {
             let scheme = (url.scheme ?? "").lowercased()
             if ["http", "https", "fleamarket", "tbopen", "taobao", "alipays"].contains(scheme) {
                 return .web(url)
             }
+        }
+        if !normalized.isEmpty && !normalized.contains("://") {
+            return .page(normalized)
         }
         return nil
     }
@@ -199,9 +213,17 @@ public enum FeedLink: Hashable, Sendable {
         return dict
     }
 
-    private static func extractSegmentCaseInsensitive(from path: String, prefix: String) -> String? {
-        guard let range = path.range(of: prefix, options: .caseInsensitive) else { return nil }
+    private static func extractLeadingSegmentCaseInsensitive(from path: String, prefix: String) -> String? {
+        guard let range = path.range(of: prefix, options: [.anchored, .caseInsensitive]) else { return nil }
         var value = String(path[range.upperBound...])
+        if let queryIndex = value.firstIndex(of: "?") { value = String(value[..<queryIndex]) }
+        if let slashIndex = value.firstIndex(of: "/") { value = String(value[..<slashIndex]) }
+        return value.isEmpty ? nil : value
+    }
+
+    private static func extractLeadingSegment(from path: String, prefix: String) -> String? {
+        guard path.hasPrefix(prefix) else { return nil }
+        var value = String(path.dropFirst(prefix.count))
         if let queryIndex = value.firstIndex(of: "?") { value = String(value[..<queryIndex]) }
         if let slashIndex = value.firstIndex(of: "/") { value = String(value[..<slashIndex]) }
         return value.isEmpty ? nil : value

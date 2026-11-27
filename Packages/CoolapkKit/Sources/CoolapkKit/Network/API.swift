@@ -102,11 +102,19 @@ public enum API: Sendable {
 
     public static func linkFeed(link: String, page: Int) async throws -> [HomeFeedRow] {
         let trimmed = link.trimmingCharacters(in: .whitespacesAndNewlines)
-        if trimmed == "/user/dyhSubscribe" || trimmed == "/v6/user/dyhSubscribe" {
+        let lower = trimmed.lowercased()
+        if lower == "/user/dyhsubscribe" || lower == "/v6/user/dyhsubscribe" || lower == "#/user/dyhsubscribe" {
             return try await dyhSubscribe(page: page)
         }
+        if lower.contains("dyhfollowlist") {
+            let dyhs = try await followedDyhs(page: page)
+            return dyhs.map { .dyh($0) }
+        }
         if trimmed.hasPrefix("/v6/") {
-            let json = try await client.get(trimmed, ["page": String(page)])
+            let parsed = parsePageLink(trimmed)
+            var params = parsed.extra
+            params["page"] = String(page)
+            let json = try await client.get(parsed.url, params)
             return rows(from: json.data.array)
         }
         let parsed = parsePageLink(trimmed)
@@ -505,7 +513,7 @@ public enum API: Sendable {
 
         if iconCardTemplates.contains(template) {
             let links = entities.enumerated().map { offset, entity in
-                iconLink(from: entity, keyPrefix: "icon-\(index)-\(offset)")
+                iconLink(from: entity, parentCard: item, keyPrefix: "icon-\(index)-\(offset)")
             }.filter { !$0.image.isEmpty || !$0.title.isEmpty }
             if links.isEmpty { return [] }
             if links.allSatisfy({ $0.image.isEmpty }) {
@@ -521,13 +529,9 @@ public enum API: Sendable {
                 : item.extraDataArr.selectedTab.string
             let links = entities.enumerated()
                 .map { offset, entity in
-                    let rawURL = entity.url.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let fallbackPage = entity.page_name.string.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let resolvedURL = !rawURL.isEmpty
-                        ? rawURL
-                        : (fallbackPage.isEmpty ? "" : "#/page?url=\(fallbackPage)&title=\(entity.title.string)")
+                    let resolvedURL = resolveSectionURL(for: entity, parentCard: item, isLinkBar: true)
                     return HomeSection(
-                        id: "lbar-\(index)-\(offset)-\(entity.entityId.identifier)",
+                        id: "lbar-\(index)-\(offset)-\(entity.entityId.identifier)-\(entity.title.string)",
                         title: entity.title.string,
                         subtitle: entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string,
                         url: resolvedURL,
@@ -553,7 +557,7 @@ public enum API: Sendable {
                     title: entity.title.string.isEmpty ? entity.description.string : entity.title.string,
                     subtitle: entity.sub_title.string,
                     image: image,
-                    url: entity.url.string
+                    url: resolveSectionURL(for: entity, parentCard: item, isLinkBar: false)
                 )
             }
             return banners.isEmpty ? [] : [.banners("banner-\(index)", banners)]
@@ -567,10 +571,10 @@ public enum API: Sendable {
             }
             let sections = entities.enumerated().map { offset, entity in
                 HomeSection(
-                    id: "sec-\(index)-\(offset)-\(entity.entityId.identifier)",
+                    id: "sec-\(index)-\(offset)-\(entity.entityId.identifier)-\(entity.title.string)",
                     title: entity.title.string,
                     subtitle: entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string,
-                    url: entity.url.string,
+                    url: resolveSectionURL(for: entity, parentCard: item, isLinkBar: true),
                     style: entity.pic.string
                 )
             }
@@ -580,10 +584,10 @@ public enum API: Sendable {
             let columns = entities.enumerated()
                 .map { offset, entity in
                     HomeSection(
-                        id: "col-\(index)-\(offset)-\(entity.entityId.identifier)",
+                        id: "col-\(index)-\(offset)-\(entity.entityId.identifier)-\(entity.title.string)",
                         title: entity.title.string,
                         subtitle: entity.sub_title.string,
-                        url: entity.url.string,
+                        url: resolveSectionURL(for: entity, parentCard: item, isLinkBar: true),
                         style: entity.pic.string
                     )
                 }
@@ -608,7 +612,7 @@ public enum API: Sendable {
 
         default:
             let links = entities.enumerated().map { offset, entity in
-                iconLink(from: entity, keyPrefix: "def-\(index)-\(offset)")
+                iconLink(from: entity, parentCard: item, keyPrefix: "def-\(index)-\(offset)")
             }.filter { !$0.image.isEmpty || !$0.title.isEmpty }
             if !links.isEmpty {
                 if links.allSatisfy({ $0.image.isEmpty }) {
@@ -627,16 +631,100 @@ public enum API: Sendable {
         return []
     }
 
-    private static func iconLink(from entity: JSON, keyPrefix: String = "icon") -> HomeIconLink {
-        let rawURL = entity.url.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        let fallbackPage = entity.page_name.string.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedURL = !rawURL.isEmpty
-            ? rawURL
-            : (fallbackPage.isEmpty ? "" : "#/page?url=\(fallbackPage)&title=\(entity.title.string)")
+    private static func resolveSectionURL(for entity: JSON, parentCard: JSON = .null, isLinkBar: Bool = true) -> String {
+        let title = entity.title.string.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let directCandidates = [
+            entity.url.string,
+            entity.extraDataArr.url.string,
+            entity.extraData.parsed.url.string,
+            entity.target_url.string,
+            entity.jump_url.string,
+            entity.link.string,
+            entity.uri.string
+        ]
+        for candidate in directCandidates {
+            let trimmed = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                if !trimmed.hasPrefix("/") && !trimmed.hasPrefix("#") && !trimmed.contains("://") && !trimmed.hasPrefix("page?") {
+                    return "#/page?url=\(trimmed)&title=\(title)"
+                }
+                return trimmed
+            }
+        }
+
+        let pageCandidates = [
+            entity.page_name.string,
+            entity.pageName.string,
+            entity.extraDataArr.page_name.string,
+            entity.extraData.parsed.page_name.string
+        ]
+        for pageName in pageCandidates {
+            let trimmed = pageName.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                return "#/page?url=\(trimmed)&title=\(title)"
+            }
+        }
+
+        if let firstChild = entity.entities.array.first {
+            let childURL = resolveSectionURL(for: firstChild, parentCard: entity, isLinkBar: false)
+            if !childURL.isEmpty {
+                return childURL
+            }
+        }
+
+        let eType = entity.entityType.string.lowercased()
+        let rawID = [entity.id.identifier, entity.entityId.identifier].first { !$0.isEmpty && $0 != "0" } ?? ""
+        switch eType {
+        case "topic", "topictag", "tag":
+            let cleanTag = TopicItem.cleanTitle(title)
+            if !cleanTag.isEmpty { return "/t/\(cleanTag)" }
+        case "product":
+            if !rawID.isEmpty { return "/product/\(rawID)" }
+        case "apk", "app", "game":
+            let apkTarget = !entity.apkname.string.isEmpty ? entity.apkname.string : rawID
+            if !apkTarget.isEmpty { return "/apk/\(apkTarget)" }
+        case "dyh":
+            let dyhTarget = !entity.dyh_id.identifier.isEmpty ? entity.dyh_id.identifier : rawID
+            if !dyhTarget.isEmpty { return "/dyh/\(dyhTarget)" }
+        case "collection":
+            if !rawID.isEmpty { return "/collection/\(rawID)" }
+        case "user", "contacts":
+            let uidTarget = !entity.uid.identifier.isEmpty ? entity.uid.identifier : rawID
+            if !uidTarget.isEmpty { return "/u/\(uidTarget)" }
+        case "feed", "feed_reply", "reply":
+            if !rawID.isEmpty { return "/feed/\(rawID)" }
+        case "event", "activity":
+            if !rawID.isEmpty { return "/event/\(rawID)" }
+        default:
+            break
+        }
+
+        let parentURL = parentCard.url.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !parentURL.isEmpty {
+            let sep = parentURL.contains("?") ? "&" : "?"
+            return title.isEmpty ? parentURL : "\(parentURL)\(sep)title=\(title)"
+        }
+
+        if isLinkBar && !title.isEmpty {
+            let cleanTag = TopicItem.cleanTitle(title)
+            if !cleanTag.isEmpty {
+                return "/t/\(cleanTag)"
+            }
+        }
+        return ""
+    }
+
+    private static func iconLink(from entity: JSON, parentCard: JSON = .null, keyPrefix: String = "icon") -> HomeIconLink {
+        let title = entity.title.string.isEmpty ? entity.username.string : entity.title.string
+        let image = !entity.logo.string.isEmpty
+            ? entity.logo.string
+            : (!entity.pic.string.isEmpty ? entity.pic.string : entity.userAvatar.string)
+        let resolvedURL = resolveSectionURL(for: entity, parentCard: parentCard, isLinkBar: image.isEmpty)
         return HomeIconLink(
-            id: "\(keyPrefix)-\(entity.entityId.identifier)-\(entity.title.string)",
-            title: entity.title.string,
-            image: entity.logo.string.isEmpty ? entity.pic.string : entity.logo.string,
+            id: "\(keyPrefix)-\(entity.entityId.identifier)-\(title)",
+            title: title,
+            image: image,
             url: resolvedURL,
             subtitle: entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string
         )
@@ -1128,11 +1216,16 @@ public enum API: Sendable {
     }
 
     private static func expandListEntities(from items: [JSON]) -> [JSON] {
+        let expandableTemplates: Set<String> = [
+            "listCard", "iconLinkGridCard", "iconMiniScrollCard",
+            "iconMiniGridCard", "iconMiniLinkGridCard", "iconScrollCard",
+            "iconGridCard", "iconListCard"
+        ]
         var expanded: [JSON] = []
         for item in items {
             let eType = item.entityType.string
             let eTemplate = item.entityTemplate.string
-            if (eType == "card" || eTemplate == "listCard" || eTemplate == "iconLinkGridCard") && !item.entities.array.isEmpty {
+            if (eType == "card" || expandableTemplates.contains(eTemplate)) && !item.entities.array.isEmpty {
                 expanded.append(contentsOf: item.entities.array)
             } else {
                 expanded.append(item)
@@ -1404,26 +1497,86 @@ public enum API: Sendable {
     }
 
     public static func followedDyhs(page: Int = 1) async throws -> [DyhItem] {
-        let json = try await client.get("/v6/user/dyhSubscribe", ["page": String(page)])
-        let expanded = expandListEntities(from: json.data.array)
         var seen = Set<String>()
         var items: [DyhItem] = []
-        for raw in expanded {
-            let dyh = DyhItem(json: raw)
-            if !dyh.id.isEmpty && !dyh.title.isEmpty && seen.insert(dyh.id).inserted {
-                items.append(dyh)
+
+        func isGenuineDyhEntity(_ raw: JSON) -> Bool {
+            let eType = raw.entityType.string.lowercased()
+            let eTemplate = raw.entityTemplate.string.lowercased()
+            if eType == "feed" || eType == "feed_reply" || eType == "dyharticle" || eType == "card" {
+                return false
+            }
+            if eTemplate.contains("card") && !raw.entities.array.isEmpty {
+                return false
+            }
+            let rawURL = raw.url.string.lowercased()
+            if rawURL.contains("/feed/") || rawURL.contains("/dyharticle/") || rawURL.contains("dyhfollowlist") {
+                return false
+            }
+            if eType == "dyh" || eTemplate == "dyh" || rawURL.contains("/dyh/") || raw.dyh_id.exists || raw.dyhId.exists {
+                return true
+            }
+            return !raw.logo.string.isEmpty && raw.message.string.isEmpty
+        }
+
+        func collectDyhs(from rawArray: [JSON]) {
+            for item in rawArray {
+                if !item.entities.array.isEmpty {
+                    collectDyhs(from: item.entities.array)
+                }
+                guard isGenuineDyhEntity(item) else { continue }
+                let dyh = DyhItem(json: item)
+                if !dyh.id.isEmpty && dyh.id != "0" && !dyh.title.isEmpty && seen.insert(dyh.id).inserted {
+                    items.append(dyh)
+                }
             }
         }
+
+        if let dataListItems = try? await client.dataList(
+            url: "/user/dyhFollowList",
+            page: page,
+            extra: ["title": "我订阅的看看号"]
+        ) {
+            collectDyhs(from: dataListItems)
+        }
+
+        if items.isEmpty,
+           let directJSON = try? await client.get("/v6/user/dyhFollowList", ["page": String(page)]) {
+            collectDyhs(from: directJSON.data.array)
+        }
+
+        if items.isEmpty && page == 1 {
+            let subscribeJSON = try await client.get("/v6/user/dyhSubscribe", ["page": "1"])
+            collectDyhs(from: subscribeJSON.data.array)
+        }
+
         return items
     }
 
     public static func followCollection(id: String, follow: Bool) async throws {
-        _ = try await client.post(follow ? "/v6/collection/follow" : "/v6/collection/unFollow", ["id": id])
+        let path = follow ? "/v6/collection/follow" : "/v6/collection/unFollow"
+        _ = try await client.post(path, ["id": id], query: ["id": id])
+    }
+
+    public static func followApp(id: String, follow: Bool) async throws {
+        let cleanID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        let path = follow ? "/v6/apk/follow" : "/v6/apk/unFollow"
+        do {
+            _ = try await client.post(path, ["id": cleanID], query: ["id": cleanID])
+        } catch {
+            _ = try await client.get(path, ["id": cleanID])
+        }
     }
 
     public static func dyhDetail(id: String) async throws -> DyhItem {
         let json = try await client.get("/v6/dyh/detail", ["dyhId": id])
-        return DyhItem(json: json.data)
+        var item = DyhItem(json: json.data)
+        if item.id.isEmpty {
+            var patched = json.data
+            _ = patched
+            return item
+        }
+        return item
     }
 
     public static func dyhArticles(id: String, page: Int, type: String = "all") async throws -> [HomeFeedRow] {
@@ -1436,7 +1589,22 @@ public enum API: Sendable {
     }
 
     public static func followDyh(id: String, follow: Bool) async throws {
-        _ = try await client.post(follow ? "/v6/dyh/follow" : "/v6/dyh/unFollow", ["dyhId": id])
+        var cleanID = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = cleanID.range(of: "/dyh/") {
+            let tail = String(cleanID[range.upperBound...])
+            let seg = tail.split(whereSeparator: { $0 == "/" || $0 == "?" || $0 == "&" }).first.map(String.init) ?? ""
+            if !seg.isEmpty { cleanID = seg }
+        }
+        let path = follow ? "/v6/dyh/follow" : "/v6/dyh/unFollow"
+        do {
+            _ = try await client.post(
+                path,
+                ["dyhId": cleanID, "id": cleanID],
+                query: ["dyhId": cleanID]
+            )
+        } catch {
+            _ = try await client.get(path, ["dyhId": cleanID])
+        }
     }
 
     public static func eventDetail(id: String) async throws -> EventItem {

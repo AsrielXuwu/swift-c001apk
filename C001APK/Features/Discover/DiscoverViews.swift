@@ -1298,6 +1298,8 @@ public struct AppDetailView: View {
     @State private var hasLoaded = false
     @State private var isLoading = true
     @State private var isLoadingMore = false
+    @State private var isTogglingFollow = false
+    @State private var compactNavProgress: CGFloat = 0
     @State private var page = 1
     @State private var hasMore = true
 
@@ -1307,118 +1309,189 @@ public struct AppDetailView: View {
     }
 
     public var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 10) {
-                if let app {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(spacing: 12) {
-                            RemoteImageView(url: app.logo, maxPixelSize: 200)
-                                .frame(width: 64, height: 64)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(app.title).font(.title3.weight(.semibold))
-                                Text("\(app.version) · \(app.size) · \(app.developer)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                if !app.score.isEmpty {
-                                    Label("\(app.score) 分", systemImage: "star.fill")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.orange)
-                                }
-                            }
-                        }
-
-                        if !app.screenshots.isEmpty {
-                            let shotPrefix = "appshots-\(transitionSeed)"
-                            let shotMedia = app.screenshots.map { FeedMedia(sourceUrl: $0) }
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack(spacing: 10) {
-                                    ForEach(Array(app.screenshots.enumerated()), id: \.offset) { idx, url in
-                                        Button {
-                                            appState.openMedia(shotMedia, at: idx, sourcePrefix: shotPrefix)
-                                        } label: {
-                                            RemoteImageView(url: url, maxPixelSize: 540)
-                                                .frame(width: 140, height: 240)
-                                                .clipped()
-                                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                                .overlay {
-                                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
-                                                }
-                                                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                                .applyZoomSource(id: "\(shotPrefix)-\(idx)", in: zoomNamespace, cornerRadius: 14)
+        ScrollViewReader { proxy in
+            ScrollView {
+                Color.clear.frame(height: 0).id("app-top")
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if let app {
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 12) {
+                                RemoteImageView(url: app.logo, maxPixelSize: 200)
+                                    .frame(width: 64, height: 64)
+                                    .clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(app.title).font(.title3.weight(.semibold))
+                                    let metaParts = [app.version, app.size, app.developer].filter { !$0.isEmpty }
+                                    if !metaParts.isEmpty {
+                                        Text(metaParts.joined(separator: " · "))
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    HStack(spacing: 8) {
+                                        if !app.score.isEmpty {
+                                            Label("\(app.score) 分", systemImage: "star.fill")
+                                                .font(.caption.weight(.semibold))
+                                                .foregroundStyle(.orange)
                                         }
-                                        .buttonStyle(.plain)
+                                        let followLabel = app.followNum > 0
+                                            ? "\(Formatting.count(app.followNum)) 关注"
+                                            : (!app.followCount.isEmpty ? "\(app.followCount) 关注" : "")
+                                        if !followLabel.isEmpty {
+                                            Text(followLabel)
+                                                .font(.caption)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                }
+                                Spacer(minLength: 8)
+                                Button(app.isFollowed ? "已关注" : "关注") {
+                                    Task { await toggleFollow(app) }
+                                }
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 7)
+                                .foregroundStyle(app.isFollowed ? Color.primary : Color.white)
+                                .background(
+                                    app.isFollowed ? Color(uiColor: .tertiarySystemFill) : Color.accentColor,
+                                    in: Capsule()
+                                )
+                                .overlay {
+                                    Capsule()
+                                        .strokeBorder(
+                                            app.isFollowed
+                                                ? Color(uiColor: .separator).opacity(0.45)
+                                                : Color.white.opacity(0.28),
+                                            lineWidth: 0.8
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(isTogglingFollow)
+                            }
+
+                            if !app.screenshots.isEmpty {
+                                let shotPrefix = "appshots-\(transitionSeed)"
+                                let shotMedia = app.screenshots.map { FeedMedia(sourceUrl: $0) }
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack(spacing: 10) {
+                                        ForEach(Array(app.screenshots.enumerated()), id: \.offset) { idx, url in
+                                            Button {
+                                                appState.openMedia(shotMedia, at: idx, sourcePrefix: shotPrefix)
+                                            } label: {
+                                                RemoteImageView(url: url, maxPixelSize: 540)
+                                                    .frame(width: 140, height: 240)
+                                                    .clipped()
+                                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                                    .overlay {
+                                                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                            .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                                                    }
+                                                    .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                                    .applyZoomSource(id: "\(shotPrefix)-\(idx)", in: zoomNamespace, cornerRadius: 14)
+                                            }
+                                            .buttonStyle(.plain)
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        if !app.description.isEmpty {
-                            Text(FeedHTMLParser.plainText(app.description))
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(14)
-                    .c001CardStyle(cornerRadius: 22)
-                    .padding(.horizontal, 12)
-                }
-
-                if (!hasLoaded || isLoading) && comments.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 40)
-                } else if comments.isEmpty {
-                    ContentUnavailableView("暂无应用评价", systemImage: "bubble.right")
-                        .frame(maxWidth: .infinity, minHeight: 160)
-                } else {
-                    ForEach(Array(comments.enumerated()), id: \.element.id) { idx, row in
-                        HomeRowRenderer(row: row)
-                            .onAppear {
-                                if idx >= comments.count - 4 { Task { await loadMore() } }
+                            if !app.description.isEmpty {
+                                Text(FeedHTMLParser.plainText(app.description))
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
                             }
+                        }
+                        .padding(14)
+                        .c001CardStyle(cornerRadius: 22)
+                        .padding(.horizontal, 12)
+                        .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
+                    }
+
+                    if (!hasLoaded || isLoading) && comments.isEmpty {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 40)
+                    } else if comments.isEmpty {
+                        ContentUnavailableView("暂无应用评价", systemImage: "bubble.right")
+                            .frame(maxWidth: .infinity, minHeight: 160)
+                    } else {
+                        ForEach(Array(comments.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= comments.count - 4 { Task { await loadMore() } }
+                                }
+                        }
+                    }
+                }
+                .padding(.vertical, 10)
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top
+            } action: { _, offset in
+                let progress = min(1, max(0, (offset - 36) / 70))
+                if abs(progress - compactNavProgress) > 0.02 {
+                    withAnimation(.easeOut(duration: 0.16)) {
+                        compactNavProgress = progress
                     }
                 }
             }
-            .padding(.vertical, 10)
-        }
-        .refreshable {
-            await reload()
-        }
-        .scrollClipDisabled()
-        .ignoresSafeArea(.container, edges: .bottom)
-        .c001PageBackground()
-        .navigationTitle(app?.title.isEmpty == false ? app!.title : (initialTitle ?? ""))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Picker("排序方式", selection: $sortMode) {
-                        Text("默认排序").tag("lastupdate_desc")
-                        Text("最新发布").tag("dateline_desc")
-                        Text("热门评价").tag("popular")
-                    }
-                } label: {
-                    Image(systemName: "arrow.up.arrow.down")
+            .refreshable {
+                await reload()
+            }
+            .scrollClipDisabled()
+            .ignoresSafeArea(.container, edges: .bottom)
+            .c001PageBackground()
+            .navigationTitle(app?.title.isEmpty == false ? app!.title : (initialTitle ?? ""))
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let app, compactNavProgress > 0.08 {
+                    let primaryText = !app.score.isEmpty ? "\(app.score) 分" : (app.version.isEmpty ? app.title : app.version)
+                    let secondaryText = app.followNum > 0
+                        ? "\(Formatting.count(app.followNum)) 关注"
+                        : (!app.downloadCount.isEmpty ? "\(app.downloadCount) 下载" : "应用")
+                    CollapsedNavEntityToolbar(
+                        avatarURL: app.logo,
+                        primaryLine: primaryText,
+                        secondaryLine: secondaryText,
+                        isFollowed: app.isFollowed,
+                        showFollowButton: true,
+                        isDisabled: isTogglingFollow,
+                        onTapAvatar: {
+                            withAnimation(.snappy) { proxy.scrollTo("app-top", anchor: .top) }
+                        },
+                        onTapFollow: {
+                            Task { await toggleFollow(app) }
+                        }
+                    )
                 }
-                .accessibilityLabel("排序方式")
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Picker("排序方式", selection: $sortMode) {
+                            Text("默认排序").tag("lastupdate_desc")
+                            Text("最新发布").tag("dateline_desc")
+                            Text("热门评价").tag("popular")
+                        }
+                    } label: {
+                        Image(systemName: "arrow.up.arrow.down")
+                    }
+                    .accessibilityLabel("排序方式")
+                }
             }
-        }
-        .onChange(of: sortMode) { _, _ in
-            Task { await reloadComments() }
-        }
-        .onAppear {
-            if app == nil, let cached = appState.cachedAppDetail(id: appID) {
-                app = cached
+            .onChange(of: sortMode) { _, _ in
+                Task { await reloadComments() }
             }
-        }
-        .task(id: appID) {
-            if app == nil, let cached = appState.cachedAppDetail(id: appID) {
-                app = cached
+            .onAppear {
+                if app == nil, let cached = appState.cachedAppDetail(id: appID) {
+                    app = cached
+                }
             }
-            await reload()
+            .task(id: appID) {
+                if app == nil, let cached = appState.cachedAppDetail(id: appID) {
+                    app = cached
+                }
+                await reload()
+            }
         }
     }
 
@@ -1463,6 +1536,40 @@ public struct AppDetailView: View {
             comments.append(contentsOf: unique)
             hasMore = !unique.isEmpty
             if hasMore { page = next }
+        }
+    }
+
+    private func toggleFollow(_ current: AppItem) async {
+        guard appState.accounts.isLoggedIn else { appState.showLoginSheet = true; return }
+        guard !isTogglingFollow else { return }
+        isTogglingFollow = true
+        defer { isTogglingFollow = false }
+        let next = !current.isFollowed
+        let targetID = (!current.id.isEmpty && current.id != "0") ? current.id : appID
+        withAnimation(.snappy(duration: 0.2)) {
+            app?.isFollowed = next
+            if next {
+                app?.followNum += 1
+            } else if (app?.followNum ?? 0) > 0 {
+                app?.followNum -= 1
+            }
+        }
+        do {
+            try await API.followApp(id: targetID, follow: next)
+            if let updated = app {
+                appState.cacheAppDetail(updated)
+            }
+            appState.showToast(next ? "已关注应用" : "已取消关注")
+        } catch {
+            withAnimation(.snappy(duration: 0.2)) {
+                app?.isFollowed = !next
+                if next, (app?.followNum ?? 0) > 0 {
+                    app?.followNum -= 1
+                } else if !next {
+                    app?.followNum += 1
+                }
+            }
+            _ = await appState.handleAPIError(error)
         }
     }
 }
@@ -1636,12 +1743,30 @@ public struct DyhDetailView: View {
         isTogglingFollow = true
         defer { isTogglingFollow = false }
         let next = !current.isFollowed
-        dyh?.isFollowed = next
+        let targetID = (!current.id.isEmpty && current.id != "0") ? current.id : dyhID
+        withAnimation(.snappy(duration: 0.2)) {
+            dyh?.isFollowed = next
+            if next {
+                dyh?.followNum += 1
+            } else if (dyh?.followNum ?? 0) > 0 {
+                dyh?.followNum -= 1
+            }
+        }
         do {
-            try await API.followDyh(id: dyhID, follow: next)
+            try await API.followDyh(id: targetID, follow: next)
+            if let updated = dyh {
+                appState.cacheDyhDetail(updated)
+            }
             appState.showToast(next ? "已订阅" : "已取消订阅")
         } catch {
-            dyh?.isFollowed = !next
+            withAnimation(.snappy(duration: 0.2)) {
+                dyh?.isFollowed = !next
+                if next, (dyh?.followNum ?? 0) > 0 {
+                    dyh?.followNum -= 1
+                } else if !next {
+                    dyh?.followNum += 1
+                }
+            }
             _ = await appState.handleAPIError(error)
         }
     }
