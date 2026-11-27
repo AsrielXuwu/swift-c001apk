@@ -1013,26 +1013,68 @@ public struct MediaContextMenuPreview: View {
         self.bridge = bridge
         self.onImageUpgraded = onImageUpgraded
 
-        let cached = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1600, preferHDR: !disableHDR)
-            ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
-            ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
-            ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
-            ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 960, preferHDR: false)
-            ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080, preferHDR: false)
-            ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 960, preferHDR: false)
-            ?? ImagePipeline.cachedAnyImageSync(urlString: item.sourceUrl)
-            ?? ImagePipeline.cachedAnyImageSync(urlString: item.thumbnailUrl)
-        let resolvedInitial: LoadedImageResult? = cached ?? initialImage.map {
-            LoadedImageResult(
-                image: $0,
-                hasHDRGainMap: $0.isHighDynamicRange || ImagePipeline.cachedHDRFlagSync(urlString: item.sourceUrl),
-                pixelSize: $0.size
+        let cached = Self.lookupCachedResult(for: item, disableHDR: disableHDR)
+        let resolvedInitial: LoadedImageResult?
+        if let cached {
+            resolvedInitial = cached
+        } else if let initialImage {
+            let hasHDR = initialImage.isHighDynamicRange || ImagePipeline.cachedHDRFlagSync(urlString: item.sourceUrl)
+            resolvedInitial = LoadedImageResult(
+                image: initialImage,
+                hasHDRGainMap: hasHDR,
+                pixelSize: initialImage.size
             )
+        } else {
+            resolvedInitial = nil
         }
         self._displayResult = State(initialValue: resolvedInitial)
         self._lockedPreviewSize = State(
             initialValue: Self.preferredSize(for: item, imageSize: resolvedInitial?.image.size ?? initialImage?.size)
         )
+    }
+
+    public static func lookupCachedResult(
+        for item: FeedMedia,
+        primaryURL: String? = nil,
+        primaryMax: CGFloat? = nil,
+        disableHDR: Bool
+    ) -> LoadedImageResult? {
+        let preferHDR = !disableHDR
+        if let primaryURL, let primaryMax,
+           let hit = ImagePipeline.cachedImageSync(urlString: primaryURL, maxPixelSize: primaryMax, preferHDR: false) {
+            return hit
+        }
+        if let hit = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1600, preferHDR: preferHDR) {
+            return hit
+        }
+        if let hit = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: preferHDR) {
+            return hit
+        }
+        if let hit = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: preferHDR) {
+            return hit
+        }
+        if let hit = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false) {
+            return hit
+        }
+        if let hit = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 960, preferHDR: false) {
+            return hit
+        }
+        if let hit = ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080, preferHDR: false) {
+            return hit
+        }
+        if let hit = ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 960, preferHDR: false) {
+            return hit
+        }
+        if let primaryURL, let hit = ImagePipeline.cachedAnyImageSync(urlString: primaryURL) {
+            return hit
+        }
+        if let hit = ImagePipeline.cachedAnyImageSync(urlString: item.sourceUrl) {
+            return hit
+        }
+        if let hit = ImagePipeline.cachedAnyImageSync(urlString: item.thumbnailUrl) {
+            return hit
+        }
+        return nil
     }
 
     public static func preferredSize(for item: FeedMedia, imageSize: CGSize? = nil) -> CGSize {
@@ -1693,17 +1735,12 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         ) -> UIImage? {
             let primaryURL = adaptiveContentMode ? item.sourceUrl : item.thumbnailUrl
             let primaryMax: CGFloat = adaptiveContentMode ? 960 : 1080
-            let loaded = ImagePipeline.cachedImageSync(urlString: primaryURL, maxPixelSize: primaryMax, preferHDR: false)
-                ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1600, preferHDR: !disableHDR)
-                ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
-                ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
-                ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
-                ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 960, preferHDR: false)
-                ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080, preferHDR: false)
-                ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 960, preferHDR: false)
-                ?? ImagePipeline.cachedAnyImageSync(urlString: primaryURL)
-                ?? ImagePipeline.cachedAnyImageSync(urlString: item.sourceUrl)
-                ?? ImagePipeline.cachedAnyImageSync(urlString: item.thumbnailUrl)
+            let loaded = MediaContextMenuPreview.lookupCachedResult(
+                for: item,
+                primaryURL: primaryURL,
+                primaryMax: primaryMax,
+                disableHDR: disableHDR
+            )
             return loaded?.image
         }
 

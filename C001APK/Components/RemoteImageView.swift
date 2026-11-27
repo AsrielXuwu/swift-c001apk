@@ -27,13 +27,23 @@ public struct RemoteImageView: View {
         self.onImageLoaded = onImageLoaded
     }
 
+    private func resolveActiveLoaded(taskKey: String, shouldHDR: Bool) -> LoadedImageResult? {
+        if loadedKey == taskKey, let loaded {
+            return loaded
+        }
+        if let exact = ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: maxPixelSize, preferHDR: shouldHDR) {
+            return exact
+        }
+        if let anyCached = ImagePipeline.cachedAnyImageSync(urlString: url) {
+            return anyCached
+        }
+        return loaded
+    }
+
     public var body: some View {
         let shouldHDR = honorHDR && !appState.settings.disableHDR
         let taskKey = "\(url)|\(Int(maxPixelSize ?? 0))|\(shouldHDR)"
-        let activeLoaded = (loadedKey == taskKey ? loaded : nil)
-            ?? ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: maxPixelSize, preferHDR: shouldHDR)
-            ?? ImagePipeline.cachedAnyImageSync(urlString: url)
-            ?? loaded
+        let activeLoaded = resolveActiveLoaded(taskKey: taskKey, shouldHDR: shouldHDR)
 
         Group {
             if let activeLoaded {
