@@ -1810,8 +1810,8 @@ public struct CollectionDetailView: View {
             let localID = String(collectionID.dropFirst("local:".count))
             return appState.historyAndFav.folders.first { $0.id == localID }
         }
-        if let byCloudID = appState.historyAndFav.folders.first(where: { $0.cloudCollectionID == collectionID }) {
-            return byCloudID
+        if let byID = appState.historyAndFav.folders.first(where: { $0.id == collectionID }) {
+            return byID
         }
         let targetNorm = HistoryAndFavStore.normalizedFolderTitle(collection?.title ?? initialTitle ?? "")
         guard !targetNorm.isEmpty else { return nil }
