@@ -465,10 +465,6 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                             .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
                     }
                     .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: cornerRadius)
-                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                    .contextMenu {
-                        contextMenuBuilder(item, itemIndex)
-                    }
                     .onTapGesture {
                         guard isFront,
                               !isHorizontalDragging,
@@ -526,10 +522,6 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                     }
                 )
                 .frame(height: maxCardHeight)
-                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                .contextMenu {
-                    contextMenuBuilder(activeItem, activeIdx)
-                }
                 .padding(.leading, leftInset)
                 .padding(.trailing, rightInset)
                 .padding(.bottom, bottomInset)

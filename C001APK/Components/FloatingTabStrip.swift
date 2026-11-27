@@ -52,8 +52,9 @@ public struct FloatingTabStrip<Item: Identifiable & Hashable>: View where Item.I
                     }
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 4)
+                .padding(.vertical, 8)
             }
+            .scrollClipDisabled()
             .onChange(of: selection?.id) { _, newID in
                 guard let newID else { return }
                 withAnimation(.snappy(duration: 0.24)) {
@@ -135,44 +136,71 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
     }
 }
 
-public struct ScrollCollapseMetrics: Equatable, Sendable {
-    public let offset: CGFloat
-    public let canCollapse: Bool
+public struct PinnedEntityHeaderOverlay<Header: View, TabStrip: View>: View {
+    public let scrollOffset: CGFloat
+    public let hasHeader: Bool
+    @Binding public var headerHeight: CGFloat
+    @Binding public var stripHeight: CGFloat
+    @ViewBuilder public let header: Header
+    @ViewBuilder public let tabStrip: TabStrip
 
-    public init(offset: CGFloat, canCollapse: Bool) {
-        self.offset = offset
-        self.canCollapse = canCollapse
+    public init(
+        scrollOffset: CGFloat,
+        hasHeader: Bool = true,
+        headerHeight: Binding<CGFloat>,
+        stripHeight: Binding<CGFloat>,
+        @ViewBuilder header: () -> Header,
+        @ViewBuilder tabStrip: () -> TabStrip
+    ) {
+        self.scrollOffset = scrollOffset
+        self.hasHeader = hasHeader
+        self._headerHeight = headerHeight
+        self._stripHeight = stripHeight
+        self.header = header()
+        self.tabStrip = tabStrip()
     }
-}
 
-public struct CollapsibleEntityHeader<Content: View>: View {
-    public let progress: CGFloat
-    @ViewBuilder public let content: Content
-    @State private var measuredHeight: CGFloat = 0
+    private var effectiveHeaderHeight: CGFloat {
+        hasHeader ? headerHeight : 0
+    }
 
-    public init(progress: CGFloat, @ViewBuilder content: () -> Content) {
-        self.progress = min(1, max(0, progress))
-        self.content = content()
+    private var collapseOffset: CGFloat {
+        if scrollOffset < 0 {
+            return scrollOffset
+        }
+        return min(effectiveHeaderHeight, scrollOffset)
+    }
+
+    private var progress: CGFloat {
+        guard effectiveHeaderHeight > 1 else { return 0 }
+        return min(1, max(0, scrollOffset / effectiveHeaderHeight))
     }
 
     public var body: some View {
-        let visibleFraction = max(0, 1 - progress)
-        content
-            .fixedSize(horizontal: false, vertical: true)
-            .onGeometryChange(for: CGFloat.self) { geo in
-                geo.size.height
-            } action: { _, newHeight in
-                if newHeight > 1, abs(newHeight - measuredHeight) > 0.5 {
-                    measuredHeight = newHeight
-                }
+        VStack(spacing: 0) {
+            if hasHeader {
+                header
+                    .onGeometryChange(for: CGFloat.self) { geo in
+                        geo.size.height
+                    } action: { _, h in
+                        if h > 1, abs(h - headerHeight) > 0.5 {
+                            headerHeight = h
+                        }
+                    }
+                    .scaleEffect(1 - 0.04 * progress, anchor: .top)
+                    .opacity(Double(max(0, 1 - progress * 1.25)))
+                    .allowsHitTesting(progress < 0.75)
             }
-            .scaleEffect(1 - 0.06 * progress, anchor: .top)
-            .opacity(Double(max(0, 1 - progress * 1.25)))
-            .frame(
-                height: measuredHeight > 0 ? measuredHeight * visibleFraction : nil,
-                alignment: .top
-            )
-            .clipped()
-            .allowsHitTesting(progress < 0.85)
+
+            tabStrip
+                .onGeometryChange(for: CGFloat.self) { geo in
+                    geo.size.height
+                } action: { _, h in
+                    if h > 1, abs(h - stripHeight) > 0.5 {
+                        stripHeight = h
+                    }
+                }
+        }
+        .offset(y: -collapseOffset)
     }
 }

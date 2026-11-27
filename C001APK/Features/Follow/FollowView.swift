@@ -27,7 +27,7 @@ public struct FollowView: View {
             .ignoresSafeArea(.container, edges: .bottom)
             .c001PageBackground()
             .safeAreaBar(edge: .top, spacing: 0) {
-                VStack(spacing: 2) {
+                VStack(spacing: 0) {
                     floatingSegmentStrip
                     if viewModel.segment == .topics && !viewModel.followedTopics.isEmpty {
                         topicChipsStrip

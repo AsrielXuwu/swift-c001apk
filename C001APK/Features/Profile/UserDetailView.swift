@@ -24,9 +24,15 @@ public struct UserDetailView: View {
     @State private var loadingMoreTabs: Set<UserTab> = []
     @State private var profileLoadFailed = false
     @State private var isTogglingFollow = false
-    @State private var compactNavProgress: CGFloat = 0
-    @State private var scrollProgressByTab: [UserTab: CGFloat] = [:]
+    @State private var headerHeight: CGFloat = 104
+    @State private var stripHeight: CGFloat = 52
+    @State private var scrollOffset: CGFloat = 0
+    @State private var scrollOffsetByTab: [UserTab: CGFloat] = [:]
     @State private var tabTasks: [UserTab: Task<Void, Never>] = [:]
+
+    private var showCollapsedNavToolbar: Bool {
+        headerHeight > 1 && scrollOffset >= headerHeight * 0.55
+    }
 
     private var resolvedNumericUID: String {
         if let id = profile?.id, !id.isEmpty {
@@ -63,13 +69,7 @@ public struct UserDetailView: View {
 
     public var body: some View {
         ScrollViewReader { proxy in
-            VStack(spacing: 0) {
-                CollapsibleEntityHeader(progress: compactNavProgress) {
-                    headerCard
-                        .padding(.top, 8)
-                        .padding(.bottom, 6)
-                }
-
+            ZStack(alignment: .top) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 0) {
                         ForEach(UserTab.allCases) { item in
@@ -84,7 +84,15 @@ public struct UserDetailView: View {
                 .scrollTargetBehavior(.paging)
                 .scrollPosition(id: $scrolledTab)
                 .scrollClipDisabled()
-                .safeAreaBar(edge: .top, spacing: 0) {
+
+                PinnedEntityHeaderOverlay(
+                    scrollOffset: scrollOffset,
+                    headerHeight: $headerHeight,
+                    stripHeight: $stripHeight
+                ) {
+                    headerCard
+                        .padding(.top, 8)
+                } tabStrip: {
                     FloatingTabStrip(
                         items: UserTab.allCases,
                         selection: tab,
@@ -105,7 +113,7 @@ public struct UserDetailView: View {
             .navigationTitle(displayTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if compactNavProgress > 0.08, (profile != nil || initialAvatar != nil) {
+                if showCollapsedNavToolbar, (profile != nil || initialAvatar != nil) {
                     let loginPrimary = profile?.loginTime.map { "活跃 · \(Formatting.relativeTime($0))" }
                         ?? (profile?.location.isEmpty == false ? profile!.location : "")
                     let deviceSecondary = profile?.deviceTitle.isEmpty == false
@@ -184,6 +192,7 @@ public struct UserDetailView: View {
                     }
                 }
             }
+            .animation(.easeInOut(duration: 0.18), value: showCollapsedNavToolbar)
             .onChange(of: scrolledTab) { _, newTab in
                 if let newTab, newTab != tab {
                     tab = newTab
@@ -195,8 +204,8 @@ public struct UserDetailView: View {
                         scrolledTab = nextTab
                     }
                 }
-                withAnimation(.easeOut(duration: 0.2)) {
-                    compactNavProgress = scrollProgressByTab[nextTab] ?? 0
+                withAnimation(.easeOut(duration: 0.22)) {
+                    scrollOffset = scrollOffsetByTab[nextTab] ?? 0
                 }
                 startLoadTab(nextTab, force: false)
             }
@@ -226,28 +235,21 @@ public struct UserDetailView: View {
 
     private func tabScrollPage(for item: UserTab) -> some View {
         ScrollView {
-            Color.clear.frame(height: 0).id("user-top-\(item.rawValue)")
+            Color.clear
+                .frame(height: max(0, headerHeight + stripHeight))
+                .id("user-top-\(item.rawValue)")
             LazyVStack(alignment: .leading, spacing: 12) {
                 tabBody(for: item)
             }
-            .padding(.top, 8)
             .padding(.bottom, 88)
         }
-        .onScrollGeometryChange(for: ScrollCollapseMetrics.self) { geo in
-            ScrollCollapseMetrics(
-                offset: geo.contentOffset.y + geo.contentInsets.top,
-                canCollapse: geo.contentSize.height > geo.containerSize.height + 24
-            )
-        } action: { _, metrics in
+        .onScrollGeometryChange(for: CGFloat.self) { geo in
+            geo.contentOffset.y + geo.contentInsets.top
+        } action: { _, newOffset in
             guard item == tab else { return }
-            let progress: CGFloat = (!metrics.canCollapse && metrics.offset <= 20)
-                ? 0
-                : min(1, max(0, metrics.offset / 90))
-            scrollProgressByTab[item] = progress
-            if abs(progress - compactNavProgress) > 0.02 || (progress == 0 && compactNavProgress != 0) || (progress == 1 && compactNavProgress != 1) {
-                withAnimation(.easeOut(duration: 0.16)) {
-                    compactNavProgress = progress
-                }
+            scrollOffsetByTab[item] = newOffset
+            if abs(newOffset - scrollOffset) > 0.5 || (newOffset <= 0 && scrollOffset > 0) {
+                scrollOffset = newOffset
             }
         }
         .refreshable {

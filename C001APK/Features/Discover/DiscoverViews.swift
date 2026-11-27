@@ -57,10 +57,16 @@ public struct TopicDetailView: View {
     @State private var pageByTab: [String: Int] = [:]
     @State private var hasMoreByTab: [String: Bool] = [:]
     @State private var isTogglingFollow = false
-    @State private var compactNavProgress: CGFloat = 0
-    @State private var scrollProgressByTab: [String: CGFloat] = [:]
+    @State private var headerHeight: CGFloat = 100
+    @State private var stripHeight: CGFloat = 52
+    @State private var scrollOffset: CGFloat = 0
+    @State private var scrollOffsetByTab: [String: CGFloat] = [:]
     @State private var hasInitialized = false
     @State private var didResolveTopicMetadata = false
+
+    private var showCollapsedNavToolbar: Bool {
+        topic != nil && headerHeight > 1 && scrollOffset >= headerHeight * 0.55
+    }
 
     private let fallbackTabs: [HomeSection] = [
         HomeSection(id: "lastupdate_desc", title: "最新回复", subtitle: "lastupdate_desc", url: "", style: ""),
@@ -115,15 +121,7 @@ public struct TopicDetailView: View {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    VStack(spacing: 0) {
-                        if let topic {
-                            CollapsibleEntityHeader(progress: compactNavProgress) {
-                                topicHeaderCard(topic)
-                                    .padding(.top, 8)
-                                    .padding(.bottom, 6)
-                            }
-                        }
-
+                    ZStack(alignment: .top) {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 0) {
                                 ForEach(activeTabs) { tabItem in
@@ -138,7 +136,18 @@ public struct TopicDetailView: View {
                         .scrollTargetBehavior(.paging)
                         .scrollPosition(id: $scrolledTabID)
                         .scrollClipDisabled()
-                        .safeAreaBar(edge: .top, spacing: 0) {
+
+                        PinnedEntityHeaderOverlay(
+                            scrollOffset: scrollOffset,
+                            hasHeader: topic != nil,
+                            headerHeight: $headerHeight,
+                            stripHeight: $stripHeight
+                        ) {
+                            if let topic {
+                                topicHeaderCard(topic)
+                                    .padding(.top, 8)
+                            }
+                        } tabStrip: {
                             if !activeTabs.isEmpty {
                                 FloatingTabStrip(
                                     items: activeTabs,
@@ -163,7 +172,7 @@ public struct TopicDetailView: View {
             .navigationTitle(topic?.title.isEmpty == false ? TopicItem.cleanTitle(topic!.title) : TopicItem.cleanTitle(tag))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if let topic, compactNavProgress > 0.08 {
+                if let topic, showCollapsedNavToolbar {
                     let navLines = topicNavLines(topic)
                     CollapsedNavEntityToolbar(
                         avatarURL: topic.logo,
@@ -211,6 +220,7 @@ public struct TopicDetailView: View {
                 }
             }
             .animation(.snappy(duration: 0.24), value: !currentSortOptions.isEmpty)
+            .animation(.easeInOut(duration: 0.18), value: showCollapsedNavToolbar)
             .onChange(of: scrolledTabID) { _, newValue in
                 if let newValue, newValue != activeTabID {
                     activeTabID = newValue
@@ -223,8 +233,8 @@ public struct TopicDetailView: View {
                         scrolledTabID = newValue
                     }
                 }
-                withAnimation(.easeOut(duration: 0.2)) {
-                    compactNavProgress = scrollProgressByTab[newValue] ?? 0
+                withAnimation(.easeOut(duration: 0.22)) {
+                    scrollOffset = scrollOffsetByTab[newValue] ?? 0
                 }
                 if let target = activeTabs.first(where: { $0.id == newValue }) {
                     Task { await reloadFeeds(for: target, force: false) }
@@ -298,7 +308,9 @@ public struct TopicDetailView: View {
         let hasLoaded = loadedTabs.contains(tabItem.id)
 
         return ScrollView {
-            Color.clear.frame(height: 0).id("topic-top-\(tabItem.id)")
+            Color.clear
+                .frame(height: max(0, (topic != nil ? headerHeight : 0) + stripHeight))
+                .id("topic-top-\(tabItem.id)")
             LazyVStack(alignment: .leading, spacing: 10) {
                 if (!hasLoaded || isLoadingTab) && rows.isEmpty {
                     ProgressView()
@@ -316,24 +328,15 @@ public struct TopicDetailView: View {
                     }
                 }
             }
-            .padding(.top, 8)
             .padding(.bottom, 88)
         }
-        .onScrollGeometryChange(for: ScrollCollapseMetrics.self) { geo in
-            ScrollCollapseMetrics(
-                offset: geo.contentOffset.y + geo.contentInsets.top,
-                canCollapse: geo.contentSize.height > geo.containerSize.height + 24
-            )
-        } action: { _, metrics in
+        .onScrollGeometryChange(for: CGFloat.self) { geo in
+            geo.contentOffset.y + geo.contentInsets.top
+        } action: { _, newOffset in
             guard tabItem.id == activeTabID else { return }
-            let progress: CGFloat = (!metrics.canCollapse && metrics.offset <= 20)
-                ? 0
-                : min(1, max(0, metrics.offset / 90))
-            scrollProgressByTab[tabItem.id] = progress
-            if abs(progress - compactNavProgress) > 0.02 || (progress == 0 && compactNavProgress != 0) || (progress == 1 && compactNavProgress != 1) {
-                withAnimation(.easeOut(duration: 0.16)) {
-                    compactNavProgress = progress
-                }
+            scrollOffsetByTab[tabItem.id] = newOffset
+            if abs(newOffset - scrollOffset) > 0.5 || (newOffset <= 0 && scrollOffset > 0) {
+                scrollOffset = newOffset
             }
         }
         .refreshable {
@@ -503,10 +506,16 @@ public struct ProductDetailView: View {
     @State private var hasMoreByTab: [String: Bool] = [:]
     @State private var isLoadingHeader = true
     @State private var isTogglingFollow = false
-    @State private var compactNavProgress: CGFloat = 0
-    @State private var scrollProgressByTab: [String: CGFloat] = [:]
+    @State private var headerHeight: CGFloat = 112
+    @State private var stripHeight: CGFloat = 52
+    @State private var scrollOffset: CGFloat = 0
+    @State private var scrollOffsetByTab: [String: CGFloat] = [:]
     @State private var hasInitialized = false
     @State private var didResolveProductTabs = false
+
+    private var showCollapsedNavToolbar: Bool {
+        product != nil && headerHeight > 1 && scrollOffset >= headerHeight * 0.55
+    }
     @State private var productVariants: [ProductConfigVariant] = []
     @State private var productSpecs: [ProductSpecEntry] = []
     @State private var variantSpecSectionsByID: [String: [ProductSpecSection]] = [:]
@@ -590,15 +599,7 @@ public struct ProductDetailView: View {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    VStack(spacing: 0) {
-                        if let product {
-                            CollapsibleEntityHeader(progress: compactNavProgress) {
-                                productHeaderCard(product)
-                                    .padding(.top, 8)
-                                    .padding(.bottom, 6)
-                            }
-                        }
-
+                    ZStack(alignment: .top) {
                         ScrollView(.horizontal, showsIndicators: false) {
                             LazyHStack(spacing: 0) {
                                 ForEach(activeChips) { chip in
@@ -613,7 +614,18 @@ public struct ProductDetailView: View {
                         .scrollTargetBehavior(.paging)
                         .scrollPosition(id: $scrolledTabID)
                         .scrollClipDisabled()
-                        .safeAreaBar(edge: .top, spacing: 0) {
+
+                        PinnedEntityHeaderOverlay(
+                            scrollOffset: scrollOffset,
+                            hasHeader: product != nil,
+                            headerHeight: $headerHeight,
+                            stripHeight: $stripHeight
+                        ) {
+                            if let product {
+                                productHeaderCard(product)
+                                    .padding(.top, 8)
+                            }
+                        } tabStrip: {
                             if !activeChips.isEmpty {
                                 FloatingTabStrip(
                                     items: activeChips,
@@ -638,7 +650,7 @@ public struct ProductDetailView: View {
             .navigationTitle(product?.title.isEmpty == false ? product!.title : (initialTitle ?? ""))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                if let product, compactNavProgress > 0.08 {
+                if let product, showCollapsedNavToolbar {
                     let line1 = [
                         product.score.isEmpty ? nil : "评分 \(product.score)",
                         product.priceText.isEmpty ? nil : product.priceText
@@ -691,6 +703,7 @@ public struct ProductDetailView: View {
                 }
             }
             .animation(.snappy(duration: 0.24), value: !currentSortOptions.isEmpty)
+            .animation(.easeInOut(duration: 0.18), value: showCollapsedNavToolbar)
             .onChange(of: scrolledTabID) { _, newValue in
                 if let newValue, newValue != activeTabID {
                     activeTabID = newValue
@@ -703,8 +716,8 @@ public struct ProductDetailView: View {
                         scrolledTabID = newValue
                     }
                 }
-                withAnimation(.easeOut(duration: 0.2)) {
-                    compactNavProgress = scrollProgressByTab[newValue] ?? 0
+                withAnimation(.easeOut(duration: 0.22)) {
+                    scrollOffset = scrollOffsetByTab[newValue] ?? 0
                 }
                 if didResolveProductTabs {
                     Task { await reloadFeeds(for: newValue, force: false) }
@@ -725,7 +738,9 @@ public struct ProductDetailView: View {
         let isSpecsTab = isConfigTab(id: chip.id, title: chip.title)
 
         return ScrollView {
-            Color.clear.frame(height: 0).id("product-top-\(chip.id)")
+            Color.clear
+                .frame(height: max(0, (product != nil ? headerHeight : 0) + stripHeight))
+                .id("product-top-\(chip.id)")
             LazyVStack(alignment: .leading, spacing: 10) {
                 if isSpecsTab {
                     productSpecsSection()
@@ -745,25 +760,16 @@ public struct ProductDetailView: View {
                     }
                 }
             }
-            .padding(.top, 8)
             .padding(.bottom, 88)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
-        .onScrollGeometryChange(for: ScrollCollapseMetrics.self) { geo in
-            ScrollCollapseMetrics(
-                offset: geo.contentOffset.y + geo.contentInsets.top,
-                canCollapse: geo.contentSize.height > geo.containerSize.height + 24
-            )
-        } action: { _, metrics in
+        .onScrollGeometryChange(for: CGFloat.self) { geo in
+            geo.contentOffset.y + geo.contentInsets.top
+        } action: { _, newOffset in
             guard chip.id == activeTabID else { return }
-            let progress: CGFloat = (!metrics.canCollapse && metrics.offset <= 20)
-                ? 0
-                : min(1, max(0, metrics.offset / 90))
-            scrollProgressByTab[chip.id] = progress
-            if abs(progress - compactNavProgress) > 0.02 || (progress == 0 && compactNavProgress != 0) || (progress == 1 && compactNavProgress != 1) {
-                withAnimation(.easeOut(duration: 0.16)) {
-                    compactNavProgress = progress
-                }
+            scrollOffsetByTab[chip.id] = newOffset
+            if abs(newOffset - scrollOffset) > 0.5 || (newOffset <= 0 && scrollOffset > 0) {
+                scrollOffset = newOffset
             }
         }
         .refreshable {

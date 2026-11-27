@@ -36,7 +36,7 @@ public struct HomeView: View {
             .ignoresSafeArea(.container, edges: .bottom)
             .c001PageBackground()
             .safeAreaBar(edge: .top, spacing: 0) {
-                VStack(spacing: 2) {
+                VStack(spacing: 0) {
                     floatingCategoryStrip(visibleTabs: visibleTabs, activeTab: activeTab, proxy: proxy)
                     if let subCategories = viewModel.subCategoriesByTab[activeTab], !subCategories.isEmpty {
                         subCategoryStrip(categories: subCategories, for: activeTab)

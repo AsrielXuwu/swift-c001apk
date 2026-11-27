@@ -117,10 +117,11 @@ public struct SearchView: View {
                                 .buttonStyle(.plain)
                             }
                         }
-                        .padding(.vertical, 2)
+                        .padding(.vertical, 8)
                     }
                 }
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .scrollClipDisabled()
+                .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
 
                 if viewModel.category == .all {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -144,10 +145,11 @@ public struct SearchView: View {
                                     .buttonStyle(.plain)
                                 }
                             }
-                            .padding(.vertical, 2)
+                            .padding(.vertical, 8)
                         }
                     }
-                    .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                    .scrollClipDisabled()
+                    .listRowInsets(EdgeInsets(top: 2, leading: 16, bottom: 2, trailing: 16))
                 }
             }
 

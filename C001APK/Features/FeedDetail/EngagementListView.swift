@@ -77,12 +77,16 @@ public struct EngagementListView: View {
                     Button("关闭") { dismiss() }
                 }
             }
+            .environment(\.zoomNamespace, sheetZoomNamespace)
             .navigationDestination(for: AppRoute.self) { route in
                 AppRouteDestinationView(route: route, zoomNamespace: sheetZoomNamespace)
+                    .environment(\.zoomNamespace, sheetZoomNamespace)
             }
-            .task { await loadInitial() }
+            .task {
+                guard !hasLoaded else { return }
+                await loadInitial()
+            }
         }
-        .environment(\.zoomNamespace, sheetZoomNamespace)
         .onAppear {
             appState.registerModalPush(id: modalPushID) { route in
                 navPath.append(route)
