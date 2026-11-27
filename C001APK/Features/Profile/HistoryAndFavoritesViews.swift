@@ -123,7 +123,7 @@ public struct HistoryListView: View {
                 .scrollEdgeEffectStyle(.soft, for: .top)
             }
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .c001PageBackground()
         .navigationTitle("浏览历史")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -360,7 +360,7 @@ public struct FavoritesListView: View {
                             .buttonStyle(.plain)
 
                             Button {
-                                appState.push(.collection(id: col.id))
+                                appState.push(.collection(id: col.id, initialTitle: col.title))
                             } label: {
                                 Image(systemName: isSelected ? "line.3.horizontal.decrease.circle.fill" : "chevron.right")
                                     .font(.caption.weight(.semibold))
@@ -471,7 +471,7 @@ public struct FavoritesListView: View {
             await syncCloudFavorites(force: true)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .c001PageBackground()
         .navigationTitle("收藏")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -792,7 +792,7 @@ public struct LocalFollowListView: View {
                 .scrollEdgeEffectStyle(.soft, for: .top)
             }
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .c001PageBackground()
         .navigationTitle("关注列表")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -973,7 +973,7 @@ public struct UserRepliesListView: View {
         .scrollPosition(id: $scrolledTab)
         .scrollClipDisabled()
         .ignoresSafeArea(.container, edges: .bottom)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .c001PageBackground()
         .safeAreaBar(edge: .top, spacing: 0) {
             FloatingTabStrip(
                 items: ReplyBoxTab.allCases,
@@ -1003,7 +1003,7 @@ private struct LoggedInPagedActivityView: View {
 
     var body: some View {
         LoggedInPagedActivityPage(emptyTitle: emptyTitle, emptyIcon: emptyIcon, loader: loader)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .c001PageBackground()
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
     }

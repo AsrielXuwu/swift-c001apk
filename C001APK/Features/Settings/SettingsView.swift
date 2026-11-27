@@ -192,9 +192,6 @@ public struct SettingsView: View {
                 NavigationLink(value: AppRoute.accounts) {
                     Text("账号管理")
                 }
-                NavigationLink(value: AppRoute.about) {
-                    Text("关于 c001apk")
-                }
             }
         }
         .navigationTitle("设置")

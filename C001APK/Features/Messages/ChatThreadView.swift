@@ -205,7 +205,7 @@ public struct ChatThreadView: View {
                 }
             }
         }
-        .background(Color(.systemGroupedBackground))
+        .c001PageBackground()
         .navigationTitle(peerName.isEmpty ? "私信" : peerName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

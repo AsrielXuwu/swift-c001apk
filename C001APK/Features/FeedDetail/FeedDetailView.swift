@@ -79,9 +79,9 @@ public struct FeedDetailView: View {
                 }
             }
         }
-        .navigationTitle(viewModel.feed.map { $0.username.isEmpty ? "动态详情" : $0.username } ?? "动态详情")
+        .navigationTitle(viewModel.feed.map { $0.username.isEmpty ? "匿名酷友" : $0.username } ?? "")
         .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemGroupedBackground))
+        .c001PageBackground()
         .toolbar {
             if let feed = viewModel.feed {
                 if compactNavProgress > 0.08 {
@@ -175,9 +175,7 @@ public struct FeedDetailView: View {
             ReplyThreadSheet(rootReply: reply, feedAuthorUID: viewModel.feed?.uid ?? "")
         }
         .sheet(item: $engagementMode) { selection in
-            NavigationStack {
-                EngagementListView(mode: selection.mode)
-            }
+            EngagementListView(mode: selection.mode)
         }
         .sheet(item: Binding(
             get: { shareURL.map { ExportShareItem(url: $0) } },
@@ -260,7 +258,37 @@ public struct FeedDetailView: View {
                         voteSection(vote)
                     }
 
-                    if let source = feed.sourceFeed {
+                    if feed.kind == .answer && !feed.questionID.isEmpty {
+                    Button {
+                        appState.push(.feed(id: feed.questionID))
+                    } label: {
+                        HStack(spacing: 10) {
+                            Text("原问题")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.accentColor)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.accentColor.opacity(0.14), in: Capsule())
+
+                            Text(feed.questionTitle.isEmpty ? "查看原问题与全部回答" : feed.questionTitle)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(3)
+
+                            Spacer(minLength: 4)
+
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(12)
+                        .c001NestedSurface(cornerRadius: 14)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                if let source = feed.sourceFeed {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("转发自 @\(source.username)")
                                 .font(.caption.weight(.semibold))
@@ -306,17 +334,64 @@ public struct FeedDetailView: View {
                 .frame(maxWidth: 760, alignment: .leading)
                 .frame(maxWidth: .infinity)
 
-                if feed.kind == .question, !viewModel.answers.isEmpty {
+                if feed.kind == .question {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("精选回答")
-                            .font(.headline)
-                            .padding(.horizontal, 16)
-                        ForEach(viewModel.answers) { row in
-                            HomeRowRenderer(row: row)
+                        HStack(spacing: 8) {
+                            Text("全部回答")
+                                .font(.headline)
+                            Spacer()
+                            Menu {
+                                ForEach(FeedDetailViewModel.AnswerSortMode.allCases) { mode in
+                                    Button {
+                                        viewModel.answerSortMode = mode
+                                        Task { await viewModel.reloadAnswers(appState: appState) }
+                                    } label: {
+                                        HStack {
+                                            Text(mode.label)
+                                            if viewModel.answerSortMode == mode { Image(systemName: "checkmark") }
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Label(viewModel.answerSortMode.label, systemImage: "arrow.up.arrow.down")
+                                    .font(.caption.weight(.medium))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .glassEffect(.regular.interactive(), in: .capsule)
+                                    .foregroundStyle(.primary)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+
+                        if viewModel.isLoadingAnswers && viewModel.answers.isEmpty {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 16)
+                        } else if viewModel.answers.isEmpty {
+                            Text("暂无回答")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, 14)
+                        } else {
+                            ForEach(Array(viewModel.answers.enumerated()), id: \.element.id) { idx, row in
+                                HomeRowRenderer(row: row)
+                                    .onAppear {
+                                        if viewModel.answers.count >= 5 && idx >= viewModel.answers.count - 2 {
+                                            Task { await viewModel.loadMoreAnswers(appState: appState) }
+                                        }
+                                    }
+                            }
+                            if viewModel.isLoadingMoreAnswers {
+                                ProgressView()
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                            }
                         }
                     }
                     .frame(maxWidth: 760, alignment: .leading)
                     .frame(maxWidth: .infinity)
+                    .transition(.opacity)
                 }
 
                 repliesHeader(feed)
@@ -404,8 +479,6 @@ public struct FeedDetailView: View {
                         },
                         onShareFile: { articleShareImageURL = $0 }
                     )
-                } preview: {
-                    MediaContextMenuPreview(item: media, disableHDR: appState.settings.disableHDR)
                 }
         }
     }
@@ -440,8 +513,6 @@ public struct FeedDetailView: View {
                         },
                         onShareFile: { articleShareImageURL = $0 }
                     )
-                } preview: {
-                    MediaContextMenuPreview(item: coverMedia, disableHDR: appState.settings.disableHDR)
                 }
         }
 
@@ -504,7 +575,7 @@ public struct FeedDetailView: View {
                             .font(.subheadline)
                             .padding(10)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            .c001NestedSurface(cornerRadius: 10)
                     }
                     .buttonStyle(.plain)
                 }
@@ -534,7 +605,7 @@ public struct FeedDetailView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(12)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .c001NestedSurface(cornerRadius: 12)
     }
 
     private func metadataSummary(_ feed: FeedItem) -> some View {

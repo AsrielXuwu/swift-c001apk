@@ -38,6 +38,9 @@ public struct FeedRowView: View {
     public var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             authorHeader
+            if feed.kind == .answer && !feed.questionID.isEmpty {
+                questionBannerCard(questionID: feed.questionID, title: feed.questionTitle)
+            }
             bodyContent
             if !feed.mediaItems.isEmpty {
                 MediaGridView(items: feed.mediaItems)
@@ -225,6 +228,37 @@ public struct FeedRowView: View {
         }
     }
 
+    private func questionBannerCard(questionID: String, title: String) -> some View {
+        Button {
+            appState.push(.feed(id: questionID))
+        } label: {
+            HStack(spacing: 8) {
+                Text("原问题")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.accentColor.opacity(0.14), in: Capsule())
+
+                Text(title.isEmpty ? "查看原问题" : title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                Spacer(minLength: 4)
+
+                Image(systemName: "chevron.right")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .c001NestedSurface(cornerRadius: 12)
+        }
+        .buttonStyle(.plain)
+    }
+
     private func forwardedQuoteCard(_ source: ForwardedContent) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             if !source.username.isEmpty {
@@ -280,7 +314,7 @@ public struct FeedRowView: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .c001NestedSurface(cornerRadius: 9)
     }
 
     private var actionFooter: some View {
@@ -498,18 +532,16 @@ public struct SecondHandOrExtraCard: View {
                             .foregroundStyle(isTrade ? Color.orange : Color.accentColor)
                     }
                     .padding(10)
-                    .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .c001NestedSurface(cornerRadius: 12)
                 }
                 .buttonStyle(.plain)
             }
         }
         .padding(feed.isSecondHand && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty ? 10 : 0)
-        .background(
-            (feed.isSecondHand && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty)
-                ? Color(.secondarySystemBackground)
-                : Color.clear,
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
+        .modifier(ConditionalNestedSurfaceModifier(
+            enabled: feed.isSecondHand && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty,
+            cornerRadius: 12
+        ))
     }
 
     private func openLink(_ raw: String, preferSystemApp: Bool) {
@@ -527,6 +559,20 @@ public struct SecondHandOrExtraCard: View {
     }
 }
 
+private struct ConditionalNestedSurfaceModifier: ViewModifier {
+    let enabled: Bool
+    let cornerRadius: CGFloat
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content.c001NestedSurface(cornerRadius: cornerRadius)
+        } else {
+            content
+        }
+    }
+}
+
 public struct FeedRelationEntitiesView: View {
     public enum Style {
         case card
@@ -537,6 +583,8 @@ public struct FeedRelationEntitiesView: View {
     public var style: Style = .card
 
     @Environment(AppState.self) private var appState
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.oledPureBlack) private var oledPureBlack
 
     public init(entities: [FeedRelationEntity], style: Style = .card) {
         self.entities = entities
@@ -574,9 +622,17 @@ public struct FeedRelationEntitiesView: View {
                     .padding(.horizontal, 9)
                     .frame(height: chipHeight)
                     .background(
-                        Color(style == .detail ? .tertiarySystemGroupedBackground : .secondarySystemBackground),
+                        colorScheme == .dark
+                            ? Color(.tertiarySystemGroupedBackground)
+                            : Color(.secondarySystemBackground),
                         in: Capsule()
                     )
+                    .overlay {
+                        if colorScheme == .dark {
+                            Capsule()
+                                .strokeBorder(Color.white.opacity(oledPureBlack ? 0.14 : 0.08), lineWidth: 0.6)
+                        }
+                    }
                 }
                 .buttonStyle(.plain)
             }

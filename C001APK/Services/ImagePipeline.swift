@@ -422,7 +422,14 @@ public actor ImagePipeline {
             }
 
             if let cgImage {
-                uiImage = UIImage(cgImage: cgImage)
+                if maxPixelSize == nil,
+                   let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+                   let rawOrient = props[kCGImagePropertyOrientation] as? UInt32,
+                   let cgOrient = CGImagePropertyOrientation(rawValue: rawOrient) {
+                    uiImage = UIImage(cgImage: cgImage, scale: 1.0, orientation: Self.uiOrientation(from: cgOrient))
+                } else {
+                    uiImage = UIImage(cgImage: cgImage)
+                }
             } else {
                 uiImage = UIImage(data: data)
             }
@@ -437,6 +444,20 @@ public actor ImagePipeline {
         let cost = Int(finalImage.size.width * finalImage.size.height * finalImage.scale * finalImage.scale * 4)
         Self.memoryStore.images.setObject(finalImage, forKey: cacheKey as NSString, cost: max(1024, cost))
         return LoadedImageResult(image: finalImage, hasHDRGainMap: resolvedHDR, pixelSize: finalImage.size)
+    }
+
+    private nonisolated static func uiOrientation(from cgOrientation: CGImagePropertyOrientation) -> UIImage.Orientation {
+        switch cgOrientation {
+        case .up: return .up
+        case .down: return .down
+        case .left: return .left
+        case .right: return .right
+        case .upMirrored: return .upMirrored
+        case .downMirrored: return .downMirrored
+        case .leftMirrored: return .leftMirrored
+        case .rightMirrored: return .rightMirrored
+        @unknown default: return .up
+        }
     }
 
     private nonisolated static func xmpDeclaresMotionPhoto(_ xmp: String) -> Bool {

@@ -18,6 +18,10 @@ public struct EngagementListView: View {
 
     public let mode: Mode
     @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+    @Namespace private var sheetZoomNamespace
+    @State private var navPath: [AppRoute] = []
+    @State private var modalPushID = UUID()
     @State private var users: [UserBrief] = []
     @State private var rows: [HomeFeedRow] = []
     @State private var isLoading = true
@@ -30,44 +34,63 @@ public struct EngagementListView: View {
     }
 
     public var body: some View {
-        Group {
-            if (!hasLoaded || isLoading) && users.isEmpty && rows.isEmpty {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if users.isEmpty && rows.isEmpty {
-                ContentUnavailableView("暂无记录", systemImage: "list.bullet")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 10) {
-                        if case .likes = mode {
-                            ForEach(Array(users.enumerated()), id: \.element.id) { idx, user in
-                                UserRowView(user: user)
-                                    .onAppear {
-                                        if idx >= users.count - 4 { Task { await loadMore() } }
-                                    }
-                            }
-                        } else {
-                            ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                                HomeRowRenderer(row: row)
-                                    .onAppear {
-                                        if idx >= rows.count - 4 { Task { await loadMore() } }
-                                    }
+        NavigationStack(path: $navPath) {
+            Group {
+                if (!hasLoaded || isLoading) && users.isEmpty && rows.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if users.isEmpty && rows.isEmpty {
+                    ContentUnavailableView("暂无记录", systemImage: "list.bullet")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 10) {
+                            if case .likes = mode {
+                                ForEach(Array(users.enumerated()), id: \.element.id) { idx, user in
+                                    UserRowView(user: user)
+                                        .onAppear {
+                                            if idx >= users.count - 4 { Task { await loadMore() } }
+                                        }
+                                }
+                            } else {
+                                ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                                    HomeRowRenderer(row: row)
+                                        .onAppear {
+                                            if idx >= rows.count - 4 { Task { await loadMore() } }
+                                        }
+                                }
                             }
                         }
+                        .padding(.vertical, 10)
                     }
-                    .padding(.vertical, 10)
-                }
-                .refreshable {
-                    await loadInitial()
+                    .refreshable {
+                        await loadInitial()
+                    }
                 }
             }
+            .c001PageBackground()
+            .c001NativeTopBar()
+            .navigationTitle(mode.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") { dismiss() }
+                }
+            }
+            .navigationDestination(for: AppRoute.self) { route in
+                AppRouteDestinationView(route: route, zoomNamespace: sheetZoomNamespace)
+            }
+            .task { await loadInitial() }
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
-        .c001NativeTopBar()
-        .navigationTitle(mode.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .task { await loadInitial() }
+        .environment(\.zoomNamespace, sheetZoomNamespace)
+        .onAppear {
+            appState.registerModalPush(id: modalPushID) { route in
+                navPath.append(route)
+            }
+        }
+        .onDisappear {
+            appState.unregisterModalPush(id: modalPushID)
+        }
     }
 
     private func loadInitial() async {

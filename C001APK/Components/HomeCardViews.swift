@@ -131,11 +131,11 @@ struct BannerCarouselView: View {
         let rawRatio = detectedRatios[index]
             ?? MediaGridView.inferredAspectRatio(from: url)
             ?? 1.85
-        let clamped = max(0.55, min(rawRatio, 2.8))
-        let naturalH = maxStageWidth / clamped
-        let finalH = min(320, max(130, naturalH))
-        let finalW = min(maxStageWidth, max(160, finalH * clamped))
-        return CGSize(width: finalW, height: finalH)
+        let clamped = max(0.45, min(rawRatio, 2.8))
+        let width = min(maxStageWidth, max(160, maxStageWidth))
+        let height = min(420, max(110, width / clamped))
+        let adjustedWidth = min(maxStageWidth, height * clamped)
+        return CGSize(width: adjustedWidth, height: height)
     }
 
     private func updateDetectedRatio(index: Int, size: CGSize) {
@@ -170,7 +170,7 @@ struct BannerCarouselView: View {
                     Color(.secondarySystemGroupedBackground)
                         .frame(width: itemSize.width, height: itemSize.height)
                         .overlay {
-                            RemoteImageView(url: banner.image, maxPixelSize: 1080, contentMode: .fill) { size in
+                            RemoteImageView(url: banner.image, maxPixelSize: 1080, contentMode: .fit) { size in
                                 updateDetectedRatio(index: idx, size: size)
                             }
                         }
@@ -399,11 +399,11 @@ struct ImageTextSectionsView: View {
         let rawRatio = detectedRatios[index]
             ?? MediaGridView.inferredAspectRatio(from: url)
             ?? 1.85
-        let clamped = max(0.55, min(rawRatio, 2.8))
-        let naturalH = maxStageWidth / clamped
-        let finalH = min(320, max(130, naturalH))
-        let finalW = min(maxStageWidth, max(160, finalH * clamped))
-        return CGSize(width: finalW, height: finalH)
+        let clamped = max(0.45, min(rawRatio, 2.8))
+        let width = min(maxStageWidth, max(160, maxStageWidth))
+        let height = min(420, max(110, width / clamped))
+        let adjustedWidth = min(maxStageWidth, height * clamped)
+        return CGSize(width: adjustedWidth, height: height)
     }
 
     private func updateDetectedRatio(index: Int, size: CGSize) {
@@ -439,7 +439,7 @@ struct ImageTextSectionsView: View {
                     Color(.secondarySystemGroupedBackground)
                         .frame(width: itemSize.width, height: itemSize.height)
                         .overlay {
-                            RemoteImageView(url: section.style, maxPixelSize: 960, contentMode: .fill) { size in
+                            RemoteImageView(url: section.style, maxPixelSize: 960, contentMode: .fit) { size in
                                 updateDetectedRatio(index: idx, size: size)
                             }
                         }
@@ -764,7 +764,7 @@ public struct ProductRowView: View {
 
     public var body: some View {
         Button {
-            appState.push(.product(id: product.id, transitionID: "product-\(transitionSeed)"))
+            appState.push(.product(id: product.id, initialTitle: product.title, transitionID: "product-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: product.logo, maxPixelSize: 160)
@@ -932,7 +932,7 @@ public struct AppRowView: View {
 
     public var body: some View {
         Button {
-            appState.push(.app(id: app.id, transitionID: "app-\(transitionSeed)"))
+            appState.push(.app(id: app.id, initialTitle: app.title, transitionID: "app-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: app.logo, maxPixelSize: 160)
@@ -1013,7 +1013,7 @@ public struct CollectionRowView: View {
 
     public var body: some View {
         Button {
-            appState.push(.collection(id: item.id, transitionID: "col-\(transitionSeed)"))
+            appState.push(.collection(id: item.id, initialTitle: item.title, transitionID: "col-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: item.logo, maxPixelSize: 144)
@@ -1133,7 +1133,7 @@ public struct DyhRowView: View {
     public var body: some View {
         let tid = "dyh-\(transitionSeed)"
         Button {
-            appState.push(.dyh(id: dyh.id, transitionID: tid))
+            appState.push(.dyh(id: dyh.id, initialTitle: dyh.title, transitionID: tid))
         } label: {
             HStack(spacing: 12) {
                 if !dyh.logo.isEmpty {

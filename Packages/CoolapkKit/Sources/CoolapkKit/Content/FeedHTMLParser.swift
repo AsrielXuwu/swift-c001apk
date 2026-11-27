@@ -56,8 +56,12 @@ public enum FeedLink: Hashable, Sendable {
         if let tag = extractSegment(from: normalized, prefix: "/t/") {
             return .topic(tag.removingPercentEncoding ?? tag)
         }
-        if let uid = extractSegment(from: normalized, prefix: "/u/"), isNumericID(uid) {
-            return .user(uid)
+        if let rawUser = extractSegment(from: normalized, prefix: "/u/") {
+            let decodedUser = (rawUser.removingPercentEncoding ?? rawUser).trimmingCharacters(in: .whitespacesAndNewlines)
+            let reserved = ["user", "space", "home", "index", "login", "feedList", "followList", "fansList"]
+            if !decodedUser.isEmpty, !reserved.contains(decodedUser.lowercased()) {
+                return .user(decodedUser)
+            }
         }
         if let fid = extractSegment(from: normalized, prefix: "/feed/"), isNumericID(fid) {
             return .feed(fid)

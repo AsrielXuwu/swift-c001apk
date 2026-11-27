@@ -8,7 +8,7 @@ public struct AppReleaseInfo: Sendable, Equatable {
 }
 
 public enum UpdateChecker: Sendable {
-    public static let releasesAPI = URL(string: "https://api.github.com/repos/TG-Twilight/c001apk/releases/latest")!
+    public static let releasesAPI = URL(string: "https://api.github.com/repos/AsrielXuwu/swift-c001apk/releases/latest")!
 
     public static func fetchLatestRelease() async throws -> AppReleaseInfo? {
         var request = URLRequest(url: releasesAPI)

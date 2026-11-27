@@ -85,6 +85,9 @@ public struct ProfileTabView: View {
                         Image(systemName: "person.2.badge.key")
                     }
                 }
+                NavigationLink(value: AppRoute.about) {
+                    Label("关于 c001apk", systemImage: "info.circle")
+                }
             }
 
             Section("我的内容") {
@@ -119,28 +122,19 @@ public struct ProfileTabView: View {
                     Label("酷安热榜", systemImage: "flame")
                 }
             }
-
-            Section("过滤与设置") {
-                NavigationLink(value: AppRoute.contentFilterSettings) {
-                    Label {
-                        HStack {
-                            Text("屏蔽傻逼内容")
-                            Spacer()
-                            Text(appState.contentFilter.enabled ? appState.contentFilter.level.label : "已关闭")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } icon: {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                    }
-                }
-                NavigationLink(value: AppRoute.settings) {
-                    Label("设置", systemImage: "gearshape")
-                }
-            }
         }
         .listStyle(.insetGrouped)
         .navigationTitle("我的")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    appState.push(.settings)
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("设置")
+            }
+        }
     }
 }

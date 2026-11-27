@@ -26,8 +26,20 @@ public struct AboutView: View {
                 .padding(.vertical, 12)
             }
 
+            Section("作者与交流") {
+                LabeledContent("作者", value: "AsrielXuwu")
+                Link(destination: URL(string: "mailto:asrielxuwu@outlook.com")!) {
+                    LabeledContent("邮箱", value: "asrielxuwu@outlook.com")
+                }
+                Link(destination: URL(string: "https://t.me/swift_c001apk")!) {
+                    LabeledContent("Telegram 群组", value: "t.me/swift_c001apk")
+                }
+                Link("GitHub 仓库 (AsrielXuwu/swift-c001apk)", destination: URL(string: "https://github.com/AsrielXuwu/swift-c001apk")!)
+            }
+
             Section("项目与致谢") {
                 Link("TG-Twilight/c001apk (功能原仓库)", destination: URL(string: "https://github.com/TG-Twilight/c001apk")!)
+                Link("frisk1127/c001apk-Revived (协议与功能参考)", destination: URL(string: "https://github.com/frisk1127/c001apk-Revived")!)
                 Link("Mora-han/coolapk-for-mac (Swift 协议参考)", destination: URL(string: "https://github.com/Mora-han/coolapk-for-mac")!)
                 Link("bggRGjQaUbCoE/c001apk-flutter (上游项目)", destination: URL(string: "https://github.com/bggRGjQaUbCoE/c001apk-flutter")!)
             }

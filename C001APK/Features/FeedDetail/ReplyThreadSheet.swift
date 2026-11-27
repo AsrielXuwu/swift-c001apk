@@ -8,6 +8,8 @@ public struct ReplyThreadSheet: View {
 
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
+    @Namespace private var sheetZoomNamespace
+    @State private var mediaViewer: MediaViewerPresentation?
     @State private var items: [ReplyItem] = []
     @State private var isLoading = true
     @State private var hasLoaded = false
@@ -70,7 +72,7 @@ public struct ReplyThreadSheet: View {
             .refreshable {
                 await loadInitial()
             }
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .c001PageBackground()
             .c001NativeTopBar()
             .navigationTitle("评论详情")
             .navigationBarTitleDisplayMode(.inline)
@@ -92,6 +94,14 @@ public struct ReplyThreadSheet: View {
             .onChange(of: appState.feedRefreshTrigger) { _, _ in
                 Task { await loadInitial() }
             }
+        }
+        .environment(\.zoomNamespace, sheetZoomNamespace)
+        .environment(\.mediaOpenAction) { items, index, sourcePrefix in
+            mediaViewer = MediaViewerPresentation(items: items, initialIndex: index, sourcePrefix: sourcePrefix)
+        }
+        .fullScreenCover(item: $mediaViewer) { presentation in
+            MediaViewerView(presentation: presentation)
+                .environment(\.zoomNamespace, sheetZoomNamespace)
         }
         .overlay {
             ComposeFloatingOverlayHost(composeMode: $threadComposeMode)
@@ -157,9 +167,7 @@ public struct ReplyThreadSheet: View {
                 }
 
                 if !reply.mediaItems.isEmpty {
-                    MediaGridView(items: reply.mediaItems) { idx in
-                        appState.openMedia(reply.mediaItems, at: idx)
-                    }
+                    MediaGridView(items: reply.mediaItems)
                 }
 
                 GlassEffectContainer(spacing: 6) {

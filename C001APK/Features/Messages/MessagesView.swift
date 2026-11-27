@@ -24,7 +24,7 @@ public struct MessagesView: View {
         .scrollPosition(id: $scrolledSegment)
         .scrollClipDisabled()
         .ignoresSafeArea(.container, edges: .bottom)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .c001PageBackground()
         .safeAreaBar(edge: .top, spacing: 0) {
             floatingMessageSegmentStrip
         }

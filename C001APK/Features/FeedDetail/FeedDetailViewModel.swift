@@ -11,6 +11,7 @@ public final class FeedDetailViewModel {
     public var replies: [ReplyItem] = []
     public var answers: [HomeFeedRow] = []
     public var sortMode: ReplySortMode = .lastUpdateDesc
+    public var answerSortMode: AnswerSortMode = .defaultSort
     public var authorOnly = false
     public var isCoinRepliesExpanded = false
     public var temporarilyRevealedFilter = false
@@ -20,12 +21,32 @@ public final class FeedDetailViewModel {
     public private(set) var isRefreshingDetail = false
     public private(set) var isLoadingReplies = false
     public private(set) var isLoadingMoreReplies = false
+    public private(set) var isLoadingAnswers = false
+    public private(set) var isLoadingMoreAnswers = false
     public private(set) var isTogglingAuthorFollow = false
     public private(set) var hasMoreReplies = true
+    public private(set) var hasMoreAnswers = true
     public private(set) var errorMessage: String?
     public private(set) var didCheckScrollDetail = false
 
     private var currentReplyPage = 1
+    private var currentAnswerPage = 1
+
+    public enum AnswerSortMode: String, CaseIterable, Identifiable, Sendable {
+        case defaultSort = "default"
+        case dateline = "dateline"
+        case like = "like"
+
+        public var id: String { rawValue }
+
+        public var label: String {
+            switch self {
+            case .defaultSort: return "默认排序"
+            case .dateline: return "最新发布"
+            case .like: return "最多点赞"
+            }
+        }
+    }
 
     public enum ReplySortMode: String, CaseIterable, Identifiable, Sendable {
         case lastUpdateDesc = "lastupdate_desc"
@@ -60,10 +81,17 @@ public final class FeedDetailViewModel {
             return
         }
 
+        if !forceRefreshDetail,
+           let cached = appState.cachedFeedDetail(id: feedID),
+           feed == nil || appState.verifiedDetailIDs.contains(feedID) {
+            feed = cached
+        }
+
         let initialFeed = feed
         let hadInitialFeed = (initialFeed != nil)
+        let alreadyVerified = !forceRefreshDetail && appState.verifiedDetailIDs.contains(feedID)
         let shouldFetchImmediately = forceRefreshDetail || initialFeed == nil
-        didCheckScrollDetail = shouldFetchImmediately
+        didCheckScrollDetail = shouldFetchImmediately || alreadyVerified || (initialFeed?.needsDetailRefresh == false)
         let hasSzlm = !appState.settings.protocolParameters.szlmID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         repliesDeferred = !hasSzlm && replies.isEmpty
 
@@ -75,13 +103,14 @@ public final class FeedDetailViewModel {
         hasMoreReplies = true
 
         if let initialFeed, !shouldFetchImmediately {
+            appState.cacheFeedDetail(initialFeed, verified: !initialFeed.needsDetailRefresh || alreadyVerified)
             appState.historyAndFav.recordVisit(initialFeed, enabled: appState.settings.recordHistory)
             if !repliesDeferred {
                 await fetchReplies(page: 1, append: false, appState: appState)
             }
             isLoadingReplies = false
-            if initialFeed.kind == .question, answers.isEmpty {
-                answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
+            if initialFeed.kind == .question, (answers.isEmpty || forceRefreshDetail) {
+                await reloadAnswers(appState: appState)
             }
             isLoadingFeed = false
             return
@@ -96,9 +125,10 @@ public final class FeedDetailViewModel {
             withAnimation(.easeInOut(duration: 0.25)) {
                 feed = loaded
             }
+            appState.cacheFeedDetail(loaded, verified: true)
             appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
             if loaded.kind == .question {
-                answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
+                await reloadAnswers(appState: appState)
             }
         }
         isRefreshingDetail = false
@@ -133,16 +163,65 @@ public final class FeedDetailViewModel {
     public func checkDetailConsistencyOnScrollIfNeeded(appState: AppState) async {
         guard !didCheckScrollDetail, let current = feed else { return }
         didCheckScrollDetail = true
-        guard current.needsDetailRefresh else { return }
+        if appState.verifiedDetailIDs.contains(feedID) { return }
+        guard current.needsDetailRefresh else {
+            appState.cacheFeedDetail(current, verified: true)
+            return
+        }
         guard let loaded = await fetchFeedDetail(appState: appState) else { return }
-        guard !Self.isBodyEquivalent(current, loaded) else { return }
+        guard !Self.isBodyEquivalent(current, loaded) else {
+            appState.cacheFeedDetail(current, verified: true)
+            return
+        }
 
         withAnimation(.easeInOut(duration: 0.26)) {
             feed = loaded
         }
+        appState.cacheFeedDetail(loaded, verified: true)
         appState.historyAndFav.recordVisit(loaded, enabled: appState.settings.recordHistory)
         if loaded.kind == .question, answers.isEmpty {
-            answers = (try? await API.questionAnswers(id: feedID, page: 1)) ?? []
+            await reloadAnswers(appState: appState)
+        }
+    }
+
+    public func reloadAnswers(appState: AppState) async {
+        currentAnswerPage = 1
+        hasMoreAnswers = true
+        isLoadingAnswers = true
+        defer { isLoadingAnswers = false }
+        await fetchAnswers(page: 1, append: false, appState: appState)
+    }
+
+    public func loadMoreAnswers(appState: AppState) async {
+        guard !isLoadingAnswers, !isLoadingMoreAnswers, hasMoreAnswers else { return }
+        isLoadingMoreAnswers = true
+        defer { isLoadingMoreAnswers = false }
+        await fetchAnswers(page: currentAnswerPage + 1, append: true, appState: appState)
+    }
+
+    private func fetchAnswers(page: Int, append: Bool, appState: AppState) async {
+        do {
+            let fetched = try await API.questionAnswers(
+                id: feedID,
+                page: page,
+                sort: answerSortMode.rawValue
+            )
+            if append {
+                var seen = Set(answers.map(\.id))
+                let unique = fetched.filter { seen.insert($0.id).inserted }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    answers.append(contentsOf: unique)
+                }
+                hasMoreAnswers = !unique.isEmpty
+            } else {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    answers = fetched
+                }
+                hasMoreAnswers = !fetched.isEmpty
+            }
+            currentAnswerPage = page
+        } catch {
+            _ = await appState.handleAPIError(error)
         }
     }
 
@@ -204,10 +283,14 @@ public final class FeedDetailViewModel {
             if append {
                 var seen = Set(replies.map(\.id))
                 let unique = fetched.filter { seen.insert($0.id).inserted }
-                replies.append(contentsOf: unique)
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    replies.append(contentsOf: unique)
+                }
                 hasMoreReplies = !unique.isEmpty
             } else {
-                replies = fetched
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    replies = fetched
+                }
                 hasMoreReplies = !fetched.isEmpty
             }
             currentReplyPage = page

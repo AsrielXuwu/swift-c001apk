@@ -34,9 +34,9 @@ public struct HomeView: View {
             .scrollPosition(id: $scrolledTab)
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .c001PageBackground()
             .safeAreaBar(edge: .top, spacing: 0) {
-                VStack(spacing: 4) {
+                VStack(spacing: 2) {
                     floatingCategoryStrip(visibleTabs: visibleTabs, activeTab: activeTab, proxy: proxy)
                     if let subCategories = viewModel.subCategoriesByTab[activeTab], !subCategories.isEmpty {
                         subCategoryStrip(categories: subCategories, for: activeTab)
@@ -200,34 +200,17 @@ public struct HomeView: View {
     }
 
     private func subCategoryStrip(categories: [HomeSection], for tab: HomeTabType) -> some View {
-        let currentID = viewModel.selectedSubCategoryByTab[tab]?.id
-        return ScrollView(.horizontal, showsIndicators: false) {
-            GlassEffectContainer(spacing: 6) {
-                HStack(spacing: 6) {
-                    ForEach(categories) { item in
-                        let isSelected = (currentID == item.id)
-                        Button {
-                            Task { await viewModel.selectSubCategory(item, for: tab, appState: appState) }
-                        } label: {
-                            Text(item.title)
-                                .font(.caption.weight(isSelected ? .semibold : .medium))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
-                                    in: Capsule()
-                                )
-                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(4)
-                .glassEffect(.regular.interactive(), in: .capsule)
+        FloatingTabStrip(
+            items: categories,
+            selection: viewModel.selectedSubCategoryByTab[tab],
+            titleProvider: \.title,
+            onSelect: { item in
+                Task { await viewModel.selectSubCategory(item, for: tab, appState: appState) }
+            },
+            onReselect: { item in
+                Task { await viewModel.selectSubCategory(item, for: tab, appState: appState) }
             }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 6)
-        }
+        )
     }
 
     private func floatingCategoryStrip(

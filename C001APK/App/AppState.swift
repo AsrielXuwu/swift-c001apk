@@ -61,8 +61,47 @@ public final class AppState {
     public var homeSelectedTab: HomeTabType = .feed
     public var favoritePickerFeed: FeedItem?
 
+    /// Session-scoped feed detail cache & verification tracking so repeated visits avoid redundant requests/checks.
+    @ObservationIgnored private var cachedFeedDetails: [String: FeedItem] = [:]
+    @ObservationIgnored private var cachedFeedOrder: [String] = []
+    @ObservationIgnored public private(set) var verifiedDetailIDs: Set<String> = []
+    @ObservationIgnored private var modalPushStack: [(id: UUID, handler: (AppRoute) -> Void)] = []
+
     public init() {
         self.showOnboarding = !settings.onboardingCompleted
+    }
+
+    public func cachedFeedDetail(id: String) -> FeedItem? {
+        cachedFeedDetails[id]
+    }
+
+    public func cacheFeedDetail(_ feed: FeedItem, verified: Bool) {
+        let id = feed.effectiveFeedID
+        guard !id.isEmpty else { return }
+        if cachedFeedDetails[id] == nil {
+            cachedFeedOrder.append(id)
+            if cachedFeedOrder.count > 120 {
+                let dropCount = cachedFeedOrder.count - 80
+                for evicted in cachedFeedOrder.prefix(dropCount) {
+                    cachedFeedDetails.removeValue(forKey: evicted)
+                    verifiedDetailIDs.remove(evicted)
+                }
+                cachedFeedOrder.removeFirst(dropCount)
+            }
+        }
+        cachedFeedDetails[id] = feed
+        if verified {
+            verifiedDetailIDs.insert(id)
+        }
+    }
+
+    public func registerModalPush(id: UUID, handler: @escaping (AppRoute) -> Void) {
+        modalPushStack.removeAll { $0.id == id }
+        modalPushStack.append((id: id, handler: handler))
+    }
+
+    public func unregisterModalPush(id: UUID) {
+        modalPushStack.removeAll { $0.id == id }
     }
 
     public func bootstrap() async {
@@ -139,6 +178,9 @@ public final class AppState {
 
     public func notifyAccountSessionChanged() {
         sessionVersion += 1
+        cachedFeedDetails.removeAll()
+        cachedFeedOrder.removeAll()
+        verifiedDetailIDs.removeAll()
         homeNavigationPath.removeAll()
         followNavigationPath.removeAll()
         swipeNavigationPath.removeAll()
@@ -150,6 +192,10 @@ public final class AppState {
     // MARK: - Navigation & Link Routing
 
     public func push(_ route: AppRoute) {
+        if let activeModal = modalPushStack.last {
+            activeModal.handler(route)
+            return
+        }
         switch selectedTab {
         case .home: homeNavigationPath.append(route)
         case .follow: followNavigationPath.append(route)

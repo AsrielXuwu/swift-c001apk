@@ -54,6 +54,7 @@ public struct RootTabView: View {
         .tabViewStyle(.sidebarAdaptable)
         .tabBarMinimizeBehavior(.onScrollDown)
         .environment(\.zoomNamespace, appZoomNamespace)
+        .environment(\.oledPureBlack, appState.settings.useOledPureBlackDarkMode)
         .sheet(isPresented: $state.showOnboarding) {
             OnboardingView()
                 .interactiveDismissDisabled()
@@ -131,39 +132,53 @@ public struct RootTabView: View {
 
     @ViewBuilder
     private func destinationView(for route: AppRoute) -> some View {
+        AppRouteDestinationView(route: route, zoomNamespace: appZoomNamespace)
+    }
+}
+
+public struct AppRouteDestinationView: View {
+    public let route: AppRoute
+    public let zoomNamespace: Namespace.ID?
+
+    public init(route: AppRoute, zoomNamespace: Namespace.ID? = nil) {
+        self.route = route
+        self.zoomNamespace = zoomNamespace
+    }
+
+    public var body: some View {
         switch route {
         case let .feed(id, initial, transitionID):
             FeedDetailView(feedID: id, initialFeed: initial)
                 .c001NativeTopBar()
-                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .user(uid, initialUsername, initialAvatar, transitionID):
             UserDetailView(uid: uid, initialUsername: initialUsername, initialAvatar: initialAvatar)
                 .c001NativeTopBar()
-                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .topic(tag, transitionID):
             TopicDetailView(tag: tag)
                 .c001NativeTopBar()
-                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
-        case let .product(id, transitionID):
-            ProductDetailView(productID: id)
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .product(id, initialTitle, transitionID):
+            ProductDetailView(productID: id, initialTitle: initialTitle)
                 .c001NativeTopBar()
-                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
-        case let .app(id, transitionID):
-            AppDetailView(appID: id)
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .app(id, initialTitle, transitionID):
+            AppDetailView(appID: id, initialTitle: initialTitle)
                 .c001NativeTopBar()
-                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
-        case let .collection(id, transitionID):
-            CollectionDetailView(collectionID: id)
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .collection(id, initialTitle, transitionID):
+            CollectionDetailView(collectionID: id, initialTitle: initialTitle)
                 .c001NativeTopBar()
-                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
-        case let .dyh(id, transitionID):
-            DyhDetailView(dyhID: id)
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .dyh(id, initialTitle, transitionID):
+            DyhDetailView(dyhID: id, initialTitle: initialTitle)
                 .c001NativeTopBar()
-                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .event(id, initial, transitionID):
             EventDetailView(eventID: id, initialEvent: initial)
                 .c001NativeTopBar()
-                .applyZoomTransition(sourceID: transitionID, in: appZoomNamespace)
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .page(link, title):
             PageFeedView(link: link, title: title)
                 .c001NativeTopBar()

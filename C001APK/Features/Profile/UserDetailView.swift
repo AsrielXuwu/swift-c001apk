@@ -25,7 +25,25 @@ public struct UserDetailView: View {
     @State private var profileLoadFailed = false
     @State private var isTogglingFollow = false
     @State private var compactNavProgress: CGFloat = 0
+    @State private var scrollProgressByTab: [UserTab: CGFloat] = [:]
     @State private var tabTasks: [UserTab: Task<Void, Never>] = [:]
+
+    private var resolvedNumericUID: String {
+        if let id = profile?.id, !id.isEmpty {
+            return id
+        }
+        return uid
+    }
+
+    private var displayTitle: String {
+        if let name = profile?.username, !name.isEmpty {
+            return name
+        }
+        if let initialUsername, !initialUsername.isEmpty {
+            return initialUsername
+        }
+        return uid.allSatisfy(\.isNumber) ? "" : uid
+    }
 
     private enum UserTab: String, CaseIterable, Identifiable {
         case feeds = "动态"
@@ -45,52 +63,60 @@ public struct UserDetailView: View {
 
     public var body: some View {
         ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 0) {
-                    ForEach(UserTab.allCases) { item in
-                        tabScrollPage(for: item)
-                            .containerRelativeFrame(.horizontal)
-                            .frame(maxHeight: .infinity)
-                            .id(item)
-                    }
+            VStack(spacing: 0) {
+                CollapsibleEntityHeader(progress: compactNavProgress) {
+                    headerCard
+                        .padding(.top, 8)
+                        .padding(.bottom, 6)
                 }
-                .scrollTargetLayout()
-            }
-            .scrollTargetBehavior(.paging)
-            .scrollPosition(id: $scrolledTab)
-            .scrollClipDisabled()
-            .ignoresSafeArea(.container, edges: .bottom)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
-            .safeAreaBar(edge: .top, spacing: 0) {
-                FloatingTabStrip(
-                    items: UserTab.allCases,
-                    selection: tab,
-                    titleProvider: { $0.rawValue },
-                    onSelect: { selected in
-                        tab = selected
-                    },
-                    onReselect: { current in
-                        withAnimation(.snappy) {
-                            proxy.scrollTo("user-top-\(current.rawValue)", anchor: .top)
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 0) {
+                        ForEach(UserTab.allCases) { item in
+                            tabScrollPage(for: item)
+                                .containerRelativeFrame(.horizontal)
+                                .frame(maxHeight: .infinity)
+                                .id(item)
                         }
                     }
-                )
+                    .scrollTargetLayout()
+                }
+                .scrollTargetBehavior(.paging)
+                .scrollPosition(id: $scrolledTab)
+                .scrollClipDisabled()
+                .safeAreaBar(edge: .top, spacing: 0) {
+                    FloatingTabStrip(
+                        items: UserTab.allCases,
+                        selection: tab,
+                        titleProvider: { $0.rawValue },
+                        onSelect: { selected in
+                            tab = selected
+                        },
+                        onReselect: { current in
+                            withAnimation(.snappy) {
+                                proxy.scrollTo("user-top-\(current.rawValue)", anchor: .top)
+                            }
+                        }
+                    )
+                }
             }
-            .navigationTitle(profile?.username ?? initialUsername ?? "")
+            .ignoresSafeArea(.container, edges: .bottom)
+            .c001PageBackground()
+            .navigationTitle(displayTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if compactNavProgress > 0.08, (profile != nil || initialAvatar != nil) {
                     let loginPrimary = profile?.loginTime.map { "活跃 · \(Formatting.relativeTime($0))" }
-                        ?? (profile?.location.isEmpty == false ? profile!.location : "UID \(uid)")
+                        ?? (profile?.location.isEmpty == false ? profile!.location : "")
                     let deviceSecondary = profile?.deviceTitle.isEmpty == false
                         ? profile!.deviceTitle
-                        : (profile.map { "\(Formatting.count($0.fansNum)) 粉丝" } ?? "酷友主页")
+                        : (profile.map { "\(Formatting.count($0.fansNum)) 粉丝" } ?? "")
                     CollapsedNavEntityToolbar(
                         avatarURL: profile?.avatar ?? initialAvatar ?? "",
                         primaryLine: loginPrimary,
                         secondaryLine: deviceSecondary,
-                        isFollowed: profile.map(isFollowingUser) ?? appState.localFollow.contains(uid: uid),
-                        showFollowButton: profile != nil && uid != appState.accounts.activeUID,
+                        isFollowed: profile.map(isFollowingUser) ?? appState.localFollow.contains(uid: resolvedNumericUID),
+                        showFollowButton: profile != nil && resolvedNumericUID != appState.accounts.activeUID,
                         isDisabled: isTogglingFollow,
                         onTapAvatar: {
                             withAnimation(.snappy) {
@@ -169,6 +195,9 @@ public struct UserDetailView: View {
                         scrolledTab = nextTab
                     }
                 }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    compactNavProgress = scrollProgressByTab[nextTab] ?? 0
+                }
                 startLoadTab(nextTab, force: false)
             }
             .task(id: uid) {
@@ -188,6 +217,9 @@ public struct UserDetailView: View {
     private func startLoadTab(_ targetTab: UserTab, force: Bool) {
         tabTasks[targetTab]?.cancel()
         tabTasks[targetTab] = Task {
+            if profile == nil, !uid.allSatisfy(\.isNumber) {
+                await reloadProfileHeader(showPromptOnCaptcha: false)
+            }
             await reloadTab(targetTab, force: force)
         }
     }
@@ -196,21 +228,23 @@ public struct UserDetailView: View {
         ScrollView {
             Color.clear.frame(height: 0).id("user-top-\(item.rawValue)")
             LazyVStack(alignment: .leading, spacing: 12) {
-                headerCard
-                    .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
-                    .scaleEffect(1.0 - compactNavProgress * 0.03, anchor: .top)
-
                 tabBody(for: item)
             }
-            .padding(.top, 10)
+            .padding(.top, 8)
             .padding(.bottom, 88)
         }
-        .onScrollGeometryChange(for: CGFloat.self) { geo in
-            geo.contentOffset.y + geo.contentInsets.top
-        } action: { _, offset in
+        .onScrollGeometryChange(for: ScrollCollapseMetrics.self) { geo in
+            ScrollCollapseMetrics(
+                offset: geo.contentOffset.y + geo.contentInsets.top,
+                canCollapse: geo.contentSize.height > geo.containerSize.height + 24
+            )
+        } action: { _, metrics in
             guard item == tab else { return }
-            let progress = min(1, max(0, (offset - 44) / 76))
-            if abs(progress - compactNavProgress) > 0.02 {
+            let progress: CGFloat = (!metrics.canCollapse && metrics.offset <= 20)
+                ? 0
+                : min(1, max(0, metrics.offset / 90))
+            scrollProgressByTab[item] = progress
+            if abs(progress - compactNavProgress) > 0.02 || (progress == 0 && compactNavProgress != 0) || (progress == 1 && compactNavProgress != 1) {
                 withAnimation(.easeOut(duration: 0.16)) {
                     compactNavProgress = progress
                 }
@@ -228,29 +262,33 @@ public struct UserDetailView: View {
         return isLocal || isCloud
     }
 
-    @ViewBuilder
     private var headerCard: some View {
-        if let profile {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 14) {
-                    Button {
-                        if !profile.avatar.isEmpty {
-                            appState.openMedia(
-                                [FeedMedia(sourceUrl: profile.avatar)],
-                                at: 0,
-                                sourcePrefix: "user-avatar-\(transitionSeed)"
-                            )
-                        }
-                    } label: {
-                        AvatarView(url: profile.avatar, size: 64)
-                            .applyZoomSource(id: "user-avatar-\(transitionSeed)-0", in: zoomNamespace, cornerRadius: 32)
-                    }
-                    .buttonStyle(.plain)
+        let avatarURL = (profile?.avatar.isEmpty == false ? profile!.avatar : (initialAvatar ?? ""))
+        let shownName = displayTitle
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Text(profile.username)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 14) {
+                Button {
+                    if !avatarURL.isEmpty {
+                        appState.openMedia(
+                            [FeedMedia(sourceUrl: avatarURL)],
+                            at: 0,
+                            sourcePrefix: "user-avatar-\(transitionSeed)"
+                        )
+                    }
+                } label: {
+                    AvatarView(url: avatarURL, size: 64)
+                        .applyZoomSource(id: "user-avatar-\(transitionSeed)-0", in: zoomNamespace, cornerRadius: 32)
+                }
+                .buttonStyle(.plain)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        if !shownName.isEmpty {
+                            Text(shownName)
                                 .font(.title3.weight(.bold))
+                        }
+                        if let profile {
                             Text("Lv.\(profile.level)")
                                 .font(.caption.weight(.semibold))
                                 .padding(.horizontal, 6)
@@ -258,6 +296,9 @@ public struct UserDetailView: View {
                                 .background(Color.accentColor.opacity(0.14), in: Capsule())
                                 .foregroundStyle(Color.accentColor)
                         }
+                    }
+
+                    if let profile {
                         if !profile.verifyLabel.isEmpty {
                             Text(profile.verifyLabel)
                                 .font(.caption)
@@ -268,14 +309,30 @@ public struct UserDetailView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                    }
-                    Spacer()
-
-                    if uid != appState.accounts.activeUID {
-                        followButton(profile: profile)
+                    } else if profileLoadFailed {
+                        Text("资料加载失败")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
+                Spacer()
 
+                if let profile, resolvedNumericUID != appState.accounts.activeUID {
+                    followButton(profile: profile)
+                } else if profileLoadFailed {
+                    Button("重试") {
+                        Task {
+                            await reloadProfileHeader(showPromptOnCaptcha: true)
+                            await reloadTab(tab, force: true)
+                        }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                }
+            }
+
+            if let profile {
                 if !profile.bio.isEmpty {
                     Text(profile.bio)
                         .font(.subheadline)
@@ -293,37 +350,11 @@ public struct UserDetailView: View {
                 .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
             }
-            .padding(16)
-            .c001CardStyle(cornerRadius: 22)
-            .padding(.horizontal, 12)
-        } else {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 14) {
-                    AvatarView(url: initialAvatar ?? "", size: 64)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(initialUsername ?? (profileLoadFailed ? "资料加载失败" : "加载中…"))
-                            .font(.title3.weight(.bold))
-                        Text("UID: \(uid)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if profileLoadFailed {
-                        Button("重试") {
-                            Task {
-                                await reloadProfileHeader(showPromptOnCaptcha: true)
-                            }
-                        }
-                        .font(.caption.weight(.semibold))
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                    }
-                }
-            }
-            .padding(16)
-            .c001CardStyle(cornerRadius: 22)
-            .padding(.horizontal, 12)
         }
+        .padding(16)
+        .c001CardStyle(cornerRadius: 22)
+        .padding(.horizontal, 12)
+        .animation(.easeInOut(duration: 0.2), value: profile?.id)
     }
 
     private func followButton(profile: UserProfile) -> some View {
@@ -455,15 +486,16 @@ public struct UserDetailView: View {
         }
         pageByTab[targetTab] = 1
         hasMoreByTab[targetTab] = true
+        let targetUID = resolvedNumericUID
         do {
             switch targetTab {
             case .feeds:
-                let fetched = try await API.userFeeds(uid: uid, page: 1)
+                let fetched = try await API.userFeeds(uid: targetUID, page: 1)
                 guard !Task.isCancelled else { return }
                 rows = fetched
                 hasMoreByTab[.feeds] = !fetched.isEmpty
             case .likes:
-                let fetched = try await API.userLikeFeeds(uid: uid, page: 1)
+                let fetched = try await API.userLikeFeeds(uid: targetUID, page: 1)
                 guard !Task.isCancelled else { return }
                 likedRows = fetched
                 hasMoreByTab[.likes] = !fetched.isEmpty
@@ -474,7 +506,7 @@ public struct UserDetailView: View {
                     loadedTabs.insert(targetTab)
                     return
                 }
-                let fetched = try await API.collectionList(uid: uid, page: 1)
+                let fetched = try await API.collectionList(uid: targetUID, page: 1)
                 guard !Task.isCancelled else { return }
                 userCollections = fetched
                 hasMoreByTab[.collections] = !fetched.isEmpty
@@ -485,7 +517,7 @@ public struct UserDetailView: View {
                     loadedTabs.insert(targetTab)
                     return
                 }
-                let fetched = try await API.userList(uid: uid, followers: false, page: 1)
+                let fetched = try await API.userList(uid: targetUID, followers: false, page: 1)
                 guard !Task.isCancelled else { return }
                 following = fetched
                 hasMoreByTab[.following] = !fetched.isEmpty
@@ -496,7 +528,7 @@ public struct UserDetailView: View {
                     loadedTabs.insert(targetTab)
                     return
                 }
-                let fetched = try await API.userList(uid: uid, followers: true, page: 1)
+                let fetched = try await API.userList(uid: targetUID, followers: true, page: 1)
                 guard !Task.isCancelled else { return }
                 followers = fetched
                 hasMoreByTab[.fans] = !fetched.isEmpty
@@ -515,34 +547,35 @@ public struct UserDetailView: View {
         loadingMoreTabs.insert(targetTab)
         defer { loadingMoreTabs.remove(targetTab) }
         let next = (pageByTab[targetTab] ?? 1) + 1
+        let targetUID = resolvedNumericUID
         do {
             switch targetTab {
             case .feeds:
-                let fetched = try await API.userFeeds(uid: uid, page: next)
+                let fetched = try await API.userFeeds(uid: targetUID, page: next)
                 var seen = Set(rows.map(\.id))
                 let unique = fetched.filter { seen.insert($0.id).inserted }
                 rows.append(contentsOf: unique)
                 hasMoreByTab[.feeds] = !unique.isEmpty
             case .likes:
-                let fetched = try await API.userLikeFeeds(uid: uid, page: next)
+                let fetched = try await API.userLikeFeeds(uid: targetUID, page: next)
                 var seen = Set(likedRows.map(\.id))
                 let unique = fetched.filter { seen.insert($0.id).inserted }
                 likedRows.append(contentsOf: unique)
                 hasMoreByTab[.likes] = !unique.isEmpty
             case .collections:
-                let fetched = try await API.collectionList(uid: uid, page: next)
+                let fetched = try await API.collectionList(uid: targetUID, page: next)
                 var seen = Set(userCollections.map(\.id))
                 let unique = fetched.filter { seen.insert($0.id).inserted }
                 userCollections.append(contentsOf: unique)
                 hasMoreByTab[.collections] = !unique.isEmpty
             case .following:
-                let fetched = try await API.userList(uid: uid, followers: false, page: next)
+                let fetched = try await API.userList(uid: targetUID, followers: false, page: next)
                 var seen = Set(following.map(\.id))
                 let unique = fetched.filter { seen.insert($0.id).inserted }
                 following.append(contentsOf: unique)
                 hasMoreByTab[.following] = !unique.isEmpty
             case .fans:
-                let fetched = try await API.userList(uid: uid, followers: true, page: next)
+                let fetched = try await API.userList(uid: targetUID, followers: true, page: next)
                 var seen = Set(followers.map(\.id))
                 let unique = fetched.filter { seen.insert($0.id).inserted }
                 followers.append(contentsOf: unique)

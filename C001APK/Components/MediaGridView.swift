@@ -13,6 +13,7 @@ public struct MediaGridView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
     @Environment(\.suppressMediaTap) private var suppressMediaTap
+    @Environment(\.mediaOpenAction) private var mediaOpenAction
     @State private var transitionSeed = UUID().uuidString
     @State private var deckPhase: CGFloat = 0
     @State private var shareFileURL: URL?
@@ -102,10 +103,13 @@ public struct MediaGridView: View {
 
     private func triggerTap(at index: Int) {
         guard !suppressMediaTap else { return }
+        let prefix = "media-\(transitionSeed)"
         if let onTapItem {
             onTapItem(index)
+        } else if let mediaOpenAction {
+            mediaOpenAction(items, index, prefix)
         } else {
-            appState.openMedia(items, at: index, sourcePrefix: "media-\(transitionSeed)")
+            appState.openMedia(items, at: index, sourcePrefix: prefix)
         }
     }
 
@@ -461,10 +465,9 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                             .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
                     }
                     .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: cornerRadius)
+                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
                     .contextMenu {
                         contextMenuBuilder(item, itemIndex)
-                    } preview: {
-                        MediaContextMenuPreview(item: item, disableHDR: disableHDR)
                     }
                     .onTapGesture {
                         guard isFront,
@@ -526,8 +529,6 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                 .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
                 .contextMenu {
                     contextMenuBuilder(activeItem, activeIdx)
-                } preview: {
-                    MediaContextMenuPreview(item: activeItem, disableHDR: disableHDR)
                 }
                 .padding(.leading, leftInset)
                 .padding(.trailing, rightInset)
@@ -630,8 +631,6 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .contextMenu {
             contextMenuBuilder(activeItem, activeIdx)
-        } preview: {
-            MediaContextMenuPreview(item: activeItem, disableHDR: disableHDR)
         }
     }
 

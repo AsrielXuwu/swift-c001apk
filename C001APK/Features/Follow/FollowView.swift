@@ -25,9 +25,9 @@ public struct FollowView: View {
             .scrollPosition(id: $scrolledSegment)
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
-            .background(Color(.systemGroupedBackground).ignoresSafeArea())
+            .c001PageBackground()
             .safeAreaBar(edge: .top, spacing: 0) {
-                VStack(spacing: 6) {
+                VStack(spacing: 2) {
                     floatingSegmentStrip
                     if viewModel.segment == .topics && !viewModel.followedTopics.isEmpty {
                         topicChipsStrip
@@ -83,37 +83,29 @@ public struct FollowView: View {
         )
     }
 
+    private struct FollowTopicChip: Identifiable, Hashable {
+        let id: String
+        let title: String
+    }
+
     private var topicChipsStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            GlassEffectContainer(spacing: 4) {
-                HStack(spacing: 4) {
-                    ForEach(viewModel.followedTopics) { topic in
-                        let selected = viewModel.selectedTopicTag == topic.title
-                        Button {
-                            viewModel.selectedTopicTag = topic.title
-                            Task { await viewModel.loadInitial(segment: .topics, appState: appState, force: true) }
-                        } label: {
-                            Text(TopicItem.cleanTitle(topic.title))
-                                .font(.caption.weight(selected ? .semibold : .medium))
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(
-                                    selected ? Color.accentColor.opacity(0.18) : Color.clear,
-                                    in: Capsule()
-                                )
-                                .foregroundStyle(selected ? Color.accentColor : Color.primary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 5)
-                .padding(.vertical, 4)
-                .glassEffect(.regular, in: .capsule)
-            }
-            .padding(.horizontal, 14)
-            .padding(.top, 2)
-            .padding(.bottom, 6)
+        let items = viewModel.followedTopics.map {
+            FollowTopicChip(id: $0.title, title: TopicItem.cleanTitle($0.title))
         }
+        let selected = items.first { $0.id == viewModel.selectedTopicTag }
+        return FloatingTabStrip(
+            items: items,
+            selection: selected,
+            titleProvider: \.title,
+            onSelect: { chip in
+                viewModel.selectedTopicTag = chip.id
+                Task { await viewModel.loadInitial(segment: .topics, appState: appState, force: true) }
+            },
+            onReselect: { chip in
+                viewModel.selectedTopicTag = chip.id
+                Task { await viewModel.loadInitial(segment: .topics, appState: appState, force: true) }
+            }
+        )
     }
 
     @ViewBuilder

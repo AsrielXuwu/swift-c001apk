@@ -326,6 +326,7 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         case product
         case topic
         case question
+        case answer
         case vote
         case dyh
         case ershou
@@ -382,6 +383,8 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public var rankScore: Int
     public var articleParts: [FeedArticlePart]
     public var vote: VoteInfo?
+    public var questionID: String
+    public var questionTitle: String
     public var questionAnswerNum: Int
     public var topicTags: [String]
     public var topicIDs: [String]
@@ -480,10 +483,23 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         infoText = json.infoHtml.string.isEmpty ? json.info.string : json.infoHtml.string
         feedTypeName = json.feedTypeName.string.isEmpty ? "动态" : json.feedTypeName.string
         rankScore = json.rank_score.int
-        questionAnswerNum = json.question_answer_num.int
+        let parsedType = json.feedType.string
+        let extraDataObj = json.extraData.parsed.isObject ? json.extraData.parsed : (json.extraData.isObject ? json.extraData : JSON.null)
+        let extraQAnswerNum = extraDataObj.questionAnswerNum.int
+        questionAnswerNum = json.question_answer_num.int > 0 ? json.question_answer_num.int : extraQAnswerNum
+        let rawQuestionURL = !json.questionUrl.string.isEmpty ? json.questionUrl.string : extraDataObj.questionUrl.string
+        let extractedQID = Self.extractFeedIDFromURL(rawQuestionURL) ?? ""
+        if parsedType == "answer" || !extractedQID.isEmpty || json.type.int == 11 {
+            let fidCandidate = json.fid.identifier
+            questionID = !extractedQID.isEmpty ? extractedQID : ((fidCandidate.isEmpty || fidCandidate == "0" || fidCandidate == resolvedID) ? "" : fidCandidate)
+        } else {
+            questionID = ""
+        }
+        questionTitle = !extraDataObj.questionTitle.string.isEmpty
+            ? extraDataObj.questionTitle.string
+            : ((!questionID.isEmpty && !json.message_title.string.isEmpty) ? json.message_title.string : (!questionID.isEmpty ? json.title.string : ""))
         changeCount = json.change_count.int
 
-        let parsedType = json.feedType.string
         feedType = parsedType.isEmpty ? "feed" : parsedType
         let isArticle = parsedType == "feedArticle" || json.is_html_article.int > 0
 
@@ -810,11 +826,12 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         case "product": kind = .product
         case "topic": kind = .topic
         case "question": kind = .question
+        case "answer": kind = .answer
         case "vote": kind = .vote
         case "dyh", "dyhArticle": kind = .dyh
         case "ershou": kind = .ershou
         case "feed": kind = isArticle ? .feedArticle : (isSecondHandPost ? .ershou : .feed)
-        default: kind = isSecondHandPost ? .ershou : (parsedType.isEmpty ? .feed : .unknown)
+        default: kind = !questionID.isEmpty ? .answer : (isSecondHandPost ? .ershou : (parsedType.isEmpty ? .feed : .unknown))
         }
 
         if json.targetRow.exists, !json.targetRow.isNull {
@@ -976,6 +993,8 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         rankScore = try c.decodeIfPresent(Int.self, forKey: .rankScore) ?? 0
         articleParts = try c.decodeIfPresent([FeedArticlePart].self, forKey: .articleParts) ?? []
         vote = try c.decodeIfPresent(VoteInfo.self, forKey: .vote)
+        questionID = try c.decodeIfPresent(String.self, forKey: .questionID) ?? ""
+        questionTitle = try c.decodeIfPresent(String.self, forKey: .questionTitle) ?? ""
         questionAnswerNum = try c.decodeIfPresent(Int.self, forKey: .questionAnswerNum) ?? 0
         topicTags = try c.decodeIfPresent([String].self, forKey: .topicTags) ?? []
         topicIDs = try c.decodeIfPresent([String].self, forKey: .topicIDs) ?? []

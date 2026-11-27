@@ -10,6 +10,14 @@ private struct SuppressMediaTapKey: EnvironmentKey {
     static let defaultValue: Bool = false
 }
 
+private struct MediaOpenActionKey: EnvironmentKey {
+    static let defaultValue: (([FeedMedia], Int, String?) -> Void)? = nil
+}
+
+private struct OledPureBlackKey: EnvironmentKey {
+    static let defaultValue: Bool = false
+}
+
 public extension EnvironmentValues {
     var zoomNamespace: Namespace.ID? {
         get { self[ZoomNamespaceKey.self] }
@@ -19,6 +27,68 @@ public extension EnvironmentValues {
     var suppressMediaTap: Bool {
         get { self[SuppressMediaTapKey.self] }
         set { self[SuppressMediaTapKey.self] = newValue }
+    }
+
+    var mediaOpenAction: (([FeedMedia], Int, String?) -> Void)? {
+        get { self[MediaOpenActionKey.self] }
+        set { self[MediaOpenActionKey.self] = newValue }
+    }
+
+    var oledPureBlack: Bool {
+        get { self[OledPureBlackKey.self] }
+        set { self[OledPureBlackKey.self] = newValue }
+    }
+}
+
+public struct C001PageBackgroundModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.oledPureBlack) private var oledPureBlack
+
+    public func body(content: Content) -> some View {
+        let bg: Color = (colorScheme == .dark && oledPureBlack)
+            ? .black
+            : Color(.systemGroupedBackground)
+        content.background(bg.ignoresSafeArea())
+    }
+}
+
+public struct C001CardStyleModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
+
+    public func body(content: Content) -> some View {
+        content
+            .background(
+                Color(.secondarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        Color.primary.opacity(colorScheme == .dark ? 0.11 : 0.05),
+                        lineWidth: 0.6
+                    )
+            }
+    }
+}
+
+public struct C001NestedSurfaceModifier: ViewModifier {
+    let cornerRadius: CGFloat
+    @Environment(\.colorScheme) private var colorScheme
+
+    public func body(content: Content) -> some View {
+        content
+            .background(
+                Color(.tertiarySystemGroupedBackground),
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(
+                        Color.primary.opacity(colorScheme == .dark ? 0.10 : 0.04),
+                        lineWidth: 0.5
+                    )
+            }
     }
 }
 
@@ -50,15 +120,15 @@ public extension View {
     }
 
     func c001CardStyle(cornerRadius: CGFloat = 16) -> some View {
-        self
-            .background(
-                Color(.secondarySystemGroupedBackground),
-                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.05), lineWidth: 0.5)
-            }
+        modifier(C001CardStyleModifier(cornerRadius: cornerRadius))
+    }
+
+    func c001NestedSurface(cornerRadius: CGFloat = 12) -> some View {
+        modifier(C001NestedSurfaceModifier(cornerRadius: cornerRadius))
+    }
+
+    func c001PageBackground() -> some View {
+        modifier(C001PageBackgroundModifier())
     }
 
     func c001NativeTopBar() -> some View {
@@ -78,10 +148,10 @@ public enum AppRoute: Hashable, Sendable {
     case feed(id: String, initial: FeedItem? = nil, transitionID: String? = nil)
     case user(uid: String, initialUsername: String? = nil, initialAvatar: String? = nil, transitionID: String? = nil)
     case topic(tag: String, transitionID: String? = nil)
-    case product(id: String, transitionID: String? = nil)
-    case app(id: String, transitionID: String? = nil)
-    case collection(id: String, transitionID: String? = nil)
-    case dyh(id: String, transitionID: String? = nil)
+    case product(id: String, initialTitle: String? = nil, transitionID: String? = nil)
+    case app(id: String, initialTitle: String? = nil, transitionID: String? = nil)
+    case collection(id: String, initialTitle: String? = nil, transitionID: String? = nil)
+    case dyh(id: String, initialTitle: String? = nil, transitionID: String? = nil)
     case event(id: String, initial: EventItem? = nil, transitionID: String? = nil)
     case page(link: String, title: String)
     case coolpic(tag: String)
@@ -107,10 +177,10 @@ public enum AppRoute: Hashable, Sendable {
         case let .feed(_, _, id),
              let .user(_, _, _, id),
              let .topic(_, id),
-             let .product(_, id),
-             let .app(_, id),
-             let .collection(_, id),
-             let .dyh(_, id),
+             let .product(_, _, id),
+             let .app(_, _, id),
+             let .collection(_, _, id),
+             let .dyh(_, _, id),
              let .event(_, _, id):
             return id
         default:
@@ -119,22 +189,23 @@ public enum AppRoute: Hashable, Sendable {
     }
 
     public static func from(feedLink: FeedLink, preferredTitle: String? = nil, transitionID: String? = nil) -> AppRoute {
+        let cleanTitle = preferredTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let titleArg = (cleanTitle?.isEmpty == false) ? cleanTitle : nil
         switch feedLink {
         case let .topic(tag): return .topic(tag: tag, transitionID: transitionID)
         case let .user(uid): return .user(uid: uid, transitionID: transitionID)
         case let .feed(id): return .feed(id: id, transitionID: transitionID)
-        case let .product(id): return .product(id: id, transitionID: transitionID)
-        case let .app(id): return .app(id: id, transitionID: transitionID)
-        case let .collection(id): return .collection(id: id, transitionID: transitionID)
-        case let .dyh(id): return .dyh(id: id, transitionID: transitionID)
+        case let .product(id): return .product(id: id, initialTitle: titleArg, transitionID: transitionID)
+        case let .app(id): return .app(id: id, initialTitle: titleArg, transitionID: transitionID)
+        case let .collection(id): return .collection(id: id, initialTitle: titleArg, transitionID: transitionID)
+        case let .dyh(id): return .dyh(id: id, initialTitle: titleArg, transitionID: transitionID)
         case let .event(id): return .event(id: id, transitionID: transitionID)
         case let .question(id): return .feed(id: id, transitionID: transitionID)
         case let .vote(id): return .feed(id: id, transitionID: transitionID)
         case let .page(link):
-            let explicit = preferredTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let resolvedTitle = !explicit.isEmpty
-                ? explicit
-                : (FeedLink.inferredPageTitle(from: link) ?? "列表")
+            let resolvedTitle = titleArg
+                ?? FeedLink.inferredPageTitle(from: link)
+                ?? "列表"
             return .page(link: link, title: resolvedTitle)
         case let .web(url): return .web(url: url)
         }

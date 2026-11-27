@@ -64,22 +64,65 @@ private struct WebLoginRepresentable: UIViewRepresentable {
             self.onCapturedCredentials = onCapturedCredentials
         }
 
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            let url = navigationAction.request.url
+            let scheme = url?.scheme?.lowercased() ?? ""
+            if !scheme.isEmpty && scheme != "http" && scheme != "https" && scheme != "about" {
+                decisionHandler(.cancel)
+                return
+            }
+
+            let host = url?.host?.lowercased() ?? ""
+            let isExternalAppRedirect =
+                (!host.isEmpty && !host.contains("coolapk.com") && !host.contains("coolmarket.com") && !host.contains("qq.com") && !host.contains("weibo.com") && !host.contains("alipay.com") && !host.contains("geetest.com"))
+                || (url?.absoluteString.contains("openapp") == true)
+                || (url?.absoluteString.contains("coolmarket") == true)
+
+            Task { @MainActor [weak self] in
+                await self?.captureCookiesIfReady(from: webView)
+                if self?.finished == true || isExternalAppRedirect {
+                    decisionHandler(.cancel)
+                } else {
+                    decisionHandler(.allow)
+                }
+            }
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationResponse: WKNavigationResponse,
+            decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
+        ) {
+            Task { @MainActor [weak self] in
+                await self?.captureCookiesIfReady(from: webView)
+                decisionHandler(self?.finished == true ? .cancel : .allow)
+            }
+        }
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             Task { @MainActor [weak self] in
-                guard let self, !self.finished else { return }
-                let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
-                var map: [String: String] = [:]
-                for cookie in cookies where cookie.domain.contains("coolapk.com") {
-                    map[cookie.name] = cookie.value
-                }
-                if let uid = map["uid"], !uid.isEmpty,
-                   let token = map["token"], !token.isEmpty {
-                    self.finished = true
-                    let rawName = map["username"] ?? uid
-                    let username = rawName.removingPercentEncoding ?? rawName
-                    let sessid = map["SESSID"] ?? ""
-                    self.onCapturedCredentials(uid, username, token, sessid)
-                }
+                await self?.captureCookiesIfReady(from: webView)
+            }
+        }
+
+        private func captureCookiesIfReady(from webView: WKWebView) async {
+            guard !finished else { return }
+            let cookies = await webView.configuration.websiteDataStore.httpCookieStore.allCookies()
+            var map: [String: String] = [:]
+            for cookie in cookies where cookie.domain.contains("coolapk.com") {
+                map[cookie.name] = cookie.value
+            }
+            if let uid = map["uid"], !uid.isEmpty,
+               let token = map["token"], !token.isEmpty {
+                finished = true
+                let rawName = map["username"] ?? uid
+                let username = rawName.removingPercentEncoding ?? rawName
+                let sessid = map["SESSID"] ?? ""
+                onCapturedCredentials(uid, username, token, sessid)
             }
         }
     }

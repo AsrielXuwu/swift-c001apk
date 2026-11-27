@@ -5,6 +5,8 @@ import UIKit
 public struct SwipeDeckView: View {
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
+    @Environment(\.oledPureBlack) private var oledPureBlack
+    @Environment(\.colorScheme) private var colorScheme
     @State private var viewModel = SwipeDeckViewModel()
     @State private var deckPhase: CGFloat = 0
     @State private var dragProgress: CGFloat = 0
@@ -18,7 +20,9 @@ public struct SwipeDeckView: View {
     public var body: some View {
         ZStack {
             LinearGradient(
-                colors: [
+                colors: oledPureBlack && colorScheme == .dark
+                ? [Color.black, Color.black]
+                : [
                     Color(.systemGroupedBackground),
                     appState.settings.accentColor.opacity(0.06),
                     Color(.systemGroupedBackground)
@@ -260,6 +264,8 @@ private struct SwipeFeedCardItemView: View {
 
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
+    @Environment(\.oledPureBlack) private var oledPureBlack
+    @Environment(\.colorScheme) private var colorScheme
     @State private var photoDeckPhase: CGFloat = 0
     @State private var transitionSeed = UUID().uuidString
 
@@ -324,12 +330,18 @@ private struct SwipeFeedCardItemView: View {
                             appState.push(.user(
                                 uid: feed.uid,
                                 initialUsername: feed.username,
-                                initialAvatar: feed.avatar
+                                initialAvatar: feed.avatar,
+                                transitionID: "swipe-avatar-\(feed.id)-\(transitionSeed)"
                             ))
                         }
                     } label: {
                         HStack(spacing: 8) {
                             AvatarView(url: feed.avatar, size: 30)
+                                .applyZoomSource(
+                                    id: "swipe-avatar-\(feed.id)-\(transitionSeed)",
+                                    in: zoomNamespace,
+                                    cornerRadius: 15
+                                )
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(feed.username.isEmpty ? "匿名酷友" : feed.username)
                                     .font(.subheadline.weight(.semibold))
@@ -500,8 +512,6 @@ private struct SwipeFeedCardItemView: View {
                         },
                         onShareFile: onShareFile
                     )
-                } preview: {
-                    MediaContextMenuPreview(item: item, disableHDR: appState.settings.disableHDR)
                 }
 
             if showLive || showHDR || item.isGif || isLong {

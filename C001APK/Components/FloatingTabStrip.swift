@@ -3,14 +3,14 @@ import SwiftUI
 /// Unified horizontal capsule segment strip matching HomeView typography, pill sizing, and Liquid Glass chrome.
 public struct FloatingTabStrip<Item: Identifiable & Hashable>: View where Item.ID: Hashable {
     public let items: [Item]
-    public let selection: Item
+    public let selection: Item?
     public let titleProvider: (Item) -> String
     public var onSelect: (Item) -> Void
     public var onReselect: ((Item) -> Void)?
 
     public init(
         items: [Item],
-        selection: Item,
+        selection: Item?,
         titleProvider: @escaping (Item) -> String,
         onSelect: @escaping (Item) -> Void,
         onReselect: ((Item) -> Void)? = nil
@@ -25,10 +25,10 @@ public struct FloatingTabStrip<Item: Identifiable & Hashable>: View where Item.I
     public var body: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                GlassEffectContainer(spacing: 6) {
-                    HStack(spacing: 6) {
+                GlassEffectContainer(spacing: 8) {
+                    HStack(spacing: 8) {
                         ForEach(items) { item in
-                            let isSelected = (item.id == selection.id)
+                            let isSelected = (selection?.id == item.id)
                             Button {
                                 if isSelected {
                                     onReselect?(item)
@@ -41,26 +41,21 @@ public struct FloatingTabStrip<Item: Identifiable & Hashable>: View where Item.I
                                 Text(titleProvider(item))
                                     .font(.subheadline.weight(isSelected ? .semibold : .medium))
                                     .lineLimit(1)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 7)
-                                    .background(
-                                        isSelected ? Color.accentColor.opacity(0.18) : Color.clear,
-                                        in: Capsule()
-                                    )
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 8)
                                     .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                                    .glassEffect(.regular.interactive(), in: .capsule)
                             }
                             .buttonStyle(.plain)
                             .id(item.id)
                         }
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 5)
-                    .glassEffect(.regular.interactive(), in: .capsule)
                 }
                 .padding(.horizontal, 14)
-                .padding(.vertical, 6)
+                .padding(.vertical, 4)
             }
-            .onChange(of: selection.id) { _, newID in
+            .onChange(of: selection?.id) { _, newID in
+                guard let newID else { return }
                 withAnimation(.snappy(duration: 0.24)) {
                     proxy.scrollTo(newID, anchor: .center)
                 }
@@ -137,5 +132,47 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
                 .accessibilityLabel(isFollowed ? "取消关注" : "关注")
             }
         }
+    }
+}
+
+public struct ScrollCollapseMetrics: Equatable, Sendable {
+    public let offset: CGFloat
+    public let canCollapse: Bool
+
+    public init(offset: CGFloat, canCollapse: Bool) {
+        self.offset = offset
+        self.canCollapse = canCollapse
+    }
+}
+
+public struct CollapsibleEntityHeader<Content: View>: View {
+    public let progress: CGFloat
+    @ViewBuilder public let content: Content
+    @State private var measuredHeight: CGFloat = 0
+
+    public init(progress: CGFloat, @ViewBuilder content: () -> Content) {
+        self.progress = min(1, max(0, progress))
+        self.content = content()
+    }
+
+    public var body: some View {
+        let visibleFraction = max(0, 1 - progress)
+        content
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { geo in
+                geo.size.height
+            } action: { _, newHeight in
+                if newHeight > 1, abs(newHeight - measuredHeight) > 0.5 {
+                    measuredHeight = newHeight
+                }
+            }
+            .scaleEffect(1 - 0.06 * progress, anchor: .top)
+            .opacity(Double(max(0, 1 - progress * 1.25)))
+            .frame(
+                height: measuredHeight > 0 ? measuredHeight * visibleFraction : nil,
+                alignment: .top
+            )
+            .clipped()
+            .allowsHitTesting(progress < 0.85)
     }
 }

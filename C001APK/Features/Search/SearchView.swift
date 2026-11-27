@@ -97,49 +97,55 @@ public struct SearchView: View {
         List {
             Section("按类型搜索（可先指定范围）") {
                 ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(SearchCategory.allCases) { cat in
-                            let selected = viewModel.category == cat
-                            Button {
-                                withAnimation(.snappy(duration: 0.2)) {
-                                    viewModel.category = cat
-                                }
-                            } label: {
-                                Text(cat.label)
-                                    .font(.subheadline.weight(selected ? .semibold : .medium))
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(selected ? Color.accentColor.opacity(0.18) : Color(.secondarySystemFill), in: Capsule())
-                                    .foregroundStyle(selected ? Color.accentColor : Color.primary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
-
-                if viewModel.category == .all {
-                    ScrollView(.horizontal, showsIndicators: false) {
+                    GlassEffectContainer(spacing: 8) {
                         HStack(spacing: 8) {
-                            ForEach(SearchFeedFilter.allCases) { filter in
-                                let selected = viewModel.feedFilter == filter
+                            ForEach(SearchCategory.allCases) { cat in
+                                let selected = viewModel.category == cat
                                 Button {
-                                    withAnimation(.snappy(duration: 0.2)) {
-                                        viewModel.feedFilter = filter
+                                    withAnimation(.snappy(duration: 0.24)) {
+                                        viewModel.category = cat
                                     }
                                 } label: {
-                                    Text(filter.label)
-                                        .font(.caption.weight(selected ? .semibold : .medium))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 5)
-                                        .background(selected ? Color.orange.opacity(0.18) : Color(.tertiarySystemFill), in: Capsule())
-                                        .foregroundStyle(selected ? Color.orange : Color.secondary)
+                                    Text(cat.label)
+                                        .font(.subheadline.weight(selected ? .semibold : .medium))
+                                        .lineLimit(1)
+                                        .padding(.horizontal, 16)
+                                        .padding(.vertical, 8)
+                                        .foregroundStyle(selected ? Color.accentColor : Color.primary)
+                                        .glassEffect(.regular.interactive(), in: .capsule)
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
                         .padding(.vertical, 2)
+                    }
+                }
+                .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+
+                if viewModel.category == .all {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        GlassEffectContainer(spacing: 8) {
+                            HStack(spacing: 8) {
+                                ForEach(SearchFeedFilter.allCases) { filter in
+                                    let selected = viewModel.feedFilter == filter
+                                    Button {
+                                        withAnimation(.snappy(duration: 0.24)) {
+                                            viewModel.feedFilter = filter
+                                        }
+                                    } label: {
+                                        Text(filter.label)
+                                            .font(.subheadline.weight(selected ? .semibold : .medium))
+                                            .lineLimit(1)
+                                            .padding(.horizontal, 16)
+                                            .padding(.vertical, 8)
+                                            .foregroundStyle(selected ? Color.accentColor : Color.primary)
+                                            .glassEffect(.regular.interactive(), in: .capsule)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                        }
                     }
                     .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
                 }
@@ -299,7 +305,7 @@ public struct SearchView: View {
             }
         case let .product(product):
             Button {
-                appState.push(.product(id: product.id))
+                appState.push(.product(id: product.id, initialTitle: product.title))
             } label: {
                 HStack(spacing: 10) {
                     Text("\(rank)")
@@ -346,7 +352,7 @@ public struct SearchView: View {
         .scrollPosition(id: $scrolledCategory)
         .scrollClipDisabled()
         .ignoresSafeArea(.container, edges: .bottom)
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
+        .c001PageBackground()
         .safeAreaBar(edge: .top, spacing: 0) {
             FloatingTabStrip(
                 items: SearchCategory.allCases,

@@ -516,6 +516,9 @@ public enum API: Sendable {
         }
 
         if linkBarTemplates.contains(template) {
+            let selectedTitle = item.extraDataArr.selectedTab.string.isEmpty
+                ? item.extraData.parsed.selectedTab.string
+                : item.extraDataArr.selectedTab.string
             let links = entities.enumerated()
                 .map { offset, entity in
                     let rawURL = entity.url.string.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -532,7 +535,12 @@ public enum API: Sendable {
                     )
                 }
                 .filter { !$0.title.isEmpty }
-            return links.isEmpty ? [] : titled([.linkBar("linkbar-\(index)", links)])
+            if links.isEmpty { return [] }
+            if template == "sortSelectCard" || title == "排序规则" {
+                let rowKey = "sortbar-\(index)-\(selectedTitle)"
+                return [.linkBar(rowKey, links)]
+            }
+            return titled([.linkBar("linkbar-\(index)", links)])
         }
 
         switch template {
@@ -1025,8 +1033,12 @@ public enum API: Sendable {
         return AppItem(json: json.data)
     }
 
-    public static func appComments(id: String, page: Int) async throws -> [HomeFeedRow] {
-        let items = try await client.dataList(url: "#/feed/apkCommentList?isIncludeTop=1&id=\(id)&subTitle=", page: page)
+    public static func appComments(id: String, page: Int, listType: String = "") async throws -> [HomeFeedRow] {
+        var extra: [String: String] = [:]
+        if !listType.isEmpty {
+            extra["listType"] = listType
+        }
+        let items = try await client.dataList(url: "#/feed/apkCommentList?isIncludeTop=1&id=\(id)&subTitle=", page: page, extra: extra)
         return rows(from: items)
     }
 
