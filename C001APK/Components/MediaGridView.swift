@@ -904,6 +904,7 @@ public struct AnimatedGIFView: UIViewRepresentable {
 public struct MediaContextMenuPreview: View {
     public let item: FeedMedia
     public let disableHDR: Bool
+    public var cornerRadius: CGFloat? = nil
 
     @State private var displayResult: LoadedImageResult?
     @State private var liveVideoURL: URL?
@@ -912,9 +913,10 @@ public struct MediaContextMenuPreview: View {
     @State private var playTrigger = 0
     @State private var gifData: Data?
 
-    public init(item: FeedMedia, disableHDR: Bool) {
+    public init(item: FeedMedia, disableHDR: Bool, cornerRadius: CGFloat? = nil) {
         self.item = item
         self.disableHDR = disableHDR
+        self.cornerRadius = cornerRadius
         let initial = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
@@ -1026,6 +1028,7 @@ public struct MediaContextMenuPreview: View {
             }
         }
         .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius ?? 0, style: .continuous))
         .task(id: item.id) {
             showLiveVideo = false
             videoReady = false
@@ -1146,10 +1149,12 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
     func updateUIView(_ uiView: OverlayView, context: Context) {
         uiView.activeCardSize = activeCardSize
         uiView.isUserInteractionEnabled = isEnabled
-        uiView.configureBackingGeometry(
-            size: activeCardSize,
-            cornerRadius: previewConfig?.cornerRadius ?? 18
-        )
+        if !context.coordinator.isPreviewMenuActive {
+            uiView.configureBackingGeometry(
+                size: activeCardSize,
+                cornerRadius: previewConfig?.cornerRadius ?? 18
+            )
+        }
 
         context.coordinator.isEnabled = isEnabled
         context.coordinator.activeCardSize = activeCardSize
@@ -1213,13 +1218,14 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             let iv = UIImageView()
             iv.contentMode = .scaleAspectFill
             iv.clipsToBounds = true
-            iv.alpha = 0.45
+            iv.alpha = 0.70
             iv.isHidden = true
             return iv
         }()
 
         private let blurOverlayView: UIVisualEffectView = {
             let view = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
+            view.alpha = 0.85
             view.isHidden = true
             return view
         }()
@@ -1266,6 +1272,78 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             blurOverlayView.isHidden = !letterbox
             setNeedsLayout()
             layoutIfNeeded()
+        }
+    }
+
+    @MainActor
+    final class MediaContextMenuPreviewController: UIViewController {
+        private let item: FeedMedia
+        private let initialImage: UIImage?
+        private let disableHDR: Bool
+        private let cornerRadius: CGFloat
+        private let appState: AppState
+        private let targetSize: CGSize
+
+        init(
+            item: FeedMedia,
+            initialImage: UIImage?,
+            disableHDR: Bool,
+            cornerRadius: CGFloat,
+            appState: AppState,
+            targetSize: CGSize
+        ) {
+            self.item = item
+            self.initialImage = initialImage
+            self.disableHDR = disableHDR
+            self.cornerRadius = cornerRadius
+            self.appState = appState
+            self.targetSize = targetSize
+            super.init(nibName: nil, bundle: nil)
+            self.preferredContentSize = targetSize
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func loadView() {
+            let root = UIView(frame: CGRect(origin: .zero, size: targetSize))
+            root.backgroundColor = .secondarySystemGroupedBackground
+            root.clipsToBounds = true
+            root.layer.cornerRadius = cornerRadius
+            root.layer.cornerCurve = .continuous
+            self.view = root
+        }
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+
+            let immediateImageView = UIImageView(frame: view.bounds)
+            immediateImageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            immediateImageView.contentMode = .scaleAspectFill
+            immediateImageView.clipsToBounds = true
+            immediateImageView.image = initialImage
+            view.addSubview(immediateImageView)
+
+            let host = UIHostingController(
+                rootView: MediaContextMenuPreview(
+                    item: item,
+                    disableHDR: disableHDR,
+                    cornerRadius: cornerRadius
+                )
+                .environment(appState)
+            )
+            addChild(host)
+            host.view.backgroundColor = .clear
+            host.view.frame = view.bounds
+            host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            host.view.clipsToBounds = true
+            host.view.layer.cornerRadius = cornerRadius
+            host.view.layer.cornerCurve = .continuous
+            view.addSubview(host.view)
+            host.didMove(toParent: self)
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
         }
     }
 
@@ -1389,34 +1467,16 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             return overlay
         }
 
-        private func targetedCardPreview(for overlay: OverlayView, cfg: DeckContextPreviewConfig) -> UITargetedPreview {
-            let targetBounds = overlay.bounds.size.width > 1 && overlay.bounds.size.height > 1
-                ? overlay.bounds
-                : CGRect(origin: .zero, size: activeCardSize)
-            let snapshot = CardBackingSurfaceView(frame: targetBounds)
-            let img = cachedDisplayImage(
-                for: cfg.activeItem,
-                adaptiveContentMode: cfg.adaptiveContentMode,
-                disableHDR: cfg.disableHDR
-            )
-            snapshot.configure(
-                image: img,
-                letterbox: cfg.shouldLetterboxWide,
-                cornerRadius: cfg.cornerRadius
-            )
-
+        private func targetedCardPreview(for overlay: OverlayView, cornerRadius: CGFloat) -> UITargetedPreview {
+            overlay.cardBackingView.applyCornerRadius(cornerRadius)
             let params = UIPreviewParameters()
             params.backgroundColor = .clear
             params.visiblePath = UIBezierPath(
-                cgPath: RoundedRectangle(cornerRadius: cfg.cornerRadius, style: .continuous)
-                    .path(in: snapshot.bounds)
+                cgPath: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .path(in: overlay.cardBackingView.bounds)
                     .cgPath
             )
-            let target = UIPreviewTarget(
-                container: overlay,
-                center: CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY)
-            )
-            return UITargetedPreview(view: snapshot, parameters: params, target: target)
+            return UITargetedPreview(view: overlay.cardBackingView, parameters: params)
         }
 
         func contextMenuInteraction(
@@ -1436,22 +1496,18 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             let appState = cfg.appState
             let hasShareHandler = (cfg.onShareFile != nil)
 
-            // Pre-warm opaque backing surface and hide SwiftUI front card before highlight lift starts.
+            // Pre-commit opaque backing view in window hierarchy before lift begins.
             _ = prepareCardBackingView(cfg: cfg)
-            cfg.onPreviewLiftedChanged(true)
 
             return UIContextMenuConfiguration(identifier: nil) {
-                let host = UIHostingController(
-                    rootView: MediaContextMenuPreview(item: item, disableHDR: disableHDR)
-                        .environment(appState)
+                MediaContextMenuPreviewController(
+                    item: item,
+                    initialImage: cachedImg,
+                    disableHDR: disableHDR,
+                    cornerRadius: cornerRadius,
+                    appState: appState,
+                    targetSize: previewSize
                 )
-                host.preferredContentSize = previewSize
-                host.view.frame = CGRect(origin: .zero, size: previewSize)
-                host.view.backgroundColor = .secondarySystemGroupedBackground
-                host.view.layer.cornerRadius = cornerRadius
-                host.view.layer.cornerCurve = .continuous
-                host.view.clipsToBounds = true
-                return host
             } actionProvider: { [weak self] _ in
                 var actions: [UIAction] = [
                     UIAction(
@@ -1514,12 +1570,10 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration
         ) -> UITargetedPreview? {
             guard let cfg = previewConfig,
-                  let overlay = overlayView else { return nil }
+                  let overlay = prepareCardBackingView(cfg: cfg) else { return nil }
             isPreviewMenuActive = true
             cfg.onPreviewLiftedChanged(true)
-            let preview = targetedCardPreview(for: overlay, cfg: cfg)
-            overlay.cardBackingView.isHidden = true
-            return preview
+            return targetedCardPreview(for: overlay, cornerRadius: cfg.cornerRadius)
         }
 
         func contextMenuInteraction(
@@ -1527,14 +1581,10 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration
         ) -> UITargetedPreview? {
             guard let overlay = overlayView, let cfg = previewConfig else { return nil }
-            return targetedCardPreview(for: overlay, cfg: cfg)
+            return targetedCardPreview(for: overlay, cornerRadius: cfg.cornerRadius)
         }
 
-        private func finishPreviewDismissal() {
-            guard !isPreviewMenuActive else { return }
-            if let cfg = previewConfig, let overlay = prepareCardBackingView(cfg: cfg) {
-                overlay.cardBackingView.isHidden = false
-            }
+        private func completePreviewDismissal() {
             previewConfig?.onPreviewLiftedChanged(false)
             Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: 80_000_000)
@@ -1553,11 +1603,11 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             if let animator {
                 animator.addCompletion { [weak self] in
                     MainActor.assumeIsolated {
-                        self?.finishPreviewDismissal()
+                        self?.completePreviewDismissal()
                     }
                 }
             } else {
-                finishPreviewDismissal()
+                completePreviewDismissal()
             }
         }
     }
