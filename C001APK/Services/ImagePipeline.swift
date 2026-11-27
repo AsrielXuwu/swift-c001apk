@@ -14,14 +14,20 @@ public struct LoadedImageResult: @unchecked Sendable {
 
 private final class SyncImageMemoryStore: @unchecked Sendable {
     let images: NSCache<NSString, UIImage>
+    let latestByURL: NSCache<NSString, UIImage>
     let hdrFlags = NSCache<NSString, NSNumber>()
     let liveFlags = NSCache<NSString, NSNumber>()
 
     init() {
         let cache = NSCache<NSString, UIImage>()
-        cache.countLimit = 450
-        cache.totalCostLimit = 120 * 1024 * 1024
+        cache.countLimit = 650
+        cache.totalCostLimit = 280 * 1024 * 1024
         self.images = cache
+
+        let urlCache = NSCache<NSString, UIImage>()
+        urlCache.countLimit = 650
+        urlCache.totalCostLimit = 180 * 1024 * 1024
+        self.latestByURL = urlCache
     }
 }
 
@@ -30,6 +36,7 @@ public actor ImagePipeline {
     private static let memoryStore = SyncImageMemoryStore()
 
     private var memoryCache: NSCache<NSString, UIImage> { Self.memoryStore.images }
+    private var latestURLCache: NSCache<NSString, UIImage> { Self.memoryStore.latestByURL }
     private var hdrFlagCache: NSCache<NSString, NSNumber> { Self.memoryStore.hdrFlags }
     private var liveFlagCache: NSCache<NSString, NSNumber> { Self.memoryStore.liveFlags }
     private let session: URLSession
@@ -71,6 +78,26 @@ public actor ImagePipeline {
         return LoadedImageResult(image: cached, hasHDRGainMap: isHDR, pixelSize: cached.size)
     }
 
+    /// Synchronously returns any already-decoded image for the same normalized URL regardless of requested target size.
+    /// Used so avatar/cover/stack transitions across screens render on frame 0 without flashing a placeholder.
+    public nonisolated static func cachedAnyImageSync(urlString: String) -> LoadedImageResult? {
+        guard let normalized = normalizedURLStatic(urlString) else { return nil }
+        let urlKey = normalized.absoluteString as NSString
+        if let direct = memoryStore.latestByURL.object(forKey: urlKey) {
+            let isHDR = memoryStore.hdrFlags.object(forKey: urlKey)?.boolValue ?? direct.isHighDynamicRange
+            return LoadedImageResult(image: direct, hasHDRGainMap: isHDR, pixelSize: direct.size)
+        }
+        let candidateSizes: [CGFloat?] = [240, 1080, 960, 1400, 1600, 720, 540, 420, 320, 200, 192, 180, 144, 132, 126, 120, 114, 108, 96, 84, nil]
+        for size in candidateSizes {
+            let key = makeKeyStatic(url: normalized.absoluteString, maxPixelSize: size, preferHDR: false) as NSString
+            if let img = memoryStore.images.object(forKey: key) {
+                let isHDR = memoryStore.hdrFlags.object(forKey: urlKey)?.boolValue ?? img.isHighDynamicRange
+                return LoadedImageResult(image: img, hasHDRGainMap: isHDR, pixelSize: img.size)
+            }
+        }
+        return nil
+    }
+
     public nonisolated static func cachedHDRFlagSync(urlString: String) -> Bool {
         guard let normalized = normalizedURLStatic(urlString) else { return false }
         return memoryStore.hdrFlags.object(forKey: normalized.absoluteString as NSString)?.boolValue ?? false
@@ -94,6 +121,7 @@ public actor ImagePipeline {
 
     public func purgeMemory() {
         memoryCache.removeAllObjects()
+        latestURLCache.removeAllObjects()
         hdrFlagCache.removeAllObjects()
         liveFlagCache.removeAllObjects()
     }
@@ -230,6 +258,7 @@ public actor ImagePipeline {
 
     public func clearAllCaches() {
         memoryCache.removeAllObjects()
+        latestURLCache.removeAllObjects()
         hdrFlagCache.removeAllObjects()
         liveFlagCache.removeAllObjects()
         diskWritesSincePrune = 0
@@ -442,7 +471,9 @@ public actor ImagePipeline {
         }
 
         let cost = Int(finalImage.size.width * finalImage.size.height * finalImage.scale * finalImage.scale * 4)
-        Self.memoryStore.images.setObject(finalImage, forKey: cacheKey as NSString, cost: max(1024, cost))
+        let boundedCost = max(1024, min(cost, 48 * 1024 * 1024))
+        Self.memoryStore.images.setObject(finalImage, forKey: cacheKey as NSString, cost: boundedCost)
+        Self.memoryStore.latestByURL.setObject(finalImage, forKey: urlString as NSString, cost: boundedCost)
         return LoadedImageResult(image: finalImage, hasHDRGainMap: resolvedHDR, pixelSize: finalImage.size)
     }
 

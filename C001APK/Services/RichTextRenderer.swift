@@ -65,7 +65,8 @@ public enum EmojiBundleStore {
     public static func richEmojiText(
         _ raw: String,
         emojiPointSize: CGFloat = 20,
-        showEmoji: Bool = true
+        showEmoji: Bool = true,
+        enableLinks: Bool = true
     ) -> Text {
         let tokens = FeedHTMLParser.tokenize(raw)
         guard !tokens.isEmpty else { return Text("") }
@@ -84,7 +85,7 @@ public enum EmojiBundleStore {
                 }
             case let .text(content, bold, italic, strike, link):
                 var piece: Text
-                if let link, let resolved = resolveLinkURL(link) {
+                if enableLinks, let link, let resolved = resolveLinkURL(link) {
                     var attr = AttributedString(content)
                     attr.link = resolved
                     piece = Text(attr)
@@ -104,7 +105,8 @@ public enum EmojiBundleStore {
         if let url = URL(string: raw), url.scheme != nil {
             return url
         }
-        if let encoded = raw.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+        let allowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "?&=#+"))
+        if let encoded = raw.addingPercentEncoding(withAllowedCharacters: allowed),
            let custom = URL(string: "coolapk-internal://route?target=\(encoded)") {
             return custom
         }
@@ -207,7 +209,8 @@ public enum RichTextRenderer {
         if let url = URL(string: raw), url.scheme != nil {
             return url
         }
-        if let encoded = raw.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+        let allowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "?&=#+"))
+        if let encoded = raw.addingPercentEncoding(withAllowedCharacters: allowed),
            let custom = URL(string: "coolapk-internal://route?target=\(encoded)") {
             return custom
         }

@@ -149,24 +149,26 @@ public struct FollowView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
-                Color.clear.frame(height: 0).id("follow-top-\(seg.rawValue)")
-                LazyVStack(spacing: 10) {
-                    ForEach(Array(segRows.enumerated()), id: \.element.id) { index, row in
-                        HomeRowRenderer(row: row)
-                            .onAppear {
-                                if index >= segRows.count - 4 {
-                                    Task { await viewModel.loadMore(segment: seg, appState: appState) }
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: 0).id("follow-top-\(seg.rawValue)")
+                    LazyVStack(spacing: 10) {
+                        ForEach(Array(segRows.enumerated()), id: \.element.id) { index, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if index >= segRows.count - 4 {
+                                        Task { await viewModel.loadMore(segment: seg, appState: appState) }
+                                    }
                                 }
-                            }
-                    }
+                        }
 
-                    if segLoadingMore {
-                        ProgressView()
-                            .padding(.vertical, 16)
+                        if segLoadingMore {
+                            ProgressView()
+                                .padding(.vertical, 16)
+                        }
                     }
+                    .padding(.top, 2)
+                    .padding(.bottom, 88)
                 }
-                .padding(.top, 8)
-                .padding(.bottom, 88)
             }
             .refreshable {
                 await viewModel.loadInitial(segment: seg, appState: appState, force: true)

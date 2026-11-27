@@ -18,7 +18,14 @@ public enum FeedLink: Hashable, Sendable {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
 
-        var normalized = trimmed
+        if trimmed.hasPrefix("coolapk-internal://route?target="),
+           let comp = URLComponents(string: trimmed),
+           let target = comp.queryItems?.first(where: { $0.name == "target" })?.value,
+           !target.isEmpty {
+            return resolve(target)
+        }
+
+        var normalized = FeedItem.unwrapCoolapkRedirectURL(trimmed)
         if normalized.hasPrefix("coolmarket://") {
             normalized = String(normalized.dropFirst("coolmarket://".count))
         } else if normalized.hasPrefix("coolapk://") {
@@ -50,43 +57,118 @@ public enum FeedLink: Hashable, Sendable {
             }
         }
 
-        if normalized.hasPrefix("/page?url=") || normalized.hasPrefix("page?url=") || normalized.hasPrefix("#/") {
-            return .page(normalized)
+        // Inspect entity routes whether prefixed with `/`, `/v6/`, or `#/`
+        var inspectPath = normalized
+        if inspectPath.hasPrefix("#/") {
+            inspectPath = String(inspectPath.dropFirst(1))
         }
-        if let tag = extractSegment(from: normalized, prefix: "/t/") {
+        if inspectPath.hasPrefix("/v6/") {
+            inspectPath = "/" + String(inspectPath.dropFirst("/v6/".count))
+        }
+
+        let queryDict = parseQueryParameters(from: inspectPath)
+        let pathOnly = inspectPath.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? inspectPath
+        let lowerPath = pathOnly.lowercased()
+
+        // Unwrap `/page?url=...` when the inner target is a direct entity detail link
+        if lowerPath == "/page" || inspectPath.hasPrefix("page?"),
+           let innerURL = queryDict["url"],
+           !innerURL.isEmpty,
+           !innerURL.hasPrefix("V"),
+           let innerResolved = resolve(innerURL) {
+            if case .page = innerResolved {
+                // Keep outer `/page?url=...` so title/extra query params are preserved
+            } else {
+                return innerResolved
+            }
+        }
+
+        // 1. Topic detail links
+        if let tag = extractSegment(from: inspectPath, prefix: "/t/") {
             return .topic(tag.removingPercentEncoding ?? tag)
         }
-        if let rawUser = extractSegment(from: normalized, prefix: "/u/") {
+        if lowerPath == "/topic/tagdetail" || lowerPath == "/topic/newtagdetail",
+           let tag = queryDict["tag"], !tag.isEmpty {
+            return .topic(tag)
+        }
+
+        // 2. User space / profile links (`/u/<uid>`, `/user/<uid>`, `/user/space?uid=`, `/user/profile?uid=`, `/u?uid=`)
+        let reservedUserPaths: Set<String> = [
+            "user", "space", "profile", "home", "index", "login",
+            "feedlist", "followlist", "fanslist", "likelist", "replylist",
+            "replytomelist", "recenthistorylist", "hithistorylist",
+            "dyhsubscribe", "followtaglist", "search"
+        ]
+        if lowerPath == "/user/space" || lowerPath == "/user/profile" || lowerPath == "/u",
+           let uid = queryDict["uid"] ?? queryDict["id"],
+           !uid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return .user(uid.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        if let rawUser = extractSegment(from: inspectPath, prefix: "/u/") ?? extractSegment(from: inspectPath, prefix: "/user/") {
             let decodedUser = (rawUser.removingPercentEncoding ?? rawUser).trimmingCharacters(in: .whitespacesAndNewlines)
-            let reserved = ["user", "space", "home", "index", "login", "feedList", "followList", "fansList"]
-            if !decodedUser.isEmpty, !reserved.contains(decodedUser.lowercased()) {
+            if !decodedUser.isEmpty, !reservedUserPaths.contains(decodedUser.lowercased()) {
                 return .user(decodedUser)
             }
         }
-        if let fid = extractSegment(from: normalized, prefix: "/feed/"), isNumericID(fid) {
-            return .feed(fid)
+
+        // 3. Feed / Reply / Article / Picture / Answer detail links
+        if lowerPath == "/feed/detail" || lowerPath == "/feed/replydetail" || lowerPath == "/feed/replylist" {
+            let targetID = [queryDict["fid"], queryDict["feed_id"], queryDict["feedId"], queryDict["id"]]
+                .compactMap { $0 }
+                .first { isNumericID($0) && $0 != "0" }
+            if let targetID {
+                return .feed(targetID)
+            }
         }
-        if let pid = extractSegment(from: normalized, prefix: "/product/"), isNumericID(pid) {
+        for feedPrefix in ["/feed/", "/picture/", "/dyharticle/", "/answer/"] {
+            if let fid = extractSegmentCaseInsensitive(from: inspectPath, prefix: feedPrefix), isNumericID(fid) {
+                return .feed(fid)
+            }
+        }
+
+        // 4. Product, App, Collection, Dyh, Event, Question, Vote links
+        if lowerPath == "/product/detail", let pid = queryDict["id"], isNumericID(pid) {
             return .product(pid)
         }
-        if let appID = extractSegment(from: normalized, prefix: "/apk/") ?? extractSegment(from: normalized, prefix: "/game/"),
-           !["index", "list", "rankList", "categoryList"].contains(appID) {
+        if let pid = extractSegment(from: inspectPath, prefix: "/product/"), isNumericID(pid) {
+            return .product(pid)
+        }
+        if lowerPath == "/apk/detail" || lowerPath == "/game/detail",
+           let aid = queryDict["id"], !aid.isEmpty {
+            return .app(aid)
+        }
+        if let appID = extractSegment(from: inspectPath, prefix: "/apk/") ?? extractSegment(from: inspectPath, prefix: "/game/"),
+           !["index", "list", "rankList", "categoryList", "detail"].contains(appID) {
             return .app(appID)
         }
-        if let cid = extractSegment(from: normalized, prefix: "/collection/"), isNumericID(cid) {
+        if lowerPath == "/collection/detail", let cid = queryDict["id"], isNumericID(cid) {
             return .collection(cid)
         }
-        if let did = extractSegment(from: normalized, prefix: "/dyh/"), isNumericID(did) {
+        if let cid = extractSegment(from: inspectPath, prefix: "/collection/"), isNumericID(cid) {
+            return .collection(cid)
+        }
+        if lowerPath == "/dyh/detail",
+           let did = queryDict["dyhId"] ?? queryDict["id"], isNumericID(did) {
             return .dyh(did)
         }
-        if let eid = extractSegment(from: normalized, prefix: "/event/"), isNumericID(eid) {
+        if let did = extractSegment(from: inspectPath, prefix: "/dyh/"), isNumericID(did) {
+            return .dyh(did)
+        }
+        if lowerPath == "/event/detail", let eid = queryDict["id"], isNumericID(eid) {
             return .event(eid)
         }
-        if let qid = extractSegment(from: normalized, prefix: "/question/"), isNumericID(qid) {
+        if let eid = extractSegment(from: inspectPath, prefix: "/event/"), isNumericID(eid) {
+            return .event(eid)
+        }
+        if let qid = extractSegment(from: inspectPath, prefix: "/question/"), isNumericID(qid) {
             return .question(qid)
         }
-        if let vid = extractSegment(from: normalized, prefix: "/vote/"), isNumericID(vid) {
+        if let vid = extractSegment(from: inspectPath, prefix: "/vote/"), isNumericID(vid) {
             return .vote(vid)
+        }
+
+        if normalized.hasPrefix("/page?url=") || normalized.hasPrefix("page?url=") || normalized.hasPrefix("#/") {
+            return .page(normalized)
         }
         if normalized.hasPrefix("/") || normalized.hasPrefix("#") {
             return .page(normalized)
@@ -98,6 +180,31 @@ public enum FeedLink: Hashable, Sendable {
             }
         }
         return nil
+    }
+
+    private static func parseQueryParameters(from path: String) -> [String: String] {
+        guard let qIndex = path.firstIndex(of: "?") else { return [:] }
+        let queryString = String(path[path.index(after: qIndex)...])
+        var dict: [String: String] = [:]
+        for pair in queryString.split(separator: "&") {
+            let kv = pair.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+            guard let rawKey = kv.first, !rawKey.isEmpty else { continue }
+            let key = String(rawKey).removingPercentEncoding ?? String(rawKey)
+            let rawVal = kv.count > 1 ? String(kv[1]) : ""
+            let val = rawVal.removingPercentEncoding ?? rawVal
+            if !val.isEmpty {
+                dict[key] = val
+            }
+        }
+        return dict
+    }
+
+    private static func extractSegmentCaseInsensitive(from path: String, prefix: String) -> String? {
+        guard let range = path.range(of: prefix, options: .caseInsensitive) else { return nil }
+        var value = String(path[range.upperBound...])
+        if let queryIndex = value.firstIndex(of: "?") { value = String(value[..<queryIndex]) }
+        if let slashIndex = value.firstIndex(of: "/") { value = String(value[..<slashIndex]) }
+        return value.isEmpty ? nil : value
     }
 
     public static func inferredPageTitle(from link: String) -> String? {

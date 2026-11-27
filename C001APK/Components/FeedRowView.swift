@@ -253,7 +253,7 @@ public struct FeedRowView: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .c001NestedSurface(cornerRadius: 12)
+            .c001NestedSurface(cornerRadius: 16)
         }
         .buttonStyle(.plain)
     }
@@ -289,8 +289,8 @@ public struct FeedRowView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .applyZoomSource(id: "quote-\(transitionSeed)", in: zoomNamespace, cornerRadius: 14)
+        .c001NestedSurface(cornerRadius: 16)
+        .applyZoomSource(id: "quote-\(transitionSeed)", in: zoomNamespace, cornerRadius: 16)
         .onTapGesture {
             if !source.id.isEmpty {
                 appState.push(.feed(id: source.id, transitionID: "quote-\(transitionSeed)"))
@@ -301,19 +301,17 @@ public struct FeedRowView: View {
     // Subview helper kept above is replaced by shared FeedRelationEntitiesView below.
 
     private func hotReplyPreview(_ reply: ReplyItem) -> some View {
-        HStack(alignment: .top, spacing: 6) {
-            Text("\(reply.username)：")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(FeedHTMLParser.plainText(reply.message))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        (Text("\(reply.username)：")
+            .font(.system(size: 13.5 * appState.settings.fontScale, weight: .semibold))
+            .foregroundStyle(Color.primary.opacity(0.82))
+         + Text(FeedHTMLParser.plainText(reply.message))
+            .font(.system(size: 13.5 * appState.settings.fontScale))
+            .foregroundStyle(Color.secondary))
+        .lineLimit(2)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .c001NestedSurface(cornerRadius: 9)
+        .c001NestedSurface(cornerRadius: 14)
     }
 
     private var actionFooter: some View {
@@ -329,7 +327,7 @@ public struct FeedRowView: View {
                     }
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(isLiked ? Color.pink : Color.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 32)
+                    .frame(maxWidth: .infinity, minHeight: 36)
                     .glassEffect(.regular.interactive(), in: .capsule)
                 }
                 .buttonStyle(.plain)
@@ -345,7 +343,7 @@ public struct FeedRowView: View {
                     }
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Color.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 32)
+                    .frame(maxWidth: .infinity, minHeight: 36)
                     .glassEffect(.regular.interactive(), in: .capsule)
                 }
                 .buttonStyle(.plain)
@@ -364,7 +362,7 @@ public struct FeedRowView: View {
                     }
                     .font(.footnote.weight(.medium))
                     .foregroundStyle(Color.secondary)
-                    .frame(maxWidth: .infinity, minHeight: 32)
+                    .frame(maxWidth: .infinity, minHeight: 36)
                     .glassEffect(.regular.interactive(), in: .capsule)
                 }
                 .buttonStyle(.plain)
@@ -493,9 +491,9 @@ public struct SecondHandOrExtraCard: View {
                         if !feed.extraPic.isEmpty {
                             RemoteImageView(url: feed.extraPic, maxPixelSize: 120)
                                 .frame(width: 40, height: 40)
-                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                         } else {
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
                                 .fill((isTrade ? Color.yellow : Color.accentColor).opacity(0.18))
                                 .frame(width: 40, height: 40)
                                 .overlay {
@@ -531,7 +529,7 @@ public struct SecondHandOrExtraCard: View {
                             .foregroundStyle(isTrade ? Color.orange : Color.accentColor)
                     }
                     .padding(10)
-                    .c001NestedSurface(cornerRadius: 12)
+                    .c001NestedSurface(cornerRadius: 16)
                 }
                 .buttonStyle(.plain)
             }
@@ -539,7 +537,7 @@ public struct SecondHandOrExtraCard: View {
         .padding(feed.isSecondHand && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty ? 10 : 0)
         .modifier(ConditionalNestedSurfaceModifier(
             enabled: feed.isSecondHand && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty,
-            cornerRadius: 12
+            cornerRadius: 16
         ))
     }
 
@@ -582,8 +580,10 @@ public struct FeedRelationEntitiesView: View {
     public var style: Style = .card
 
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.oledPureBlack) private var oledPureBlack
+    @State private var chipSeed = UUID().uuidString
 
     public init(entities: [FeedRelationEntity], style: Style = .card) {
         self.entities = entities
@@ -595,11 +595,12 @@ public struct FeedRelationEntitiesView: View {
         let chipHeight: CGFloat = style == .detail ? 30 : 28
         WrappingChipsLayout(spacing: 6, lineSpacing: 6) {
             ForEach(entities) { entity in
+                let chipTID = "relchip-\(chipSeed)-\(entity.id)"
                 Button {
                     if !entity.url.isEmpty {
-                        appState.openRawLink(entity.url, title: entity.title)
+                        appState.openRawLink(entity.url, title: entity.title, transitionID: chipTID)
                     } else {
-                        appState.push(.topic(tag: entity.title))
+                        appState.push(.topic(tag: entity.title, transitionID: chipTID))
                     }
                 } label: {
                     HStack(spacing: 5) {
@@ -632,6 +633,7 @@ public struct FeedRelationEntitiesView: View {
                                 .strokeBorder(Color.white.opacity(oledPureBlack ? 0.14 : 0.08), lineWidth: 0.6)
                         }
                     }
+                    .applyZoomSource(id: chipTID, in: zoomNamespace, cornerRadius: chipHeight * 0.5)
                 }
                 .buttonStyle(.plain)
             }

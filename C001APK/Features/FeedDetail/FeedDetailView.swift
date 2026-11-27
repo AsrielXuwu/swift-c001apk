@@ -309,8 +309,8 @@ public struct FeedDetailView: View {
                         }
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .applyZoomSource(id: "detail-quote-\(detailSeed)", in: zoomNamespace)
+                        .c001NestedSurface(cornerRadius: 16)
+                        .applyZoomSource(id: "detail-quote-\(detailSeed)", in: zoomNamespace, cornerRadius: 16)
                         .onTapGesture {
                             if !source.id.isEmpty {
                                 appState.push(.feed(id: source.id, transitionID: "detail-quote-\(detailSeed)"))
@@ -464,10 +464,14 @@ public struct FeedDetailView: View {
             let itemPrefix = "article-media-\(detailSeed)"
             RemoteImageView(url: media.sourceUrl, maxPixelSize: 1400, contentMode: .fit)
                 .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .applyZoomSource(id: "\(itemPrefix)-\(idx)", in: zoomNamespace, cornerRadius: 12)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .applyZoomSource(id: "\(itemPrefix)-\(idx)", in: zoomNamespace, cornerRadius: 16)
                 .onTapGesture {
                     appState.openMedia(feed.mediaItems, at: idx, sourcePrefix: itemPrefix)
                 }
@@ -479,6 +483,8 @@ public struct FeedDetailView: View {
                         },
                         onShareFile: { articleShareImageURL = $0 }
                     )
+                } preview: {
+                    MediaContextMenuPreview(item: media, disableHDR: appState.settings.disableHDR)
                 }
         }
     }
@@ -498,10 +504,14 @@ public struct FeedDetailView: View {
             }
                 .aspectRatio(resolvedCoverRatio, contentMode: .fit)
                 .frame(maxWidth: .infinity, maxHeight: 360)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace, cornerRadius: 12)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace, cornerRadius: 16)
                 .onTapGesture {
                     appState.openMedia([coverMedia], at: 0, sourcePrefix: coverPrefix)
                 }
@@ -513,6 +523,8 @@ public struct FeedDetailView: View {
                         },
                         onShareFile: { articleShareImageURL = $0 }
                     )
+                } preview: {
+                    MediaContextMenuPreview(item: coverMedia, disableHDR: appState.settings.disableHDR)
                 }
         }
 
@@ -538,13 +550,17 @@ public struct FeedDetailView: View {
                 if !part.url.isEmpty {
                     let partPrefix = "art-\(detailSeed)-\(part.id)"
                     let partMedia = FeedMedia(sourceUrl: part.url, contentId: feed.id, contentType: .article)
-                    VStack(spacing: 4) {
+                    VStack(spacing: 5) {
                         RemoteImageView(url: part.url, maxPixelSize: 1400, contentMode: .fit)
                             .frame(maxWidth: .infinity)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .applyZoomSource(id: "\(partPrefix)-0", in: zoomNamespace, cornerRadius: 10)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                            }
+                            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .applyZoomSource(id: "\(partPrefix)-0", in: zoomNamespace, cornerRadius: 16)
                             .onTapGesture {
                                 appState.openMedia([partMedia], at: 0, sourcePrefix: partPrefix)
                             }
@@ -573,9 +589,9 @@ public struct FeedDetailView: View {
                     } label: {
                         Label(part.title.isEmpty ? part.url : part.title, systemImage: "link")
                             .font(.subheadline)
-                            .padding(10)
+                            .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .c001NestedSurface(cornerRadius: 10)
+                            .c001NestedSurface(cornerRadius: 14)
                     }
                     .buttonStyle(.plain)
                 }
@@ -605,7 +621,7 @@ public struct FeedDetailView: View {
                 .foregroundStyle(.secondary)
         }
         .padding(12)
-        .c001NestedSurface(cornerRadius: 12)
+        .c001NestedSurface(cornerRadius: 16)
     }
 
     private func metadataSummary(_ feed: FeedItem) -> some View {
@@ -814,8 +830,8 @@ public struct FeedDetailView: View {
                                 } label: {
                                     Image(systemName: "bubble.right")
                                         .font(.caption.weight(.medium))
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 4)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
                                         .glassEffect(.regular.interactive(), in: .capsule)
                                         .foregroundStyle(Color.secondary)
                                 }
@@ -829,8 +845,8 @@ public struct FeedDetailView: View {
                                         if reply.likeNum > 0 { Text("\(reply.likeNum)").monospacedDigit() }
                                     }
                                     .font(.caption.weight(.medium))
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
                                     .glassEffect(.regular.interactive(), in: .capsule)
                                     .foregroundStyle(reply.isLiked ? Color.pink : Color.secondary)
                                 }
@@ -866,9 +882,12 @@ public struct FeedDetailView: View {
                         } label: {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(reply.nested.prefix(3)) { sub in
-                                    Text("\(sub.username)：\(FeedHTMLParser.plainText(sub.message))")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    (Text("\(sub.username)：")
+                                        .font(.system(size: 13.5 * appState.settings.fontScale, weight: .semibold))
+                                        .foregroundStyle(Color.primary.opacity(0.85))
+                                     + Text(FeedHTMLParser.plainText(sub.message))
+                                        .font(.system(size: 13.5 * appState.settings.fontScale))
+                                        .foregroundStyle(Color.secondary))
                                         .lineLimit(2)
                                         .frame(maxWidth: .infinity, alignment: .leading)
                                 }
@@ -878,13 +897,13 @@ public struct FeedDetailView: View {
                                         Image(systemName: "chevron.right")
                                             .font(.caption2)
                                     }
-                                    .font(.caption.weight(.semibold))
+                                    .font(.footnote.weight(.semibold))
                                     .foregroundStyle(Color.accentColor)
                                 }
                             }
-                            .padding(11)
+                            .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .c001NestedSurface(cornerRadius: 16)
                         }
                         .buttonStyle(.plain)
                     }

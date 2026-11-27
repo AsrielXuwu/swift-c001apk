@@ -1,6 +1,7 @@
 import CoolapkKit
 import Foundation
 import Observation
+import SwiftUI
 
 public enum MessagesSegment: String, CaseIterable, Identifiable, Sendable {
     case chat = "私信"
@@ -55,6 +56,67 @@ public final class MessagesViewModel {
         }
     }
 
+    public func unreadCount(for targetSegment: MessagesSegment, appState: AppState) -> Int {
+        switch targetSegment {
+        case .chat:
+            if loadedSegments.contains(.chat) {
+                return threads.reduce(0) { $0 + appState.effectiveThreadUnreadCount($1) }
+            }
+            return appState.badge.message
+        case .reply:
+            if loadedSegments.contains(.reply), let items = notificationsBySegment[.reply] {
+                return items.filter { !appState.isNotificationRead($0) }.count
+            }
+            return appState.badge.commentMe
+        case .atMe:
+            if loadedSegments.contains(.atMe), let items = notificationsBySegment[.atMe] {
+                return items.filter { !appState.isNotificationRead($0) }.count
+            }
+            return appState.badge.atMe + appState.badge.atCommentMe
+        case .likes:
+            if loadedSegments.contains(.likes), let items = notificationsBySegment[.likes] {
+                return items.filter { !appState.isNotificationRead($0) }.count
+            }
+            return appState.badge.feedLike
+        case .follow:
+            if loadedSegments.contains(.follow), let items = notificationsBySegment[.follow] {
+                return items.filter { !appState.isNotificationRead($0) }.count
+            }
+            return appState.badge.contactsFollow
+        case .system:
+            if loadedSegments.contains(.system), let items = notificationsBySegment[.system] {
+                return items.filter { !appState.isNotificationRead($0) }.count
+            }
+            return appState.badge.notification
+        }
+    }
+
+    public func totalUnreadCount(appState: AppState) -> Int {
+        MessagesSegment.allCases.reduce(0) { $0 + unreadCount(for: $1, appState: appState) }
+    }
+
+    public func markCurrentSegmentAllRead(appState: AppState) {
+        let items = notificationsBySegment[segment] ?? []
+        appState.markSegmentRead(
+            endpointType: segment.notificationEndpointType,
+            threads: threads,
+            notifications: items
+        )
+        appState.showToast("已将「\(segment.rawValue)」标为已读")
+    }
+
+    public func markAllSegmentsRead(appState: AppState) {
+        var mapped: [String: [NotificationItem]] = [:]
+        for (seg, list) in notificationsBySegment {
+            mapped[seg.rawValue] = list
+        }
+        appState.markAllMessagesAndNotificationsRead(
+            threads: threads,
+            notificationsBySegment: mapped
+        )
+        appState.showToast("已将全部消息标为已读")
+    }
+
     public func loadInitial(segment targetSegment: MessagesSegment, appState: AppState, force: Bool = false) async {
         syncSessionIfNeeded(appState: appState)
         guard appState.accounts.isLoggedIn else {
@@ -92,7 +154,9 @@ public final class MessagesViewModel {
     public func deleteThread(_ thread: MessageThread, appState: AppState) async {
         do {
             try await API.deleteMessageThread(ukey: thread.ukey)
-            threads.removeAll { $0.id == thread.id }
+            withAnimation(.snappy(duration: 0.22)) {
+                threads.removeAll { $0.id == thread.id }
+            }
             appState.showToast("已删除会话")
         } catch {
             _ = await appState.handleAPIError(error)
@@ -108,24 +172,37 @@ public final class MessagesViewModel {
                 if append {
                     var seen = Set(threads.map(\.id))
                     let unique = items.filter { seen.insert($0.id).inserted }
-                    threads.append(contentsOf: unique)
+                    withAnimation(.smooth(duration: 0.24)) {
+                        threads.append(contentsOf: unique)
+                    }
                     hasMoreBySegment[targetSegment] = !unique.isEmpty
                 } else {
-                    threads = items
+                    withAnimation(.smooth(duration: 0.24)) {
+                        threads = items
+                    }
                     hasMoreBySegment[targetSegment] = !items.isEmpty
                 }
                 pageBySegment[targetSegment] = page
             } else {
                 let items = try await API.notifications(type: targetSegment.notificationEndpointType, page: page)
                 guard expectedSession == appState.sessionVersion else { return }
+                for item in items {
+                    if let initialFeed = item.initialFeed {
+                        appState.cacheFeedDetail(initialFeed, verified: false)
+                    }
+                }
                 if append {
                     let current = notificationsBySegment[targetSegment] ?? []
                     var seen = Set(current.map(\.id))
                     let unique = items.filter { seen.insert($0.id).inserted }
-                    notificationsBySegment[targetSegment] = current + unique
+                    withAnimation(.smooth(duration: 0.24)) {
+                        notificationsBySegment[targetSegment] = current + unique
+                    }
                     hasMoreBySegment[targetSegment] = !unique.isEmpty
                 } else {
-                    notificationsBySegment[targetSegment] = items
+                    withAnimation(.smooth(duration: 0.24)) {
+                        notificationsBySegment[targetSegment] = items
+                    }
                     hasMoreBySegment[targetSegment] = !items.isEmpty
                 }
                 pageBySegment[targetSegment] = page

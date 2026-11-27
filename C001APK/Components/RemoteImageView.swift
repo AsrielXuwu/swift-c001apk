@@ -1,3 +1,4 @@
+import CoolapkKit
 import SwiftUI
 
 public struct RemoteImageView: View {
@@ -19,7 +20,7 @@ public struct RemoteImageView: View {
         honorHDR: Bool = false,
         onImageLoaded: ((CGSize) -> Void)? = nil
     ) {
-        self.url = url
+        self.url = coolapkNormalizedURL(url.trimmingCharacters(in: .whitespacesAndNewlines))
         self.maxPixelSize = maxPixelSize
         self.contentMode = contentMode
         self.honorHDR = honorHDR
@@ -31,6 +32,8 @@ public struct RemoteImageView: View {
         let taskKey = "\(url)|\(Int(maxPixelSize ?? 0))|\(shouldHDR)"
         let activeLoaded = (loadedKey == taskKey ? loaded : nil)
             ?? ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: maxPixelSize, preferHDR: shouldHDR)
+            ?? ImagePipeline.cachedAnyImageSync(urlString: url)
+            ?? loaded
 
         Group {
             if let activeLoaded {
@@ -55,8 +58,9 @@ public struct RemoteImageView: View {
         .task(id: taskKey) {
             guard !url.isEmpty else {
                 loadedKey = taskKey
-                loaded = nil
-                didFail = true
+                if loaded == nil {
+                    didFail = true
+                }
                 return
             }
             if let sync = ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: maxPixelSize, preferHDR: shouldHDR) {
@@ -66,22 +70,21 @@ public struct RemoteImageView: View {
                 onImageLoaded?(sync.image.size)
                 return
             }
+            if let anyCached = ImagePipeline.cachedAnyImageSync(urlString: url), loaded == nil {
+                loaded = anyCached
+                onImageLoaded?(anyCached.image.size)
+            }
             didFail = false
             let fetched = await ImagePipeline.shared.loadImage(urlString: url, maxPixelSize: maxPixelSize, preferHDR: shouldHDR)
             guard !Task.isCancelled else { return }
-            loadedKey = taskKey
-            loaded = fetched
             if let fetched {
+                loadedKey = taskKey
+                loaded = fetched
                 onImageLoaded?(fetched.image.size)
-            } else {
+            } else if loaded == nil {
+                loadedKey = taskKey
                 didFail = true
             }
-        }
-        .onDisappear {
-            // Release per-view strong UIImage retain once buried offscreen in deep NavigationStacks;
-            // synchronous NSCache lookup in body restores images immediately without flicker on pop.
-            loaded = nil
-            loadedKey = ""
         }
     }
 }
@@ -91,12 +94,14 @@ public struct AvatarView: View {
     public var size: CGFloat = 36
 
     public init(url: String, size: CGFloat = 36) {
-        self.url = url
+        self.url = coolapkNormalizedURL(url.trimmingCharacters(in: .whitespacesAndNewlines))
         self.size = size
     }
 
     public var body: some View {
-        RemoteImageView(url: url, maxPixelSize: size * 3)
+        // Use a unified 240px decode target across all avatar sizes (28pt..64pt) so navigating
+        // from feed rows, comments, or chat bubbles into UserDetailView always hits NSCache synchronously.
+        RemoteImageView(url: url, maxPixelSize: 240)
             .frame(width: size, height: size)
             .clipShape(Circle())
             .overlay {

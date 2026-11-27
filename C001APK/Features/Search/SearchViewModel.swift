@@ -1,6 +1,7 @@
 import CoolapkKit
 import Foundation
 import Observation
+import SwiftUI
 
 public enum SearchCategory: String, CaseIterable, Identifiable, Sendable {
     case all = "feed"
@@ -202,10 +203,14 @@ public final class SearchViewModel {
                 if append {
                     var seen = Set(dyhResults.map(\.id))
                     let unique = parsed.filter { seen.insert($0.id).inserted }
-                    dyhResults.append(contentsOf: unique)
+                    withAnimation(.smooth(duration: 0.24)) {
+                        dyhResults.append(contentsOf: unique)
+                    }
                     hasMoreByCategory[targetCategory] = !unique.isEmpty
                 } else {
-                    dyhResults = parsed
+                    withAnimation(.smooth(duration: 0.24)) {
+                        dyhResults = parsed
+                    }
                     hasMoreByCategory[targetCategory] = !parsed.isEmpty
                 }
                 pageByCategory[targetCategory] = page
@@ -215,10 +220,14 @@ public final class SearchViewModel {
                     let existing = rowsByCategory[targetCategory] ?? []
                     var seen = Set(existing.map(\.id))
                     let unique = parsed.filter { seen.insert($0.id).inserted }
-                    rowsByCategory[targetCategory] = existing + unique
+                    withAnimation(.smooth(duration: 0.24)) {
+                        rowsByCategory[targetCategory] = existing + unique
+                    }
                     hasMoreByCategory[targetCategory] = !unique.isEmpty
                 } else {
-                    rowsByCategory[targetCategory] = parsed
+                    withAnimation(.smooth(duration: 0.24)) {
+                        rowsByCategory[targetCategory] = parsed
+                    }
                     hasMoreByCategory[targetCategory] = !parsed.isEmpty
                 }
                 pageByCategory[targetCategory] = page

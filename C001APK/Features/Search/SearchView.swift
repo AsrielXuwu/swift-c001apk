@@ -282,6 +282,7 @@ public struct SearchView: View {
             }
         case let .topic(topic):
             Button {
+                appState.cacheTopicDetail(topic)
                 appState.push(.topic(tag: topic.title))
             } label: {
                 HStack(spacing: 10) {
@@ -307,6 +308,7 @@ public struct SearchView: View {
             }
         case let .product(product):
             Button {
+                appState.cacheProductDetail(product)
                 appState.push(.product(id: product.id, initialTitle: product.title))
             } label: {
                 HStack(spacing: 10) {
@@ -422,7 +424,6 @@ public struct SearchView: View {
                         ProgressView().padding(.vertical, 16)
                     }
                 }
-                .padding(.top, 8)
                 .padding(.bottom, 88)
             }
             .refreshable {

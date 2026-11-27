@@ -28,8 +28,8 @@ public struct UserProfile: Identifiable, Hashable, Sendable {
     public init(json: JSON) {
         id = json.uid.exists ? json.uid.identifier : json.entityId.identifier
         username = json.username.string
-        avatar = json.userAvatar.string.isEmpty ? json.userBigAvatar.string : json.userAvatar.string
-        cover = json.cover.string
+        avatar = coolapkNormalizedURL(json.userAvatar.string.isEmpty ? json.userBigAvatar.string : json.userAvatar.string)
+        cover = coolapkNormalizedURL(json.cover.string)
         bio = json.bio.string.isEmpty ? json.signature.string : json.bio.string
         level = json.level.int
         experience = json.experience.int
@@ -88,7 +88,7 @@ public struct UserBrief: Identifiable, Hashable, Sendable {
     public init(json: JSON) {
         id = json.uid.exists ? json.uid.identifier : json.entityId.identifier
         username = json.username.string
-        avatar = json.userAvatar.string.isEmpty ? json.avatar.string : json.userAvatar.string
+        avatar = coolapkNormalizedURL(json.userAvatar.string.isEmpty ? json.avatar.string : json.userAvatar.string)
         level = json.level.int
         let followFlag = json.isFollowed.exists
             ? json.isFollowed
@@ -173,7 +173,7 @@ public struct AppItem: Identifiable, Hashable, Sendable {
         id = json.id.exists ? json.id.identifier : json.entityId.identifier
         title = json.title.string
         subtitle = json.shorttitle.string.isEmpty ? json.subtitle.string : json.shorttitle.string
-        logo = json.logo.string
+        logo = coolapkNormalizedURL(json.logo.string)
         score = json.score.string
         size = json.apksize.string
         version = json.apkversionname.string.isEmpty ? json.version.string : json.apkversionname.string
@@ -207,7 +207,7 @@ public struct BrowseItem: Identifiable, Hashable, Sendable {
         id = json.id.exists ? json.id.identifier : json.entityId.identifier
         title = json.title.string
         subtitle = json.description.string
-        logo = json.logo.string.isEmpty ? json.pic.string : json.logo.string
+        logo = coolapkNormalizedURL(json.logo.string.isEmpty ? json.pic.string : json.logo.string)
         url = json.url.string
         kindTitle = json.typeName.string.isEmpty ? json.target_type_title.string : json.typeName.string
         let stamp = json.dateline.exists ? json.dateline.double : json.lastupdate.double
@@ -513,7 +513,7 @@ public struct ProductItem: Identifiable, Hashable, Sendable {
         id = json.id.exists ? json.id.identifier : json.entityId.identifier
         title = json.title.string
         subtitle = json.sub_title.string.isEmpty ? json.description.string : json.sub_title.string
-        logo = json.logo.string.isEmpty ? json.pic.string : json.logo.string
+        logo = coolapkNormalizedURL(json.logo.string.isEmpty ? json.pic.string : json.logo.string)
         cover = json.cover.string.isEmpty ? (json.coverArr.array.first?.string ?? "") : json.cover.string
         description = json.description.string.isEmpty ? json.introduce.string : json.description.string
         recommendReason = json.recommend_reason.string
@@ -594,7 +594,7 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
         id = json.id.exists ? json.id.identifier : json.entityId.identifier
         title = Self.cleanTitle(json.title.string)
         description = json.description.string
-        logo = json.logo.string.isEmpty ? json.pic.string : json.logo.string
+        logo = coolapkNormalizedURL(json.logo.string.isEmpty ? json.pic.string : json.logo.string)
         let rawFeedTxt = [
             json.commentnum_txt.string,
             json.feed_comment_num_txt.string,
@@ -673,9 +673,9 @@ public struct CollectionItem: Identifiable, Hashable, Sendable {
         title = json.title.string
         subtitle = json.sub_title.string
         description = json.description.string.isEmpty ? json.intro.string : json.description.string
-        logo = json.logo.string.isEmpty ? json.pic.string : json.logo.string
+        logo = coolapkNormalizedURL(json.logo.string.isEmpty ? json.pic.string : json.logo.string)
         username = json.username.string.isEmpty ? json.userInfo.username.string : json.username.string
-        avatar = json.userAvatar.string.isEmpty ? json.userInfo.userAvatar.string : json.userAvatar.string
+        avatar = coolapkNormalizedURL(json.userAvatar.string.isEmpty ? json.userInfo.userAvatar.string : json.userAvatar.string)
         uid = json.uid.identifier.isEmpty ? json.userInfo.uid.identifier : json.uid.identifier
         itemNum = json.item_num.int
         followNum = json.follow_num.int
@@ -701,9 +701,9 @@ public struct DyhItem: Identifiable, Hashable, Sendable {
         id = json.id.exists ? json.id.identifier : json.dyh_id.identifier
         title = json.title.string
         description = json.description.string
-        logo = json.logo.string.isEmpty ? json.pic.string : json.logo.string
+        logo = coolapkNormalizedURL(json.logo.string.isEmpty ? json.pic.string : json.logo.string)
         username = json.username.string
-        avatar = json.userAvatar.string
+        avatar = coolapkNormalizedURL(json.userAvatar.string)
         uid = json.uid.identifier
         followNum = json.follownum.int
         likeNum = json.likenum.int

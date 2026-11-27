@@ -764,12 +764,17 @@ public struct ProductRowView: View {
 
     public var body: some View {
         Button {
+            appState.cacheProductDetail(product)
             appState.push(.product(id: product.id, initialTitle: product.title, transitionID: "product-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: product.logo, maxPixelSize: 160)
                     .frame(width: 48, height: 48)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(product.title)
                         .font(.body.weight(.medium))
@@ -808,12 +813,17 @@ public struct TopicRowView: View {
 
     public var body: some View {
         Button {
+            appState.cacheTopicDetail(topic)
             appState.push(.topic(tag: topic.title, transitionID: "topic-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: topic.logo, maxPixelSize: 144)
-                    .frame(width: 44, height: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .frame(width: 46, height: 46)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(TopicItem.cleanTitle(topic.title))
                         .font(.body.weight(.medium))
@@ -932,12 +942,17 @@ public struct AppRowView: View {
 
     public var body: some View {
         Button {
+            appState.cacheAppDetail(app)
             appState.push(.app(id: app.id, initialTitle: app.title, transitionID: "app-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: app.logo, maxPixelSize: 160)
                     .frame(width: 48, height: 48)
-                    .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(app.title)
                         .font(.body.weight(.medium))
@@ -1013,12 +1028,17 @@ public struct CollectionRowView: View {
 
     public var body: some View {
         Button {
+            appState.cacheCollectionDetail(item)
             appState.push(.collection(id: item.id, initialTitle: item.title, transitionID: "col-\(transitionSeed)"))
         } label: {
             HStack(spacing: 12) {
                 RemoteImageView(url: item.logo, maxPixelSize: 144)
-                    .frame(width: 44, height: 44)
-                    .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                    .frame(width: 46, height: 46)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    }
                 VStack(alignment: .leading, spacing: 3) {
                     Text(item.title)
                         .font(.body.weight(.medium))
@@ -1067,8 +1087,8 @@ public struct EventRowView: View {
                             RemoteImageView(url: event.cover, maxPixelSize: 960)
                         }
                         .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -1133,6 +1153,7 @@ public struct DyhRowView: View {
     public var body: some View {
         let tid = "dyh-\(transitionSeed)"
         Button {
+            appState.cacheDyhDetail(dyh)
             appState.push(.dyh(id: dyh.id, initialTitle: dyh.title, transitionID: tid))
         } label: {
             HStack(spacing: 12) {

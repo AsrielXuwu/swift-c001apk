@@ -1,6 +1,7 @@
 import CoolapkKit
 import Foundation
 import Observation
+import SwiftUI
 
 public enum FollowSegment: String, CaseIterable, Identifiable, Sendable {
     case all = "全部"
@@ -165,17 +166,21 @@ public final class FollowViewModel {
                 let current = rowsBySegment[targetSegment] ?? []
                 var existing = Set(current.map(\.id))
                 let unique = loaded.filter { existing.insert($0.id).inserted }
-                rowsBySegment[targetSegment] = current + unique
+                withAnimation(.smooth(duration: 0.24)) {
+                    rowsBySegment[targetSegment] = current + unique
+                }
                 if unique.isEmpty {
                     hasMoreBySegment[targetSegment] = false
                 } else {
                     pageBySegment[targetSegment] = page
                 }
             } else {
-                rowsBySegment[targetSegment] = loaded
+                withAnimation(.smooth(duration: 0.24)) {
+                    rowsBySegment[targetSegment] = loaded
+                    loadedSegments.insert(targetSegment)
+                }
                 hasMoreBySegment[targetSegment] = !loaded.isEmpty
                 pageBySegment[targetSegment] = page
-                loadedSegments.insert(targetSegment)
             }
         } catch {
             guard !Task.isCancelled, expectedSession == appState.sessionVersion else { return }

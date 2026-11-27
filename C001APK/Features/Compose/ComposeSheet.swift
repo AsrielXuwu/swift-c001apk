@@ -160,7 +160,7 @@ public struct ComposeSheet: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.subheadline.weight(.semibold))
-                        .frame(width: 34, height: 34)
+                        .frame(width: 38, height: 38)
                         .glassEffect(.regular.interactive(), in: .circle)
                         .foregroundStyle(.primary)
                 }
@@ -172,7 +172,7 @@ public struct ComposeSheet: View {
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.subheadline.weight(.semibold))
-                        .frame(width: 34, height: 34)
+                        .frame(width: 38, height: 38)
                         .glassEffect(.regular.interactive(), in: .circle)
                         .foregroundStyle(.primary)
                 }
@@ -190,7 +190,7 @@ public struct ComposeSheet: View {
             if activePanel == .compose {
                 if viewModel.isSubmitting {
                     ProgressView()
-                        .frame(width: 58, height: 34)
+                        .frame(width: 62, height: 38)
                 } else {
                     Button {
                         Task {
@@ -206,7 +206,7 @@ public struct ComposeSheet: View {
                                 .font(.subheadline.weight(.semibold))
                         }
                         .padding(.horizontal, 12)
-                        .frame(height: 34)
+                        .frame(height: 38)
                         .background(Color.accentColor.opacity(0.18), in: Capsule())
                         .glassEffect(.regular.interactive(), in: .capsule)
                         .foregroundStyle(Color.accentColor)
@@ -214,7 +214,7 @@ public struct ComposeSheet: View {
                     .buttonStyle(.plain)
                 }
             } else {
-                Color.clear.frame(width: 34, height: 34)
+                Color.clear.frame(width: 38, height: 38)
             }
         }
     }
@@ -437,8 +437,8 @@ public struct ComposeSheet: View {
                 if allowsImages {
                     PhotosPicker(selection: $photoItems, maxSelectionCount: 9, matching: .images) {
                         Image(systemName: "photo")
-                            .font(.subheadline.weight(.semibold))
-                            .frame(width: 38, height: 38)
+                            .font(.body.weight(.semibold))
+                            .frame(width: 42, height: 42)
                             .glassEffect(.regular.interactive(), in: .circle)
                             .foregroundStyle(.primary)
                     }
@@ -455,8 +455,8 @@ public struct ComposeSheet: View {
                     }
                 } label: {
                     Image(systemName: showEmojiPanel ? "keyboard" : "face.smiling")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(width: 38, height: 38)
+                        .font(.body.weight(.semibold))
+                        .frame(width: 42, height: 42)
                         .glassEffect(.regular.interactive(), in: .circle)
                         .foregroundStyle(showEmojiPanel ? Color.accentColor : Color.primary)
                 }
@@ -466,8 +466,8 @@ public struct ComposeSheet: View {
                     switchToPanel(.mentionUser)
                 } label: {
                     Image(systemName: "at")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(width: 38, height: 38)
+                        .font(.body.weight(.semibold))
+                        .frame(width: 42, height: 42)
                         .glassEffect(.regular.interactive(), in: .circle)
                         .foregroundStyle(.primary)
                 }
@@ -477,8 +477,8 @@ public struct ComposeSheet: View {
                     switchToPanel(.mentionTopic)
                 } label: {
                     Image(systemName: "number")
-                        .font(.subheadline.weight(.semibold))
-                        .frame(width: 38, height: 38)
+                        .font(.body.weight(.semibold))
+                        .frame(width: 42, height: 42)
                         .glassEffect(.regular.interactive(), in: .circle)
                         .foregroundStyle(.primary)
                 }

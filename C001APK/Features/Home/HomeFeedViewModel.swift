@@ -1,6 +1,7 @@
 import CoolapkKit
 import Foundation
 import Observation
+import SwiftUI
 
 @MainActor
 @Observable
@@ -143,14 +144,18 @@ public final class HomeFeedViewModel {
                 let current = rowsByTab[tab] ?? []
                 var seen = Set(current.map(\.id))
                 let unique = loaded.filter { seen.insert($0.id).inserted }
-                rowsByTab[tab] = current + unique
+                withAnimation(.smooth(duration: 0.24)) {
+                    rowsByTab[tab] = current + unique
+                }
                 if unique.isEmpty {
                     hasMoreByTab[tab] = false
                 } else {
                     pageByTab[tab] = page
                 }
             } else {
-                rowsByTab[tab] = loaded
+                withAnimation(.smooth(duration: 0.24)) {
+                    rowsByTab[tab] = loaded
+                }
                 hasMoreByTab[tab] = !loaded.isEmpty
                 pageByTab[tab] = page
             }

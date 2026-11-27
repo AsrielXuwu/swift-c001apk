@@ -240,7 +240,10 @@ public struct ReplyThreadSheet: View {
         }
         currentPage = 1
         do {
-            items = try await API.subReplies(replyID: rootReply.id, page: 1)
+            let loaded = try await API.subReplies(replyID: rootReply.id, page: 1)
+            withAnimation(.smooth(duration: 0.22)) {
+                items = loaded
+            }
             hasMore = !items.isEmpty
         } catch {
             _ = await appState.handleAPIError(error)

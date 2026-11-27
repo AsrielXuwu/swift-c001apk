@@ -104,13 +104,16 @@ public struct EngagementListView: View {
         do {
             switch mode {
             case let .likes(feedID):
-                users = try await API.likeList(feedID: feedID, page: 1)
+                let loaded = try await API.likeList(feedID: feedID, page: 1)
+                withAnimation(.smooth(duration: 0.22)) { users = loaded }
                 hasMore = !users.isEmpty
             case let .forwards(feedID):
-                rows = try await API.forwardList(feedID: feedID, page: 1)
+                let loaded = try await API.forwardList(feedID: feedID, page: 1)
+                withAnimation(.smooth(duration: 0.22)) { rows = loaded }
                 hasMore = !rows.isEmpty
             case let .history(feedID):
-                rows = try await API.changeHistory(feedID: feedID)
+                let loaded = try await API.changeHistory(feedID: feedID)
+                withAnimation(.smooth(duration: 0.22)) { rows = loaded }
                 hasMore = false
             }
         } catch {

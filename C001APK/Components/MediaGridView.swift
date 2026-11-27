@@ -72,10 +72,10 @@ public struct MediaGridView: View {
                             )
                         }
                         .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 12)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 14)
                         .onTapGesture {
                             triggerTap(at: index)
                         }
@@ -88,7 +88,7 @@ public struct MediaGridView: View {
                     badgeStack(for: item)
 
                     if index == 8 && items.count > 9 {
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
                             .fill(.black.opacity(0.45))
                             .overlay {
                                 Text("+\(items.count - 9)")
@@ -131,14 +131,14 @@ public struct MediaGridView: View {
             )
             .frame(width: targetWidth, height: targetHeight)
             .clipped()
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
             }
-            .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 14)
+            .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 16)
             .onTapGesture {
                 triggerTap(at: index)
             }
@@ -431,15 +431,28 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         let activeRatio = ratioForItem(at: activeIdx)
 
         ZStack {
+            let centerSlot = Int((deckPhase + dragProgress).rounded())
             OrbitalDeckStage(
                 phase: deckPhase + dragProgress,
                 count: count,
                 cardHeight: maxCardHeight,
                 isFrontLifted: isPreviewLifted
-            ) { itemIndex, isFront in
+            ) { itemIndex, isFront, rawSlot in
                 let item = items[itemIndex]
                 let itemSize = cardFrame(at: itemIndex, maxStageWidth: innerStageWidth)
-                let sourceID = (isFront && enableZoomSource) ? "media-\(transitionSeed)-\(itemIndex)" : nil
+                // Keep sourceID completely invariant across active & adjacent slots (centerSlot - 1 ... centerSlot + 1)
+                // so neither _ConditionalContent branch switching nor matchedTransitionSource ID mutation
+                // ever occurs when isFront toggles at abs(t) < 0.35 during a swipe.
+                let isPrimarySlot: Bool = {
+                    if count >= 5 { return true }
+                    if count == 4 { return rawSlot >= centerSlot - 1 && rawSlot <= centerSlot + 2 }
+                    if count == 3 { return rawSlot >= centerSlot - 1 && rawSlot <= centerSlot + 1 }
+                    if count == 2 { return rawSlot == centerSlot || rawSlot == centerSlot + 1 }
+                    return true
+                }()
+                let sourceID = enableZoomSource
+                    ? (isPrimarySlot ? "media-\(transitionSeed)-\(itemIndex)" : "media-\(transitionSeed)-slot-\(rawSlot)")
+                    : nil
 
                 if count == 1 {
                     deckCardSurface(at: itemIndex, size: itemSize)
@@ -619,6 +632,22 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                 availableWidth = newWidth
             }
         }
+        .task(id: "\(transitionSeed)-\(activeIdx)") {
+            // Keep adjacent cards in both directions pre-decoded in memory cache so swiping left or right
+            // immediately after a context menu preview never misses cache or flashes a blank background.
+            let targetMax: CGFloat = adaptiveContentMode ? 960 : 1080
+            for offset in [-2, -1, 0, 1, 2] {
+                let idx = ((activeIdx + offset) % count + count) % count
+                guard items.indices.contains(idx) else { continue }
+                let media = items[idx]
+                let url = adaptiveContentMode ? media.sourceUrl : media.thumbnailUrl
+                if ImagePipeline.cachedImageSync(urlString: url, maxPixelSize: targetMax, preferHDR: false) == nil {
+                    if let loaded = await ImagePipeline.shared.loadImage(urlString: url, maxPixelSize: targetMax, preferHDR: false) {
+                        updateDetectedRatio(index: idx, size: loaded.image.size)
+                    }
+                }
+            }
+        }
         .background {
             if let replyCardCoordinateSpace, count > 1 {
                 Color.clear
@@ -709,7 +738,7 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
     public let count: Int
     public let cardHeight: CGFloat
     public let isFrontLifted: Bool
-    @ViewBuilder public let cardBuilder: (Int, Bool) -> CardContent
+    @ViewBuilder public let cardBuilder: (Int, Bool, Int) -> CardContent
 
     public var animatableData: CGFloat {
         get { phase }
@@ -727,14 +756,31 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
         self.count = count
         self.cardHeight = cardHeight
         self.isFrontLifted = isFrontLifted
+        self.cardBuilder = { itemIndex, isFront, _ in
+            cardBuilder(itemIndex, isFront)
+        }
+    }
+
+    public init(
+        phase: CGFloat,
+        count: Int,
+        cardHeight: CGFloat,
+        isFrontLifted: Bool = false,
+        @ViewBuilder cardBuilder: @escaping (Int, Bool, Int) -> CardContent
+    ) {
+        self.phase = phase
+        self.count = count
+        self.cardHeight = cardHeight
+        self.isFrontLifted = isFrontLifted
         self.cardBuilder = cardBuilder
     }
 
     public var body: some View {
-        let baseSlot = Int(floor(phase))
-        let maxBack = min(2, max(0, count - 1))
-        let rawSlots = count <= 1 ? [0] : Array((baseSlot - 1)...(baseSlot + maxBack))
         let activeRounded = Int(phase.rounded())
+        // Center rawSlots around activeRounded (boundary at N + 0.5) rather than floor(phase) (boundary at N.0)
+        // so starting a rightward swipe from an integer rest state or settling with spring overshoot around N.0
+        // never unmounts or recreates adjacent card views.
+        let rawSlots = count <= 1 ? [0] : Array((activeRounded - 2)...(activeRounded + 2))
 
         ZStack {
             ForEach(rawSlots, id: \.self) { rawSlot in
@@ -743,7 +789,7 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
                 let isFront = (rawSlot == activeRounded) && abs(t) < 0.35
                 let geometry = cardGeometry(for: t, count: count)
 
-                cardBuilder(itemIndex, isFront)
+                cardBuilder(itemIndex, isFront, rawSlot)
                     .scaleEffect(geometry.scale)
                     .rotationEffect(.degrees(geometry.angle))
                     .offset(x: geometry.x, y: geometry.y)
@@ -811,7 +857,7 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
             let opacity = 1.0 - Double(p) * 0.04
             let zIndex = 88.0 - Double(p) * 18.0
             return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
-        } else {
+        } else if t <= 2.0 {
             let p = min(1.0, t - 1.0)
             let x = 15.0 * (1.0 - p * 0.65)
             let y = 8.0 + p * 6.0
@@ -820,6 +866,8 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
             let opacity = count > 2 ? max(0.0, 0.96 * Double(max(0.0, 1.0 - (p / 0.85)))) : 0.0
             let zIndex = 58.0 - Double(p) * 28.0
             return CardGeometry(x: x, y: y, scale: scale, angle: angle, opacity: opacity, zIndex: zIndex)
+        } else {
+            return CardGeometry(x: 5.25, y: 14.0, scale: 0.89, angle: 0.0, opacity: 0.0, zIndex: 10.0)
         }
     }
 }
@@ -965,14 +1013,15 @@ public struct MediaContextMenuPreview: View {
         self.bridge = bridge
         self.onImageUpgraded = onImageUpgraded
 
-        let cached = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
+        let cached = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1600, preferHDR: !disableHDR)
+            ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 960, preferHDR: false)
             ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080, preferHDR: false)
             ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 960, preferHDR: false)
-            ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 420, preferHDR: false)
-            ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 320, preferHDR: false)
+            ?? ImagePipeline.cachedAnyImageSync(urlString: item.sourceUrl)
+            ?? ImagePipeline.cachedAnyImageSync(urlString: item.thumbnailUrl)
         let resolvedInitial: LoadedImageResult? = cached ?? initialImage.map {
             LoadedImageResult(
                 image: $0,
@@ -1030,51 +1079,46 @@ public struct MediaContextMenuPreview: View {
                         Color(.secondarySystemGroupedBackground)
                     }
 
-                    if !isDismissing {
-                        if let gifData, item.isGif {
-                            AnimatedGIFView(data: gifData, contentMode: .scaleAspectFill)
+                    if let gifData, item.isGif, !isDismissing {
+                        AnimatedGIFView(data: gifData, contentMode: .scaleAspectFill)
+                            .frame(width: liveWidth, height: liveHeight)
+                            .clipped()
+                    } else if let displayResult {
+                        if !hasBackingImageView || (!isDismissing && isUpgradeSettled && showHDR) {
+                            Image(uiImage: displayResult.image)
+                                .resizable()
+                                .aspectRatio(contentMode: .fill)
                                 .frame(width: liveWidth, height: liveHeight)
                                 .clipped()
-                        } else if let displayResult {
-                            // When backed by UIKit's immediateImageView, let UIKit handle the image layer
-                            // during the initial expansion morph and for SDR images; only overlay the SwiftUI
-                            // image once the morph has settled and HDR headroom (.high) is needed.
-                            if !hasBackingImageView || (isUpgradeSettled && showHDR) {
-                                Image(uiImage: displayResult.image)
-                                    .resizable()
-                                    .aspectRatio(contentMode: .fill)
-                                    .frame(width: liveWidth, height: liveHeight)
-                                    .clipped()
-                                    .allowedDynamicRange(showHDR ? .high : .standard)
-                            }
-
-                            if let liveVideoURL, showLiveVideo {
-                                LiveVideoPlayerView(
-                                    videoURL: liveVideoURL,
-                                    playTrigger: playTrigger,
-                                    isLooping: false,
-                                    isMuted: true,
-                                    videoGravity: .resizeAspectFill,
-                                    onReadyToDisplay: {
-                                        withAnimation(.easeIn(duration: 0.16)) {
-                                            videoReady = true
-                                        }
-                                    },
-                                    onPlaybackEnded: {
-                                        withAnimation(.easeOut(duration: 0.25)) {
-                                            videoReady = false
-                                            showLiveVideo = false
-                                        }
-                                    }
-                                )
-                                .frame(width: liveWidth, height: liveHeight)
-                                .clipped()
-                                .opacity(videoReady ? 1 : 0)
-                                .allowsHitTesting(false)
-                            }
-                        } else if !hasBackingImageView {
-                            ProgressView()
+                                .allowedDynamicRange((!isDismissing && showHDR) ? .high : .standard)
                         }
+
+                        if !isDismissing, let liveVideoURL, showLiveVideo {
+                            LiveVideoPlayerView(
+                                videoURL: liveVideoURL,
+                                playTrigger: playTrigger,
+                                isLooping: false,
+                                isMuted: true,
+                                videoGravity: .resizeAspectFill,
+                                onReadyToDisplay: {
+                                    withAnimation(.easeIn(duration: 0.16)) {
+                                        videoReady = true
+                                    }
+                                },
+                                onPlaybackEnded: {
+                                    withAnimation(.easeOut(duration: 0.25)) {
+                                        videoReady = false
+                                        showLiveVideo = false
+                                    }
+                                }
+                            )
+                            .frame(width: liveWidth, height: liveHeight)
+                            .clipped()
+                            .opacity(videoReady ? 1 : 0)
+                            .allowsHitTesting(false)
+                        }
+                    } else if !hasBackingImageView {
+                        ProgressView()
                     }
                 }
                 .frame(width: liveWidth, height: liveHeight)
@@ -1130,7 +1174,7 @@ public struct MediaContextMenuPreview: View {
 
             if let loaded = await ImagePipeline.shared.loadImage(
                 urlString: item.sourceUrl,
-                maxPixelSize: nil,
+                maxPixelSize: 1600,
                 preferHDR: !disableHDR
             ) {
                 guard !Task.isCancelled else { return }
@@ -1370,14 +1414,31 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             return iv
         }()
 
+        var allowsVisibility: Bool = false {
+            didSet {
+                super.isHidden = !allowsVisibility
+            }
+        }
+
+        override var isHidden: Bool {
+            get { super.isHidden }
+            set {
+                // Prevent UIKit's _UIContextMenuPresentation dismissal completion from un-hiding
+                // cardBackingView after the preview closes or while the user is swiping to the next card.
+                super.isHidden = allowsVisibility ? newValue : true
+            }
+        }
+
         override init(frame: CGRect) {
             super.init(frame: frame)
-            backgroundColor = .secondarySystemGroupedBackground
+            backgroundColor = .clear
+            isOpaque = false
             clipsToBounds = true
             layer.cornerCurve = .continuous
             addSubview(backdropImageView)
             addSubview(blurOverlayView)
             addSubview(mainImageView)
+            super.isHidden = true
         }
 
         required init?(coder: NSCoder) {
@@ -1546,25 +1607,34 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         }
 
         func handleTouchDown() {
-            guard isEnabled, !isPreviewMenuActive, let cfg = previewConfig else { return }
-            // Pre-commit cardBackingView into CoreAnimation on touch-down (~150ms before
-            // UIContextMenuInteraction snapshots it) so the first highlight frame is already rendered.
-            _ = prepareCardBackingView(cfg: cfg)
+            // Pre-configure backing image and geometry quietly without unhiding cardBackingView
+            // so starting a horizontal swipe right after dismissing a preview never shows cardBackingView.
+            guard isEnabled, !isPreviewMenuActive, let cfg = previewConfig, let overlay = overlayView else { return }
+            let targetSize = overlay.bounds.size.width > 1 && overlay.bounds.size.height > 1
+                ? overlay.bounds.size
+                : activeCardSize
+            overlay.configureBackingGeometry(size: targetSize, cornerRadius: cfg.cornerRadius)
+            let img = cachedDisplayImage(
+                for: cfg.activeItem,
+                adaptiveContentMode: cfg.adaptiveContentMode,
+                disableHDR: cfg.disableHDR
+            )
+            overlay.cardBackingView.configure(
+                image: img,
+                letterbox: cfg.shouldLetterboxWide,
+                cornerRadius: cfg.cornerRadius
+            )
         }
 
         func handleTouchFinished() {
             guard !isPreviewMenuActive else { return }
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 160_000_000)
-                guard let self, !self.isPreviewMenuActive else { return }
-                self.overlayView?.cardBackingView.isHidden = true
-            }
+            overlayView?.cardBackingView.allowsVisibility = false
         }
 
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended else { return }
             if !isPreviewMenuActive {
-                overlayView?.cardBackingView.isHidden = true
+                overlayView?.cardBackingView.allowsVisibility = false
             }
             onTap()
         }
@@ -1573,10 +1643,9 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             let dx = recognizer.translation(in: recognizer.view).x
             switch recognizer.state {
             case .began:
-                if !isPreviewMenuActive {
-                    overlayView?.cardBackingView.isHidden = true
-                    previewConfig?.onPreviewLiftedChanged(false)
-                }
+                isPreviewMenuActive = false
+                overlayView?.cardBackingView.allowsVisibility = false
+                previewConfig?.onPreviewLiftedChanged(false)
                 onDragChanged(dx)
             case .changed:
                 onDragChanged(dx)
@@ -1625,14 +1694,16 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             let primaryURL = adaptiveContentMode ? item.sourceUrl : item.thumbnailUrl
             let primaryMax: CGFloat = adaptiveContentMode ? 960 : 1080
             let loaded = ImagePipeline.cachedImageSync(urlString: primaryURL, maxPixelSize: primaryMax, preferHDR: false)
+                ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1600, preferHDR: !disableHDR)
                 ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
                 ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
                 ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
                 ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 960, preferHDR: false)
                 ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080, preferHDR: false)
                 ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 960, preferHDR: false)
-                ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 420, preferHDR: false)
-                ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 320, preferHDR: false)
+                ?? ImagePipeline.cachedAnyImageSync(urlString: primaryURL)
+                ?? ImagePipeline.cachedAnyImageSync(urlString: item.sourceUrl)
+                ?? ImagePipeline.cachedAnyImageSync(urlString: item.thumbnailUrl)
             return loaded?.image
         }
 
@@ -1652,7 +1723,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                 letterbox: cfg.shouldLetterboxWide,
                 cornerRadius: cfg.cornerRadius
             )
-            overlay.cardBackingView.isHidden = false
+            overlay.cardBackingView.allowsVisibility = (img != nil)
             return overlay
         }
 
@@ -1709,7 +1780,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                         image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
                     ) { [weak self] _ in
                         Task { @MainActor [weak self] in
-                            self?.overlayView?.cardBackingView.isHidden = true
+                            self?.overlayView?.cardBackingView.allowsVisibility = false
                             self?.onTap()
                         }
                     },
@@ -1778,14 +1849,23 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             return targetedCardPreview(for: overlay, cornerRadius: cfg.cornerRadius)
         }
 
-        private func completePreviewDismissal() {
-            previewConfig?.onPreviewLiftedChanged(false)
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 80_000_000)
-                if self?.isPreviewMenuActive == false {
-                    self?.overlayView?.cardBackingView.isHidden = true
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            willDisplayMenuFor configuration: UIContextMenuConfiguration,
+            animator: (any UIContextMenuInteractionAnimating)?
+        ) {
+            // Once the preview platter has lifted, keep cardBackingView hidden so the live SwiftUI
+            // OrbitalDeckStage underneath is always unobstructed.
+            animator?.addCompletion { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.overlayView?.cardBackingView.allowsVisibility = false
                 }
             }
+        }
+
+        private func completePreviewDismissal() {
+            previewConfig?.onPreviewLiftedChanged(false)
+            overlayView?.cardBackingView.allowsVisibility = false
         }
 
         func contextMenuInteraction(
@@ -1794,6 +1874,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             animator: (any UIContextMenuInteractionAnimating)?
         ) {
             isPreviewMenuActive = false
+            overlayView?.cardBackingView.allowsVisibility = false
             activePreviewController?.prepareForDismissal()
             if let animator {
                 animator.addCompletion { [weak self] in

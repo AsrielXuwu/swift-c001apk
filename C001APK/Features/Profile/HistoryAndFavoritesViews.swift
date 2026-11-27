@@ -1068,8 +1068,8 @@ private struct LoggedInPagedActivityPage: View {
                             ProgressView().padding(.vertical, 16)
                         }
                     }
-                    .padding(.vertical, 10)
-                    .padding(.bottom, 32)
+                    .padding(.top, 2)
+                    .padding(.bottom, 42)
                 }
                 .refreshable {
                     await reload(force: true)

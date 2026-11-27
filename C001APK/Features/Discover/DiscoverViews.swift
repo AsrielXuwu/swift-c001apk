@@ -77,10 +77,10 @@ public struct TopicDetailView: View {
     public init(tag: String) { self.tag = tag }
 
     private var activeTabs: [HomeSection] {
-        if let apiTabs = topic?.tabs, !apiTabs.isEmpty {
+        if let apiTabs = (topic ?? appState.cachedTopicDetail(tag: tag))?.tabs, !apiTabs.isEmpty {
             return apiTabs
         }
-        return didResolveTopicMetadata ? fallbackTabs : []
+        return fallbackTabs
     }
 
     private var selectedTabItem: HomeSection {
@@ -139,13 +139,16 @@ public struct TopicDetailView: View {
 
                         PinnedEntityHeaderOverlay(
                             scrollOffset: scrollOffset,
-                            hasHeader: topic != nil,
+                            hasHeader: true,
                             headerHeight: $headerHeight,
                             stripHeight: $stripHeight
                         ) {
-                            if let topic {
-                                topicHeaderCard(topic)
-                                    .padding(.top, 8)
+                            if let currentTopic = topic ?? appState.cachedTopicDetail(tag: tag) {
+                                topicHeaderCard(currentTopic)
+                                    .padding(.top, 10)
+                            } else {
+                                topicPlaceholderHeaderCard
+                                    .padding(.top, 10)
                             }
                         } tabStrip: {
                             if !activeTabs.isEmpty {
@@ -240,26 +243,43 @@ public struct TopicDetailView: View {
                     Task { await reloadFeeds(for: target, force: false) }
                 }
             }
+            .onAppear {
+                if topic == nil, let cached = appState.cachedTopicDetail(tag: tag) {
+                    topic = cached
+                    didResolveTopicMetadata = true
+                }
+            }
             .task(id: tag) {
+                if topic == nil, let cached = appState.cachedTopicDetail(tag: tag) {
+                    topic = cached
+                }
                 guard !hasInitialized || topic == nil else { return }
                 let loadedTopic = try? await API.topicDetail(tag: tag)
                 hasInitialized = (loadedTopic != nil)
-                let resolvedTabs = (loadedTopic?.tabs.isEmpty == false) ? loadedTopic!.tabs : fallbackTabs
+                if let loadedTopic {
+                    appState.cacheTopicDetail(loadedTopic, forTag: tag)
+                }
+                let effectiveTopic = loadedTopic ?? topic
+                let resolvedTabs = (effectiveTopic?.tabs.isEmpty == false) ? effectiveTopic!.tabs : fallbackTabs
                 let saved = appState.pageTabSelections["topic-\(tag)"]
                 let initialTab: HomeSection? = if let saved, let matchedSaved = resolvedTabs.first(where: { $0.id == saved }) {
                     matchedSaved
-                } else if let apiSel = loadedTopic?.selectedTab, !apiSel.isEmpty,
+                } else if let apiSel = effectiveTopic?.selectedTab, !apiSel.isEmpty,
                           let matchedAPI = resolvedTabs.first(where: { $0.subtitle == apiSel || $0.id == apiSel || $0.title == apiSel }) {
                     matchedAPI
                 } else {
                     resolvedTabs.first
                 }
-                topic = loadedTopic
-                if let initialTab {
-                    activeTabID = initialTab.id
-                    scrolledTabID = initialTab.id
+                withAnimation(.smooth(duration: 0.24)) {
+                    if let loadedTopic {
+                        topic = loadedTopic
+                    }
+                    if let initialTab {
+                        activeTabID = initialTab.id
+                        scrolledTabID = initialTab.id
+                    }
+                    didResolveTopicMetadata = true
                 }
-                didResolveTopicMetadata = true
                 if let initialTab {
                     await reloadFeeds(for: initialTab, force: !loadedTabs.contains(initialTab.id))
                 }
@@ -267,12 +287,40 @@ public struct TopicDetailView: View {
         }
     }
 
+    private var topicPlaceholderHeaderCard: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.secondarySystemFill))
+                .frame(width: 58, height: 58)
+                .overlay {
+                    Image(systemName: "number")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+            VStack(alignment: .leading, spacing: 4) {
+                Text(TopicItem.cleanTitle(tag))
+                    .font(.headline)
+                Text("正在加载话题信息…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+        }
+        .padding(16)
+        .c001CardStyle(cornerRadius: 22)
+        .padding(.horizontal, 12)
+    }
+
     private func topicHeaderCard(_ topic: TopicItem) -> some View {
         HStack(spacing: 12) {
             RemoteImageView(url: topic.logo, maxPixelSize: 180)
-                .frame(width: 56, height: 56)
+                .frame(width: 58, height: 58)
                 .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                }
             VStack(alignment: .leading, spacing: 4) {
                 Text(TopicItem.cleanTitle(topic.title)).font(.headline)
                 Text(topicStatsText(topic))
@@ -285,20 +333,27 @@ public struct TopicDetailView: View {
                         .lineLimit(2)
                 }
             }
-            Spacer()
+            Spacer(minLength: 8)
             Button(topic.isFollowed ? "已关注" : "关注") {
                 Task { await toggleFollow(topic) }
             }
             .font(.subheadline.weight(.semibold))
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
-            .background(topic.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
-            .glassEffect(.regular.interactive(), in: .capsule)
-            .foregroundStyle(topic.isFollowed ? Color.primary : Color.accentColor)
+            .foregroundStyle(topic.isFollowed ? Color.primary : Color.white)
+            .background(topic.isFollowed ? Color(uiColor: .tertiarySystemFill) : Color.accentColor, in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(
+                        topic.isFollowed ? Color(uiColor: .separator).opacity(0.45) : Color.white.opacity(0.28),
+                        lineWidth: 0.8
+                    )
+            }
+            .buttonStyle(.plain)
             .disabled(isTogglingFollow)
         }
-        .padding(14)
-        .c001CardStyle(cornerRadius: 18)
+        .padding(16)
+        .c001CardStyle(cornerRadius: 22)
         .padding(.horizontal, 12)
     }
 
@@ -308,28 +363,31 @@ public struct TopicDetailView: View {
         let hasLoaded = loadedTabs.contains(tabItem.id)
 
         return ScrollView {
-            Color.clear
-                .frame(height: max(0, (topic != nil ? headerHeight : 0) + stripHeight))
-                .id("topic-top-\(tabItem.id)")
-            LazyVStack(alignment: .leading, spacing: 10) {
-                if (!hasLoaded || isLoadingTab) && rows.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 48)
-                } else if rows.isEmpty {
-                    ContentUnavailableView("暂无话题动态", systemImage: "number")
-                        .frame(maxWidth: .infinity, minHeight: 200)
-                } else {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                        HomeRowRenderer(row: row)
-                            .onAppear {
-                                if idx >= rows.count - 4 { Task { await loadMore(for: tabItem) } }
-                            }
+            VStack(spacing: 0) {
+                Color.clear
+                    .frame(height: max(0, headerHeight + stripHeight))
+                    .id("topic-top-\(tabItem.id)")
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if (!hasLoaded || isLoadingTab) && rows.isEmpty {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 48)
+                    } else if rows.isEmpty {
+                        ContentUnavailableView("暂无话题动态", systemImage: "number")
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    } else {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= rows.count - 4 { Task { await loadMore(for: tabItem) } }
+                                }
+                        }
                     }
                 }
+                .padding(.bottom, 88)
             }
-            .padding(.bottom, 88)
         }
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .onScrollGeometryChange(for: CGFloat.self) { geo in
             geo.contentOffset.y + geo.contentInsets.top
         } action: { _, newOffset in
@@ -419,9 +477,11 @@ public struct TopicDetailView: View {
                     selectedSortIDByTab[tabItem.id] = matched.id
                 }
             }
-            rowsByTab[tabItem.id] = extracted.filteredRows
+            withAnimation(.smooth(duration: 0.24)) {
+                rowsByTab[tabItem.id] = extracted.filteredRows
+                loadedTabs.insert(tabItem.id)
+            }
             hasMoreByTab[tabItem.id] = !extracted.filteredRows.isEmpty
-            loadedTabs.insert(tabItem.id)
         } catch {
             _ = await appState.handleAPIError(error)
         }
@@ -550,9 +610,9 @@ public struct ProductDetailView: View {
     }
 
     private var activeChips: [ChoiceChip] {
-        guard didResolveProductTabs else { return [] }
-        var base: [ChoiceChip] = !apiTabs.isEmpty
-            ? apiTabs.map { ChoiceChip(id: $0.url, title: $0.title) }
+        let effectiveTabs = !apiTabs.isEmpty ? apiTabs : (product?.tabs ?? appState.cachedProductDetail(id: productID)?.tabs ?? [])
+        var base: [ChoiceChip] = !effectiveTabs.isEmpty
+            ? effectiveTabs.map { ChoiceChip(id: $0.url, title: $0.title) }
             : fallbackTabs
         if !base.contains(where: { isConfigTab(id: $0.id, title: $0.title) }) {
             base.append(ChoiceChip(id: "__specs__", title: "参数"))
@@ -617,13 +677,35 @@ public struct ProductDetailView: View {
 
                         PinnedEntityHeaderOverlay(
                             scrollOffset: scrollOffset,
-                            hasHeader: product != nil,
+                            hasHeader: product != nil || appState.cachedProductDetail(id: productID) != nil || (initialTitle?.isEmpty == false),
                             headerHeight: $headerHeight,
                             stripHeight: $stripHeight
                         ) {
-                            if let product {
-                                productHeaderCard(product)
-                                    .padding(.top, 8)
+                            if let currentProduct = product ?? appState.cachedProductDetail(id: productID) {
+                                productHeaderCard(currentProduct)
+                                    .padding(.top, 10)
+                            } else if let initialTitle, !initialTitle.isEmpty {
+                                HStack(spacing: 12) {
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .fill(Color(.secondarySystemFill))
+                                        .frame(width: 60, height: 60)
+                                        .overlay {
+                                            Image(systemName: "iphone")
+                                                .font(.title3.weight(.semibold))
+                                                .foregroundStyle(Color.accentColor)
+                                        }
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(initialTitle).font(.headline)
+                                        Text("正在加载数码详情…")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    Spacer(minLength: 8)
+                                }
+                                .padding(16)
+                                .c001CardStyle(cornerRadius: 22)
+                                .padding(.horizontal, 12)
+                                .padding(.top, 10)
                             }
                         } tabStrip: {
                             if !activeChips.isEmpty {
@@ -723,7 +805,18 @@ public struct ProductDetailView: View {
                     Task { await reloadFeeds(for: newValue, force: false) }
                 }
             }
+            .onAppear {
+                if product == nil, let cached = appState.cachedProductDetail(id: productID) {
+                    product = cached
+                    if !cached.tabs.isEmpty { apiTabs = cached.tabs }
+                    didResolveProductTabs = true
+                }
+            }
             .task(id: productID) {
+                if product == nil, let cached = appState.cachedProductDetail(id: productID) {
+                    product = cached
+                    if !cached.tabs.isEmpty { apiTabs = cached.tabs }
+                }
                 guard !hasInitialized || product == nil else { return }
                 hasInitialized = true
                 await reloadAll()
@@ -738,29 +831,31 @@ public struct ProductDetailView: View {
         let isSpecsTab = isConfigTab(id: chip.id, title: chip.title)
 
         return ScrollView {
-            Color.clear
-                .frame(height: max(0, (product != nil ? headerHeight : 0) + stripHeight))
-                .id("product-top-\(chip.id)")
-            LazyVStack(alignment: .leading, spacing: 10) {
-                if isSpecsTab {
-                    productSpecsSection()
-                } else if (!hasLoaded || isLoadingTab) && rows.isEmpty {
-                    ProgressView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 48)
-                } else if rows.isEmpty {
-                    ContentUnavailableView("暂无该机型动态", systemImage: "iphone")
-                        .frame(maxWidth: .infinity, minHeight: 200)
-                } else {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                        HomeRowRenderer(row: row)
-                            .onAppear {
-                                if idx >= rows.count - 4 { Task { await loadMore(for: chip.id) } }
-                            }
+            VStack(spacing: 0) {
+                Color.clear
+                    .frame(height: max(0, (product != nil ? headerHeight : 0) + stripHeight))
+                    .id("product-top-\(chip.id)")
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    if isSpecsTab {
+                        productSpecsSection()
+                    } else if (!hasLoaded || isLoadingTab) && rows.isEmpty {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 48)
+                    } else if rows.isEmpty {
+                        ContentUnavailableView("暂无该机型动态", systemImage: "iphone")
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    } else {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= rows.count - 4 { Task { await loadMore(for: chip.id) } }
+                                }
+                        }
                     }
                 }
+                .padding(.bottom, 88)
             }
-            .padding(.bottom, 88)
         }
         .scrollEdgeEffectStyle(.soft, for: .top)
         .onScrollGeometryChange(for: CGFloat.self) { geo in
@@ -783,7 +878,11 @@ public struct ProductDetailView: View {
                 RemoteImageView(url: product.logo, maxPixelSize: 180)
                     .frame(width: 60, height: 60)
                     .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    }
                 VStack(alignment: .leading, spacing: 4) {
                     Text(product.title).font(.headline)
                     let stats = [
@@ -801,16 +900,23 @@ public struct ProductDetailView: View {
                             .foregroundStyle(Color.accentColor)
                     }
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 Button(product.isFollowed ? "已关注" : "关注") {
                     Task { await toggleFollow(product) }
                 }
                 .font(.subheadline.weight(.semibold))
                 .padding(.horizontal, 14)
                 .padding(.vertical, 7)
-                .background(product.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
-                .glassEffect(.regular.interactive(), in: .capsule)
-                .foregroundStyle(product.isFollowed ? Color.primary : Color.accentColor)
+                .foregroundStyle(product.isFollowed ? Color.primary : Color.white)
+                .background(product.isFollowed ? Color(uiColor: .tertiarySystemFill) : Color.accentColor, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(
+                            product.isFollowed ? Color(uiColor: .separator).opacity(0.45) : Color.white.opacity(0.28),
+                            lineWidth: 0.8
+                        )
+                }
+                .buttonStyle(.plain)
                 .disabled(isTogglingFollow)
             }
 
@@ -826,8 +932,8 @@ public struct ProductDetailView: View {
                     .lineLimit(4)
             }
         }
-        .padding(14)
-        .c001CardStyle(cornerRadius: 18)
+        .padding(16)
+        .c001CardStyle(cornerRadius: 22)
         .padding(.horizontal, 12)
     }
 
@@ -914,7 +1020,7 @@ public struct ProductDetailView: View {
                         }
                     }
                     .padding(14)
-                    .c001CardStyle(cornerRadius: 18)
+                    .c001CardStyle(cornerRadius: 22)
                     .padding(.horizontal, 12)
 
                     if isLoadingActiveVariant && activeSections.isEmpty {
@@ -940,7 +1046,7 @@ public struct ProductDetailView: View {
                             }
                         }
                         .padding(14)
-                        .c001CardStyle(cornerRadius: 18)
+                        .c001CardStyle(cornerRadius: 22)
                         .padding(.horizontal, 12)
                     }
                 }
@@ -954,7 +1060,7 @@ public struct ProductDetailView: View {
                         }
                     }
                     .padding(14)
-                    .c001CardStyle(cornerRadius: 18)
+                    .c001CardStyle(cornerRadius: 22)
                     .padding(.horizontal, 12)
                 }
             }
@@ -978,8 +1084,15 @@ public struct ProductDetailView: View {
     private func reloadAll() async {
         isLoadingHeader = true
         let detail = try? await API.productDetail(id: productID)
-        product = detail
-        isLoadingHeader = false
+        if let detail {
+            appState.cacheProductDetail(detail)
+        }
+        withAnimation(.smooth(duration: 0.24)) {
+            if let detail {
+                product = detail
+            }
+            isLoadingHeader = false
+        }
         if let detail {
             if !detail.configVariants.isEmpty {
                 productVariants = detail.configVariants
@@ -1079,9 +1192,11 @@ public struct ProductDetailView: View {
                     selectedSortIDByTab[tabID] = matched.id
                 }
             }
-            rowsByTab[tabID] = extracted.filteredRows
+            withAnimation(.smooth(duration: 0.24)) {
+                rowsByTab[tabID] = extracted.filteredRows
+                loadedTabs.insert(tabID)
+            }
             hasMoreByTab[tabID] = !extracted.filteredRows.isEmpty
-            loadedTabs.insert(tabID)
         } catch {
             _ = await appState.handleAPIError(error)
         }
@@ -1210,9 +1325,13 @@ public struct AppDetailView: View {
                                             RemoteImageView(url: url, maxPixelSize: 540)
                                                 .frame(width: 140, height: 240)
                                                 .clipped()
-                                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                                .applyZoomSource(id: "\(shotPrefix)-\(idx)", in: zoomNamespace, cornerRadius: 10)
+                                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                                .overlay {
+                                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                                        .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                                                }
+                                                .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                                .applyZoomSource(id: "\(shotPrefix)-\(idx)", in: zoomNamespace, cornerRadius: 14)
                                         }
                                         .buttonStyle(.plain)
                                     }
@@ -1227,7 +1346,7 @@ public struct AppDetailView: View {
                         }
                     }
                     .padding(14)
-                    .c001CardStyle(cornerRadius: 18)
+                    .c001CardStyle(cornerRadius: 22)
                     .padding(.horizontal, 12)
                 }
 
@@ -1274,7 +1393,15 @@ public struct AppDetailView: View {
         .onChange(of: sortMode) { _, _ in
             Task { await reloadComments() }
         }
+        .onAppear {
+            if app == nil, let cached = appState.cachedAppDetail(id: appID) {
+                app = cached
+            }
+        }
         .task(id: appID) {
+            if app == nil, let cached = appState.cachedAppDetail(id: appID) {
+                app = cached
+            }
             await reload()
         }
     }
@@ -1288,8 +1415,13 @@ public struct AppDetailView: View {
         page = 1
         async let detailTask = try? API.appDetail(id: appID)
         async let commentsTask = (try? API.appComments(id: appID, page: 1, listType: sortMode)) ?? []
-        app = await detailTask
-        comments = await commentsTask
+        let loadedApp = await detailTask
+        let loadedComments = await commentsTask
+        if let loadedApp { appState.cacheAppDetail(loadedApp) }
+        withAnimation(.smooth(duration: 0.24)) {
+            if let loadedApp { app = loadedApp }
+            comments = loadedComments
+        }
         hasMore = !comments.isEmpty
     }
 
@@ -1363,13 +1495,20 @@ public struct DyhDetailView: View {
                             .font(.subheadline.weight(.semibold))
                             .padding(.horizontal, 14)
                             .padding(.vertical, 7)
-                            .background(dyh.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
-                            .glassEffect(.regular.interactive(), in: .capsule)
-                            .foregroundStyle(dyh.isFollowed ? Color.primary : Color.accentColor)
+                            .foregroundStyle(dyh.isFollowed ? Color.primary : Color.white)
+                            .background(dyh.isFollowed ? Color(uiColor: .tertiarySystemFill) : Color.accentColor, in: Capsule())
+                            .overlay {
+                                Capsule()
+                                    .strokeBorder(
+                                        dyh.isFollowed ? Color(uiColor: .separator).opacity(0.45) : Color.white.opacity(0.28),
+                                        lineWidth: 0.8
+                                    )
+                            }
+                            .buttonStyle(.plain)
                             .disabled(isTogglingFollow)
                         }
                         .padding(14)
-                        .c001CardStyle(cornerRadius: 18)
+                        .c001CardStyle(cornerRadius: 22)
                         .padding(.horizontal, 12)
                         .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
                     }
@@ -1428,7 +1567,15 @@ public struct DyhDetailView: View {
                     )
                 }
             }
+            .onAppear {
+                if dyh == nil, let cached = appState.cachedDyhDetail(id: dyhID) {
+                    dyh = cached
+                }
+            }
             .task(id: dyhID) {
+                if dyh == nil, let cached = appState.cachedDyhDetail(id: dyhID) {
+                    dyh = cached
+                }
                 await reload()
             }
         }
@@ -1443,8 +1590,13 @@ public struct DyhDetailView: View {
         page = 1
         async let detailTask = try? API.dyhDetail(id: dyhID)
         async let rowsTask = (try? API.dyhArticles(id: dyhID, page: 1)) ?? []
-        dyh = await detailTask
-        rows = await rowsTask
+        let loadedDyh = await detailTask
+        let loadedRows = await rowsTask
+        if let loadedDyh { appState.cacheDyhDetail(loadedDyh) }
+        withAnimation(.smooth(duration: 0.24)) {
+            if let loadedDyh { dyh = loadedDyh }
+            rows = loadedRows
+        }
         hasMore = !rows.isEmpty
     }
 
@@ -1525,13 +1677,20 @@ public struct CollectionDetailView: View {
                             .font(.subheadline.weight(.semibold))
                             .padding(.horizontal, 14)
                             .padding(.vertical, 7)
-                            .background(collection.isFollowed ? Color.clear : Color.accentColor.opacity(0.18), in: Capsule())
-                            .glassEffect(.regular.interactive(), in: .capsule)
-                            .foregroundStyle(collection.isFollowed ? Color.primary : Color.accentColor)
+                            .foregroundStyle(collection.isFollowed ? Color.primary : Color.white)
+                            .background(collection.isFollowed ? Color(uiColor: .tertiarySystemFill) : Color.accentColor, in: Capsule())
+                            .overlay {
+                                Capsule()
+                                    .strokeBorder(
+                                        collection.isFollowed ? Color(uiColor: .separator).opacity(0.45) : Color.white.opacity(0.28),
+                                        lineWidth: 0.8
+                                    )
+                            }
+                            .buttonStyle(.plain)
                             .disabled(isTogglingFollow)
                         }
                         .padding(14)
-                        .c001CardStyle(cornerRadius: 18)
+                        .c001CardStyle(cornerRadius: 22)
                         .padding(.horizontal, 12)
                         .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
                     }
@@ -1590,7 +1749,15 @@ public struct CollectionDetailView: View {
                     )
                 }
             }
+            .onAppear {
+                if collection == nil, let cached = appState.cachedCollectionDetail(id: collectionID) {
+                    collection = cached
+                }
+            }
             .task(id: collectionID) {
+                if collection == nil, let cached = appState.cachedCollectionDetail(id: collectionID) {
+                    collection = cached
+                }
                 await reload()
             }
         }
@@ -1605,8 +1772,13 @@ public struct CollectionDetailView: View {
         page = 1
         async let detailTask = try? API.collectionDetail(id: collectionID)
         async let itemsTask = (try? API.collectionItems(id: collectionID, page: 1)) ?? []
-        collection = await detailTask
-        rows = await itemsTask
+        let loadedCol = await detailTask
+        let loadedItems = await itemsTask
+        if let loadedCol { appState.cacheCollectionDetail(loadedCol) }
+        withAnimation(.smooth(duration: 0.24)) {
+            if let loadedCol { collection = loadedCol }
+            rows = loadedItems
+        }
         hasMore = !rows.isEmpty
     }
 
@@ -1683,10 +1855,14 @@ public struct EventDetailView: View {
                             }
                             .aspectRatio(resolvedRatio, contentMode: .fit)
                             .frame(maxWidth: .infinity, maxHeight: 340)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace, cornerRadius: 14)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
+                            }
+                            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .applyZoomSource(id: "\(coverPrefix)-0", in: zoomNamespace, cornerRadius: 16)
                             .onTapGesture {
                                 appState.openMedia([coverMedia], at: 0, sourcePrefix: coverPrefix)
                             }
@@ -1988,17 +2164,18 @@ public struct PageFeedView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
-                Color.clear.frame(height: 0).id("page-top-\(tabID)")
-                LazyVStack(spacing: 12) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                        HomeRowRenderer(row: row)
-                            .onAppear {
-                                if idx >= rows.count - 4 { Task { await loadMore(tabID: tabID, url: tabURL) } }
-                            }
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: 0).id("page-top-\(tabID)")
+                    LazyVStack(spacing: 10) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= rows.count - 4 { Task { await loadMore(tabID: tabID, url: tabURL) } }
+                                }
+                        }
                     }
+                    .padding(.bottom, 88)
                 }
-                .padding(.top, 8)
-                .padding(.bottom, 88)
             }
             .refreshable {
                 if subTabs.isEmpty || tabURL == link {
@@ -2335,17 +2512,18 @@ public struct CoolPicView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
-                Color.clear.frame(height: 0).id("coolpic-top-\(sort)")
-                LazyVStack(spacing: 12) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                        HomeRowRenderer(row: row)
-                            .onAppear {
-                                if idx >= rows.count - 4 { Task { await loadMore(sort: sort) } }
-                            }
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: 0).id("coolpic-top-\(sort)")
+                    LazyVStack(spacing: 10) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= rows.count - 4 { Task { await loadMore(sort: sort) } }
+                                }
+                        }
                     }
+                    .padding(.bottom, 88)
                 }
-                .padding(.top, 8)
-                .padding(.bottom, 88)
             }
             .refreshable {
                 await reload(sort: sort, force: true)

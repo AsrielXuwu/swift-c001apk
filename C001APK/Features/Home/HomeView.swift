@@ -101,7 +101,7 @@ public struct HomeView: View {
                     } label: {
                         ZStack(alignment: .topTrailing) {
                             Image(systemName: "bell")
-                            if appState.badge.total > 0 {
+                            if appState.hasUnreadMessages {
                                 Circle()
                                     .fill(.red)
                                     .frame(width: 8, height: 8)
@@ -259,24 +259,25 @@ public struct HomeView: View {
             ContentUnavailableView("暂无内容", systemImage: "tray")
         } else {
             ScrollView {
-                Color.clear.frame(height: 0).id("home-top-\(tab.rawValue)")
-                LazyVStack(spacing: 10) {
-                    ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                        HomeRowRenderer(row: row)
-                            .onAppear {
-                                if index >= rows.count - 4 {
-                                    Task { await viewModel.loadMore(tab: tab, appState: appState) }
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: 0).id("home-top-\(tab.rawValue)")
+                    LazyVStack(spacing: 10) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if index >= rows.count - 4 {
+                                        Task { await viewModel.loadMore(tab: tab, appState: appState) }
+                                    }
                                 }
-                            }
-                    }
+                        }
 
-                    if viewModel.loadingMoreTabs.contains(tab) {
-                        ProgressView()
-                            .padding(.vertical, 16)
+                        if viewModel.loadingMoreTabs.contains(tab) {
+                            ProgressView()
+                                .padding(.vertical, 16)
+                        }
                     }
+                    .padding(.bottom, 92)
                 }
-                .padding(.top, 8)
-                .padding(.bottom, 92)
             }
             .onScrollGeometryChange(for: CGFloat.self) { geo in
                 geo.contentOffset.y + geo.contentInsets.top

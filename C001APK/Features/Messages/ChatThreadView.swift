@@ -47,10 +47,14 @@ public final class ChatThreadViewModel {
             if append {
                 var seen = Set(messages.map(\.id))
                 let unique = chronological.filter { seen.insert($0.id).inserted }
-                messages.insert(contentsOf: unique, at: 0)
+                withAnimation(.smooth(duration: 0.22)) {
+                    messages.insert(contentsOf: unique, at: 0)
+                }
                 hasMore = !unique.isEmpty
             } else {
-                messages = Array(chronological)
+                withAnimation(.smooth(duration: 0.22)) {
+                    messages = Array(chronological)
+                }
                 hasMore = !fetched.isEmpty
             }
             currentPage = page
@@ -65,7 +69,9 @@ public final class ChatThreadViewModel {
               resolvingIDs.insert(message.id).inserted else { return }
         defer { resolvingIDs.remove(message.id) }
         if let resolved = try? await CoolapkClient.shared.resolveMessageImageURL(id: message.id) {
-            resolvedImages[message.id] = resolved
+            withAnimation(.smooth(duration: 0.2)) {
+                resolvedImages[message.id] = resolved
+            }
         }
     }
 
@@ -74,7 +80,7 @@ public final class ChatThreadViewModel {
         guard !trimmed.isEmpty else { return }
         let localID = "local-\(UUID().uuidString)"
         let myUID = appState.accounts.activeUID ?? ""
-        let myAvatar = appState.accounts.activeAccount?.avatar ?? ""
+        let myAvatar = appState.currentUserProfile?.avatar ?? appState.accounts.activeAccount?.avatar ?? ""
 
         let local = ChatMessage(
             id: localID,
@@ -83,7 +89,9 @@ public final class ChatThreadViewModel {
             message: trimmed,
             deliveryState: .sending
         )
-        messages.append(local)
+        withAnimation(.snappy(duration: 0.22)) {
+            messages.append(local)
+        }
 
         do {
             let sent = try await API.sendChatMessage(uid: peerUID, text: trimmed)
@@ -97,7 +105,7 @@ public final class ChatThreadViewModel {
     public func sendImageData(_ data: Data, filename: String, mimeType: String, resolution: String, appState: AppState) async {
         let localID = "local-\(UUID().uuidString)"
         let myUID = appState.accounts.activeUID ?? ""
-        let myAvatar = appState.accounts.activeAccount?.avatar ?? ""
+        let myAvatar = appState.currentUserProfile?.avatar ?? appState.accounts.activeAccount?.avatar ?? ""
 
         let local = ChatMessage(
             id: localID,
@@ -106,7 +114,9 @@ public final class ChatThreadViewModel {
             message: "[图片]",
             deliveryState: .sending
         )
-        messages.append(local)
+        withAnimation(.snappy(duration: 0.22)) {
+            messages.append(local)
+        }
 
         do {
             let ossPath = try await CoolapkClient.shared.uploadChatImageToOSS(
@@ -126,12 +136,16 @@ public final class ChatThreadViewModel {
 
     public func deleteMessage(_ message: ChatMessage, appState: AppState) async {
         if message.id.hasPrefix("local-") {
-            messages.removeAll { $0.id == message.id }
+            withAnimation(.snappy(duration: 0.2)) {
+                messages.removeAll { $0.id == message.id }
+            }
             return
         }
         do {
             try await API.deleteChatMessage(ukey: ukey, id: message.id)
-            messages.removeAll { $0.id == message.id }
+            withAnimation(.snappy(duration: 0.2)) {
+                messages.removeAll { $0.id == message.id }
+            }
             appState.showToast("已删除消息")
         } catch {
             _ = await appState.handleAPIError(error)
@@ -176,7 +190,7 @@ public struct ChatThreadView: View {
         self.ukey = ukey
         self.peerUID = peerUID
         self.peerName = peerName
-        self.peerAvatar = peerAvatar
+        self.peerAvatar = coolapkNormalizedURL(peerAvatar)
         self._viewModel = State(initialValue: ChatThreadViewModel(ukey: ukey, peerUID: peerUID))
     }
 
@@ -184,8 +198,18 @@ public struct ChatThreadView: View {
         viewModel.messages.filter { !($0.isLongTimeFlag && $0.message.isEmpty && $0.messagePic.isEmpty) }
     }
 
+    private var resolvedPeerAvatar: String {
+        if !peerAvatar.isEmpty { return peerAvatar }
+        if let fromMsg = viewModel.messages.first(where: { $0.fromUID == peerUID && !$0.fromAvatar.isEmpty })?.fromAvatar {
+            return fromMsg
+        }
+        return appState.cachedUserProfile(uid: peerUID)?.avatar ?? ""
+    }
+
     public var body: some View {
         let items = visibleMessages
+        let navAvatarID = "chat-nav-avatar-\(chatSeed)"
+
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -213,7 +237,8 @@ public struct ChatThreadView: View {
                             }
                             messageRow(msg, isLastInCluster: isLastInCluster)
                         }
-                        .padding(.top, index == 0 ? 4 : (showsTimeAbove ? 14 : (isFirstInCluster ? 10 : 3)))
+                        .padding(.top, index == 0 ? 4 : (showsTimeAbove ? 14 : (isFirstInCluster ? 10 : 4)))
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                         .id(msg.id)
                     }
 
@@ -261,23 +286,33 @@ public struct ChatThreadView: View {
                 }
             }
         }
+        // Use the exact same native bottom safeAreaInset pattern as FeedDetailView without
+        // `.toolbar(.hidden, for: .tabBar)` so returning to MessagesView preserves the bottom TabBar
+        // and transitions seamlessly with `.navigationTransition(.zoom)`.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             composerBar
         }
         .c001PageBackground()
         .navigationTitle(peerName.isEmpty ? "私信" : peerName)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .tabBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    appState.push(.user(uid: peerUID, initialUsername: peerName, initialAvatar: peerAvatar))
+                    appState.push(.user(
+                        uid: peerUID,
+                        initialUsername: peerName,
+                        initialAvatar: resolvedPeerAvatar,
+                        transitionID: navAvatarID
+                    ))
                 } label: {
-                    AvatarView(url: peerAvatar, size: 28)
+                    AvatarView(url: resolvedPeerAvatar, size: 32)
+                        .applyZoomSource(id: navAvatarID, in: zoomNamespace, cornerRadius: 16)
                 }
+                .buttonStyle(.plain)
             }
         }
         .task {
+            appState.markThreadReadByUkey(ukey: ukey, uid: peerUID)
             await viewModel.loadInitial(appState: appState)
         }
         .environment(\.openURL, OpenURLAction { url in
@@ -316,54 +351,68 @@ public struct ChatThreadView: View {
         let label = Formatting.chatTimestamp(msg.dateline)
         if !label.isEmpty {
             Text(label)
-                .font(.caption2.weight(.medium))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 2)
+                .padding(.vertical, 3)
         }
     }
 
     @ViewBuilder
     private func messageRow(_ msg: ChatMessage, isLastInCluster: Bool) -> some View {
-        let isMine = msg.fromUID == appState.accounts.activeUID
+        let activeUID = appState.accounts.activeUID ?? ""
+        let isMine = !activeUID.isEmpty && msg.fromUID == activeUID
+        let myAvatar = !msg.fromAvatar.isEmpty
+            ? msg.fromAvatar
+            : (appState.currentUserProfile?.avatar ?? appState.accounts.activeAccount?.avatar ?? "")
+        let myName = appState.currentUserProfile?.username ?? appState.accounts.activeAccount?.displayName ?? ""
+        let effectivePeerAvatar = !msg.fromAvatar.isEmpty ? msg.fromAvatar : resolvedPeerAvatar
         let picURL = msg.messagePic.isEmpty ? (viewModel.resolvedImages[msg.id]?.absoluteString ?? "") : msg.messagePic
         let hasText = !msg.message.isEmpty && msg.message != "[图片]"
         let bubbleShape = IMessageBubbleShape(isMine: isMine, showTail: isLastInCluster)
         let incomingFill: Color = colorScheme == .dark
             ? Color(.tertiarySystemGroupedBackground)
             : Color(uiColor: .systemGray5)
+        let avatarSize: CGFloat = 40
+        let rowAvatarID = "chat-row-avatar-\(chatSeed)-\(msg.id)"
 
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .bottom, spacing: 10) {
             if isMine {
-                Spacer(minLength: 56)
+                Spacer(minLength: 44)
             } else if isLastInCluster {
                 Button {
-                    appState.push(.user(uid: peerUID, initialUsername: peerName, initialAvatar: peerAvatar))
+                    appState.push(.user(
+                        uid: peerUID,
+                        initialUsername: peerName,
+                        initialAvatar: effectivePeerAvatar,
+                        transitionID: rowAvatarID
+                    ))
                 } label: {
-                    AvatarView(url: msg.fromAvatar.isEmpty ? peerAvatar : msg.fromAvatar, size: 28)
+                    AvatarView(url: effectivePeerAvatar, size: avatarSize)
+                        .applyZoomSource(id: rowAvatarID, in: zoomNamespace, cornerRadius: avatarSize * 0.5)
                 }
                 .buttonStyle(.plain)
             } else {
                 Color.clear
-                    .frame(width: 28, height: 1)
+                    .frame(width: avatarSize, height: 1)
             }
 
-            VStack(alignment: isMine ? .trailing : .leading, spacing: 4) {
+            VStack(alignment: isMine ? .trailing : .leading, spacing: 5) {
                 if !picURL.isEmpty {
                     let chatPicPrefix = "chat-pic-\(chatSeed)-\(msg.id)"
                     Button {
                         appState.openMedia([FeedMedia(sourceUrl: picURL)], at: 0, sourcePrefix: chatPicPrefix)
                     } label: {
-                        RemoteImageView(url: picURL, maxPixelSize: 600)
-                            .frame(maxWidth: 228, maxHeight: 228)
+                        RemoteImageView(url: picURL, maxPixelSize: 720)
+                            .frame(maxWidth: 256, maxHeight: 256)
                             .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                             .overlay {
-                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                RoundedRectangle(cornerRadius: 20, style: .continuous)
                                     .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.06), lineWidth: 0.5)
                             }
-                            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                            .applyZoomSource(id: "\(chatPicPrefix)-0", in: zoomNamespace, cornerRadius: 18)
+                            .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                            .applyZoomSource(id: "\(chatPicPrefix)-0", in: zoomNamespace, cornerRadius: 20)
                     }
                     .buttonStyle(.plain)
                 } else if msg.message.contains("[图片]") || msg.message.isEmpty {
@@ -375,16 +424,16 @@ public struct ChatThreadView: View {
                 if hasText {
                     EmojiBundleStore.richEmojiText(
                         msg.message,
-                        emojiPointSize: 20,
+                        emojiPointSize: 22 * appState.settings.fontScale,
                         showEmoji: appState.settings.showEmoji
                     )
-                    .font(.body)
+                    .font(.system(size: 16.5 * appState.settings.fontScale))
+                    .lineSpacing(2.5)
                     .foregroundStyle(isMine ? Color.white : Color.primary)
                     .tint(isMine ? Color.white : Color.accentColor)
-                    .padding(.top, 9)
-                    .padding(.bottom, 9)
-                    .padding(.leading, isMine ? 13 : 18)
-                    .padding(.trailing, isMine ? 18 : 13)
+                    .padding(.vertical, 11)
+                    .padding(.leading, isMine ? 16 : 20)
+                    .padding(.trailing, isMine ? 20 : 16)
                     .background {
                         if isMine {
                             bubbleShape.fill(
@@ -413,12 +462,12 @@ public struct ChatThreadView: View {
 
                 if case .sending = msg.deliveryState {
                     Text("正在发送…")
-                        .font(.caption2)
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 4)
                 } else if case let .failed(reason) = msg.deliveryState {
                     Text("发送失败：\(reason)")
-                        .font(.caption2)
+                        .font(.caption)
                         .foregroundStyle(.red)
                         .padding(.horizontal, 4)
                 }
@@ -439,8 +488,28 @@ public struct ChatThreadView: View {
                 }
             }
 
-            if !isMine {
-                Spacer(minLength: 48)
+            if isMine {
+                if isLastInCluster {
+                    Button {
+                        if !activeUID.isEmpty {
+                            appState.push(.user(
+                                uid: activeUID,
+                                initialUsername: myName,
+                                initialAvatar: myAvatar,
+                                transitionID: rowAvatarID
+                            ))
+                        }
+                    } label: {
+                        AvatarView(url: myAvatar, size: avatarSize)
+                            .applyZoomSource(id: rowAvatarID, in: zoomNamespace, cornerRadius: avatarSize * 0.5)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    Color.clear
+                        .frame(width: avatarSize, height: 1)
+                }
+            } else {
+                Spacer(minLength: 44)
             }
         }
     }
@@ -449,12 +518,12 @@ public struct ChatThreadView: View {
         let canSend = !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
         return VStack(spacing: 8) {
-            GlassEffectContainer(spacing: 8) {
-                HStack(alignment: .bottom, spacing: 8) {
+            GlassEffectContainer(spacing: 10) {
+                HStack(alignment: .bottom, spacing: 10) {
                     PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
                         Image(systemName: "photo")
                             .font(.body.weight(.semibold))
-                            .frame(width: 38, height: 38)
+                            .frame(width: 44, height: 44)
                             .glassEffect(.regular.interactive(), in: .circle)
                             .foregroundStyle(.primary)
                     }
@@ -470,20 +539,21 @@ public struct ChatThreadView: View {
                     } label: {
                         Image(systemName: showEmojiPanel ? "keyboard" : "face.smiling")
                             .font(.body.weight(.semibold))
-                            .frame(width: 38, height: 38)
+                            .frame(width: 44, height: 44)
                             .glassEffect(.regular.interactive(), in: .circle)
                             .foregroundStyle(showEmojiPanel ? Color.accentColor : Color.primary)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel(showEmojiPanel ? "切换键盘" : "选择表情")
 
-                    TextField("信息", text: $draftText, axis: .vertical)
+                    TextField("发私信…", text: $draftText, axis: .vertical)
+                        .font(.body)
                         .lineLimit(1...5)
                         .focused($isComposerFocused)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .frame(minHeight: 38)
-                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .frame(minHeight: 44)
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
 
                     Button {
                         let text = draftText
@@ -492,7 +562,7 @@ public struct ChatThreadView: View {
                     } label: {
                         Image(systemName: "arrow.up")
                             .font(.body.weight(.bold))
-                            .frame(width: 38, height: 38)
+                            .frame(width: 44, height: 44)
                             .background(
                                 canSend ? Color(red: 0.0, green: 0.478, blue: 1.0) : Color.clear,
                                 in: Circle()
@@ -509,15 +579,15 @@ public struct ChatThreadView: View {
                 EmojiPickerView { name in
                     draftText += name
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
                         .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.06), lineWidth: 0.5)
                 }
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .padding(.horizontal, 12)
+        .padding(.horizontal, 14)
         .padding(.top, 6)
         .padding(.bottom, 8)
         .animation(.snappy(duration: 0.22), value: showEmojiPanel)
@@ -533,7 +603,7 @@ private struct IMessageBubbleShape: Shape {
         let height = rect.height
         let tailWidth: CGFloat = 5
         guard width > tailWidth + 12, height > 16 else {
-            return RoundedRectangle(cornerRadius: 18, style: .continuous).path(in: rect)
+            return RoundedRectangle(cornerRadius: 20, style: .continuous).path(in: rect)
         }
 
         if !showTail {
@@ -543,11 +613,11 @@ private struct IMessageBubbleShape: Shape {
                 width: width - tailWidth,
                 height: height
             )
-            return RoundedRectangle(cornerRadius: 18, style: .continuous).path(in: insetRect)
+            return RoundedRectangle(cornerRadius: 20, style: .continuous).path(in: insetRect)
         }
 
         let bodyRight = width - tailWidth
-        let radius = min(18, min(bodyRight, height) * 0.45)
+        let radius = min(20, min(bodyRight, height) * 0.46)
 
         var path = Path()
         path.move(to: CGPoint(x: radius, y: 0))

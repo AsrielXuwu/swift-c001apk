@@ -64,7 +64,7 @@ public struct UserDetailView: View {
     public init(uid: String, initialUsername: String? = nil, initialAvatar: String? = nil) {
         self.uid = uid
         self.initialUsername = initialUsername
-        self.initialAvatar = initialAvatar
+        self.initialAvatar = initialAvatar.map(coolapkNormalizedURL)
     }
 
     public var body: some View {
@@ -91,7 +91,7 @@ public struct UserDetailView: View {
                     stripHeight: $stripHeight
                 ) {
                     headerCard
-                        .padding(.top, 8)
+                        .padding(.top, 10)
                 } tabStrip: {
                     FloatingTabStrip(
                         items: UserTab.allCases,
@@ -142,15 +142,18 @@ public struct UserDetailView: View {
                 if uid != appState.accounts.activeUID {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         if appState.accounts.isLoggedIn {
+                            let chatTID = "user-chat-\(transitionSeed)"
                             Button {
                                 appState.push(.chat(
                                     ukey: profile?.id ?? uid,
                                     uid: profile?.id ?? uid,
                                     username: profile?.username ?? initialUsername ?? "",
-                                    avatar: profile?.avatar ?? initialAvatar ?? ""
+                                    avatar: profile?.avatar ?? initialAvatar ?? "",
+                                    transitionID: chatTID
                                 ))
                             } label: {
                                 Image(systemName: "envelope")
+                                    .applyZoomSource(id: chatTID, in: zoomNamespace, cornerRadius: 16)
                             }
                         }
 
@@ -209,10 +212,18 @@ public struct UserDetailView: View {
                 }
                 startLoadTab(nextTab, force: false)
             }
+            .onAppear {
+                if profile == nil, let cached = appState.cachedUserProfile(uid: uid) {
+                    profile = cached
+                }
+            }
             .task(id: uid) {
-                guard profile == nil else { return }
-                await reloadProfileHeader(showPromptOnCaptcha: false)
-                await reloadTab(tab, force: true)
+                if profile == nil, let cached = appState.cachedUserProfile(uid: uid) {
+                    profile = cached
+                }
+                async let headerLoad: Void = reloadProfileHeader(showPromptOnCaptcha: false)
+                async let tabLoad: Void = reloadTab(tab, force: !loadedTabs.contains(tab))
+                _ = await (headerLoad, tabLoad)
             }
             .onDisappear {
                 for task in tabTasks.values {
@@ -235,14 +246,17 @@ public struct UserDetailView: View {
 
     private func tabScrollPage(for item: UserTab) -> some View {
         ScrollView {
-            Color.clear
-                .frame(height: max(0, headerHeight + stripHeight))
-                .id("user-top-\(item.rawValue)")
-            LazyVStack(alignment: .leading, spacing: 12) {
-                tabBody(for: item)
+            VStack(spacing: 0) {
+                Color.clear
+                    .frame(height: max(0, headerHeight + stripHeight))
+                    .id("user-top-\(item.rawValue)")
+                LazyVStack(alignment: .leading, spacing: 10) {
+                    tabBody(for: item)
+                }
+                .padding(.bottom, 88)
             }
-            .padding(.bottom, 88)
         }
+        .scrollEdgeEffectStyle(.soft, for: .top)
         .onScrollGeometryChange(for: CGFloat.self) { geo in
             geo.contentOffset.y + geo.contentInsets.top
         } action: { _, newOffset in
@@ -265,8 +279,9 @@ public struct UserDetailView: View {
     }
 
     private var headerCard: some View {
-        let avatarURL = (profile?.avatar.isEmpty == false ? profile!.avatar : (initialAvatar ?? ""))
-        let shownName = displayTitle
+        let effectiveProfile = profile ?? appState.cachedUserProfile(uid: uid)
+        let avatarURL = (effectiveProfile?.avatar.isEmpty == false ? effectiveProfile!.avatar : (initialAvatar ?? ""))
+        let shownName = effectiveProfile?.username.isEmpty == false ? effectiveProfile!.username : displayTitle
 
         return VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 14) {
@@ -386,12 +401,20 @@ public struct UserDetailView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 7)
+            .foregroundStyle((isCloudFollowed || isLocalFollowed) ? Color.primary : Color.white)
             .background(
-                (isCloudFollowed || isLocalFollowed) ? Color.clear : Color.accentColor.opacity(0.20),
+                (isCloudFollowed || isLocalFollowed) ? Color(uiColor: .tertiarySystemFill) : Color.accentColor,
                 in: Capsule()
             )
-            .glassEffect(.regular.interactive(), in: .capsule)
-            .foregroundStyle((isCloudFollowed || isLocalFollowed) ? Color.primary : Color.accentColor)
+            .overlay {
+                Capsule()
+                    .strokeBorder(
+                        (isCloudFollowed || isLocalFollowed)
+                            ? Color(uiColor: .separator).opacity(0.45)
+                            : Color.white.opacity(0.28),
+                        lineWidth: 0.8
+                    )
+            }
         }
         .buttonStyle(.plain)
         .disabled(isTogglingFollow)
@@ -470,10 +493,17 @@ public struct UserDetailView: View {
     private func reloadProfileHeader(showPromptOnCaptcha: Bool) async {
         profileLoadFailed = false
         do {
-            profile = try await API.userProfile(uid: uid)
+            let loaded = try await API.userProfile(uid: uid)
+            guard !Task.isCancelled else { return }
+            appState.cacheUserProfile(loaded)
+            withAnimation(.smooth(duration: 0.24)) {
+                profile = loaded
+            }
         } catch {
             guard !Task.isCancelled else { return }
-            profileLoadFailed = true
+            if profile == nil {
+                profileLoadFailed = true
+            }
             _ = await appState.handleAPIError(error, allowCaptchaPrompt: showPromptOnCaptcha)
         }
     }
@@ -494,12 +524,18 @@ public struct UserDetailView: View {
             case .feeds:
                 let fetched = try await API.userFeeds(uid: targetUID, page: 1)
                 guard !Task.isCancelled else { return }
-                rows = fetched
+                withAnimation(.smooth(duration: 0.24)) {
+                    rows = fetched
+                    loadedTabs.insert(targetTab)
+                }
                 hasMoreByTab[.feeds] = !fetched.isEmpty
             case .likes:
                 let fetched = try await API.userLikeFeeds(uid: targetUID, page: 1)
                 guard !Task.isCancelled else { return }
-                likedRows = fetched
+                withAnimation(.smooth(duration: 0.24)) {
+                    likedRows = fetched
+                    loadedTabs.insert(targetTab)
+                }
                 hasMoreByTab[.likes] = !fetched.isEmpty
             case .collections:
                 if !appState.settings.enableCloudFavoritesLoad {
@@ -510,7 +546,10 @@ public struct UserDetailView: View {
                 }
                 let fetched = try await API.collectionList(uid: targetUID, page: 1)
                 guard !Task.isCancelled else { return }
-                userCollections = fetched
+                withAnimation(.smooth(duration: 0.24)) {
+                    userCollections = fetched
+                    loadedTabs.insert(targetTab)
+                }
                 hasMoreByTab[.collections] = !fetched.isEmpty
             case .following:
                 if !appState.settings.enableCloudFollowLoad {
@@ -521,7 +560,10 @@ public struct UserDetailView: View {
                 }
                 let fetched = try await API.userList(uid: targetUID, followers: false, page: 1)
                 guard !Task.isCancelled else { return }
-                following = fetched
+                withAnimation(.smooth(duration: 0.24)) {
+                    following = fetched
+                    loadedTabs.insert(targetTab)
+                }
                 hasMoreByTab[.following] = !fetched.isEmpty
             case .fans:
                 if !appState.settings.enableCloudFollowLoad {
@@ -532,10 +574,12 @@ public struct UserDetailView: View {
                 }
                 let fetched = try await API.userList(uid: targetUID, followers: true, page: 1)
                 guard !Task.isCancelled else { return }
-                followers = fetched
+                withAnimation(.smooth(duration: 0.24)) {
+                    followers = fetched
+                    loadedTabs.insert(targetTab)
+                }
                 hasMoreByTab[.fans] = !fetched.isEmpty
             }
-            loadedTabs.insert(targetTab)
         } catch {
             guard !Task.isCancelled else { return }
             _ = await appState.handleAPIError(error)

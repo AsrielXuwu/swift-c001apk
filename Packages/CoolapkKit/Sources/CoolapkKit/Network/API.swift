@@ -647,20 +647,80 @@ public enum API: Sendable {
     public static func feedDetail(id: String, allowPublicFallback: Bool = true) async throws -> FeedItem {
         do {
             let json = try await client.get("/v6/feed/detail", ["id": id], clearProofOnCaptcha: !allowPublicFallback)
-            return FeedItem(json: json.data)
+            let data = json.data
+            let entityType = data.entityType.string.lowercased()
+            let parentFID = [data.fid.identifier, data.feed_id.identifier, data.feedId.identifier]
+                .first { !$0.isEmpty && $0 != "0" && $0 != id }
+            if (entityType == "feed_reply" || entityType == "reply"),
+               let parentFID,
+               let parentJSON = try? await client.get("/v6/feed/detail", ["id": parentFID], clearProofOnCaptcha: false),
+               parentJSON.data.isObject,
+               !parentJSON.data.id.identifier.isEmpty {
+                return FeedItem(json: parentJSON.data)
+            }
+            return FeedItem(json: data)
         } catch let error as APIError {
+            // If `id` came from a notification reply link (`feed_reply` ID rather than top-level `feed` ID),
+            // `/v6/feed/detail` returns "无法访问该数据". Probe replyDetail / replyList to resolve the parent `fid`.
+            if let resolvedFromReply = await resolveFeedFromReplyIDIfPossible(replyID: id, allowPublicFallback: allowPublicFallback) {
+                return resolvedFromReply
+            }
             if allowPublicFallback {
-                switch error {
-                case .captchaRequired, .unauthorized:
-                    if let pub = try? await client.publicFeedJSON(id: id) {
-                        return FeedItem(json: pub.data)
-                    }
-                default:
-                    break
+                if let pub = try? await client.publicFeedJSON(id: id) {
+                    return FeedItem(json: pub.data)
                 }
             }
             throw error
         }
+    }
+
+    private static func resolveFeedFromReplyIDIfPossible(replyID: String, allowPublicFallback: Bool) async -> FeedItem? {
+        guard !replyID.isEmpty, replyID != "0" else { return nil }
+        let candidateEndpoints: [(String, [String: String])] = [
+            ("/v6/feed/replyDetail", ["id": replyID]),
+            ("/v6/feed/detail", ["id": replyID, "type": "feed_reply"]),
+            ("/v6/feed/replyList", [
+                "id": replyID,
+                "page": "1",
+                "discussMode": "0",
+                "feedType": "feed_reply",
+                "blockStatus": "0",
+                "fromFeedAuthor": "0"
+            ])
+        ]
+        var fallbackReplyJSON: JSON?
+        for (path, query) in candidateEndpoints {
+            guard let json = try? await client.get(path, query, clearProofOnCaptcha: false) else { continue }
+            let data = json.data
+            let objects: [JSON] = data.isObject ? [data, data.feedInfo, data.targetRow] : data.array
+            for obj in objects where obj.isObject {
+                let parentFID = [
+                    obj.fid.identifier,
+                    obj.feed_id.identifier,
+                    obj.feedId.identifier,
+                    obj.feedInfo.id.identifier,
+                    obj.targetRow.id.identifier
+                ].first { !$0.isEmpty && $0 != "0" && $0 != replyID }
+                if let parentFID {
+                    if let parentDetail = try? await client.get("/v6/feed/detail", ["id": parentFID], clearProofOnCaptcha: false),
+                       parentDetail.data.isObject,
+                       !parentDetail.data.id.identifier.isEmpty {
+                        return FeedItem(json: parentDetail.data)
+                    }
+                    if allowPublicFallback,
+                       let pub = try? await client.publicFeedJSON(id: parentFID) {
+                        return FeedItem(json: pub.data)
+                    }
+                }
+                if fallbackReplyJSON == nil, !obj.message.string.isEmpty, !obj.uid.identifier.isEmpty {
+                    fallbackReplyJSON = obj
+                }
+            }
+        }
+        if let fallbackReplyJSON {
+            return FeedItem(json: fallbackReplyJSON)
+        }
+        return nil
     }
 
     public static func replies(
@@ -838,7 +898,32 @@ public enum API: Sendable {
     // MARK: - Users
 
     public static func userProfile(uid: String) async throws -> UserProfile {
-        let json = try await client.get("/v6/user/profile", ["uid": uid])
+        let cleanUID = (uid.removingPercentEncoding ?? uid).trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            let json = try await client.get("/v6/user/profile", ["uid": cleanUID])
+            let parsed = UserProfile(json: json.data)
+            if !parsed.id.isEmpty || !parsed.username.isEmpty {
+                return parsed
+            }
+        } catch let error as APIError {
+            if case .captchaRequired = error { throw error }
+            // Fall through to /v6/user/space and user feedList fallback when /v6/user/profile returns "无法访问该数据"
+        }
+        if let spaceJSON = try? await client.get("/v6/user/space", ["uid": cleanUID], clearProofOnCaptcha: false) {
+            let parsed = UserProfile(json: spaceJSON.data)
+            if !parsed.id.isEmpty || !parsed.username.isEmpty {
+                return parsed
+            }
+        }
+        if let feedJSON = try? await client.get("/v6/user/feedList", ["uid": cleanUID, "page": "1", "isIncludeTop": "1"], clearProofOnCaptcha: false),
+           let first = feedJSON.data.array.first {
+            let userObj = first.userInfo.isObject ? first.userInfo : first
+            let parsed = UserProfile(json: userObj)
+            if !parsed.id.isEmpty || !parsed.username.isEmpty {
+                return parsed
+            }
+        }
+        let json = try await client.get("/v6/user/space", ["uid": cleanUID])
         return UserProfile(json: json.data)
     }
 
@@ -1290,6 +1375,17 @@ public enum API: Sendable {
 
     public static func deleteMessageThread(ukey: String) async throws {
         _ = try await client.get("/v6/message/deleteChat", ["ukey": ukey])
+    }
+
+    public static func clearNotificationCount(type: String = "") async {
+        var params: [String: String] = [:]
+        if !type.isEmpty { params["type"] = type }
+        _ = try? await client.get("/v6/notification/clearCount", params, clearProofOnCaptcha: false)
+    }
+
+    public static func markMessageThreadRead(ukey: String) async {
+        guard !ukey.isEmpty else { return }
+        _ = try? await client.get("/v6/message/read", ["ukey": ukey], clearProofOnCaptcha: false)
     }
 
     // MARK: - History & Engagement
