@@ -37,6 +37,7 @@ public struct MediaGridView: View {
                     enableZoomSource: onTapItem == nil,
                     disableHDR: appState.settings.disableHDR,
                     onTapCard: { idx in triggerTap(at: idx) },
+                    onShareFile: { shareFileURL = $0 },
                     contextMenuBuilder: { item, idx in
                         mediaContextMenu(item: item, index: idx)
                     }
@@ -186,13 +187,13 @@ public struct MediaActionsContextMenu: View {
         }
 
         Button {
-            Task { await saveImageToPhotos(item) }
+            Task { await Self.saveImageToPhotos(item, appState: appState) }
         } label: {
             Label("保存到相册", systemImage: "square.and.arrow.down")
         }
 
         Button {
-            Task { await copyImageToPasteboard(item) }
+            Task { await Self.copyImageToPasteboard(item, appState: appState) }
         } label: {
             Label("复制图片", systemImage: "doc.on.doc")
         }
@@ -205,22 +206,30 @@ public struct MediaActionsContextMenu: View {
         }
 
         Button {
-            Task {
-                if let temp = await ImagePipeline.shared.downloadToTemporaryFile(
-                    urlString: item.sourceUrl,
-                    defaultExtension: item.isGif ? "gif" : "jpg"
-                ) {
-                    onShareFile(temp)
-                } else {
-                    appState.showToast("准备分享文件失败")
-                }
-            }
+            Task { await Self.shareImageFile(item, appState: appState, onShareFile: onShareFile) }
         } label: {
             Label("分享图片", systemImage: "square.and.arrow.up")
         }
     }
 
-    private func saveImageToPhotos(_ item: FeedMedia) async {
+    @MainActor
+    public static func shareImageFile(
+        _ item: FeedMedia,
+        appState: AppState,
+        onShareFile: @escaping (URL) -> Void
+    ) async {
+        if let temp = await ImagePipeline.shared.downloadToTemporaryFile(
+            urlString: item.sourceUrl,
+            defaultExtension: item.isGif ? "gif" : "jpg"
+        ) {
+            onShareFile(temp)
+        } else {
+            appState.showToast("准备分享文件失败")
+        }
+    }
+
+    @MainActor
+    public static func saveImageToPhotos(_ item: FeedMedia, appState: AppState) async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else {
             appState.showToast("请在系统设置中允许访问相册")
@@ -252,7 +261,8 @@ public struct MediaActionsContextMenu: View {
         }
     }
 
-    private func copyImageToPasteboard(_ item: FeedMedia) async {
+    @MainActor
+    public static func copyImageToPasteboard(_ item: FeedMedia, appState: AppState) async {
         if let loaded = await ImagePipeline.shared.loadImage(urlString: item.sourceUrl, maxPixelSize: nil) {
             UIPasteboard.general.image = loaded.image
             appState.showToast("已复制图片")
@@ -332,15 +342,16 @@ public struct PhotoStackCardView<MenuContent: View>: View {
     public var adaptivePerItemAspect: Bool = true
     public var initialWidth: CGFloat? = nil
     public let onTapCard: (Int) -> Void
+    public var onShareFile: ((URL) -> Void)? = nil
     @ViewBuilder public let contextMenuBuilder: (FeedMedia, Int) -> MenuContent
 
+    @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
     @Environment(\.replySwipeLock) private var replySwipeLock
     @Environment(\.replyCardCoordinateSpace) private var replyCardCoordinateSpace
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
-    @State private var isDeckAnimating = false
-    @State private var deckAnimationTicket = UUID()
+    @State private var isPreviewLifted = false
     @State private var lastDragEndedAt: Date = .distantPast
     @State private var availableWidth: CGFloat
     @State private var detectedRatios: [Int: CGFloat] = [:]
@@ -357,6 +368,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         adaptivePerItemAspect: Bool = true,
         initialWidth: CGFloat? = nil,
         onTapCard: @escaping (Int) -> Void,
+        onShareFile: ((URL) -> Void)? = nil,
         @ViewBuilder contextMenuBuilder: @escaping (FeedMedia, Int) -> MenuContent
     ) {
         self.items = items
@@ -371,6 +383,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
         self.initialWidth = initialWidth
         self._availableWidth = State(initialValue: initialWidth ?? 320)
         self.onTapCard = onTapCard
+        self.onShareFile = onShareFile
         self.contextMenuBuilder = contextMenuBuilder
     }
 
@@ -416,7 +429,6 @@ public struct PhotoStackCardView<MenuContent: View>: View {
             ? ((0..<count).map { cardFrame(at: $0, maxStageWidth: innerStageWidth).height }.max() ?? activeCardSize.height)
             : cardHeight
         let activeRatio = ratioForItem(at: activeIdx)
-        let isRestingFrontActive = count > 1 && !isHorizontalDragging && !isDeckAnimating && abs(dragProgress) < 0.001
 
         ZStack {
             OrbitalDeckStage(
@@ -426,8 +438,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
             ) { itemIndex, isFront in
                 let item = items[itemIndex]
                 let itemSize = cardFrame(at: itemIndex, maxStageWidth: innerStageWidth)
-                let shouldOwnSingleSource = enableZoomSource && ((count == 1 && isFront) || (count > 1 && isFront && !isRestingFrontActive))
-                let sourceID = shouldOwnSingleSource ? "media-\(transitionSeed)-\(itemIndex)" : nil
+                let sourceID = (isFront && enableZoomSource) ? "media-\(transitionSeed)-\(itemIndex)" : nil
 
                 if count == 1 {
                     deckCardSurface(at: itemIndex, size: itemSize)
@@ -448,7 +459,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                 } else {
                     deckCardSurface(at: itemIndex, size: itemSize)
                         .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: cornerRadius)
-                        .opacity((isFront && isRestingFrontActive) ? 0 : 1)
+                        .opacity((isFront && isPreviewLifted) ? 0 : 1)
                         .onTapGesture {
                             guard isFront,
                                   !isHorizontalDragging,
@@ -463,69 +474,64 @@ public struct PhotoStackCardView<MenuContent: View>: View {
             .padding(.bottom, bottomInset)
 
             if count > 1 {
-                let frontSourceID = (enableZoomSource && isRestingFrontActive) ? "media-\(transitionSeed)-\(activeIdx)" : nil
-                deckCardSurface(at: activeIdx, size: activeCardSize)
-                    .opacity(isRestingFrontActive ? 1 : 0)
-                    .overlay {
-                        HorizontalDeckPanOverlay(
-                            isEnabled: true,
-                            activeCardSize: activeCardSize,
-                            onTap: {
-                                guard !isHorizontalDragging,
-                                      abs(dragProgress) < 0.04,
-                                      Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
-                                onTapCard(activeIdx)
-                            },
-                            onDragChanged: { dx in
-                                if !isHorizontalDragging {
-                                    isHorizontalDragging = true
-                                    replySwipeLock?.setDraggingMedia(true)
-                                }
-                                dragProgress = max(-1.15, min(1.15, -dx / 210.0))
-                            },
-                            onDragEnded: { dx, predicted, cancelled in
-                                lastDragEndedAt = Date()
-                                isHorizontalDragging = false
-                                replySwipeLock?.setDraggingMedia(false)
-                                guard !cancelled else {
-                                    beginDeckSettleWindow()
-                                    withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
-                                        dragProgress = 0
-                                    }
-                                    return
-                                }
-                                let deltaStep: CGFloat
-                                if dx < -38 || predicted < -85 {
-                                    deltaStep = 1
-                                } else if dx > 38 || predicted > 85 {
-                                    deltaStep = -1
-                                } else {
-                                    deltaStep = 0
-                                }
-                                let combined = deckPhase + dragProgress
-                                let base = deckPhase.rounded()
-                                deckPhase = combined
+                let shouldLetterboxActive = adaptiveContentMode && (activeRatio ?? 1.0) > 1.38
+                HorizontalDeckPanOverlay(
+                    isEnabled: count > 1,
+                    activeCardSize: activeCardSize,
+                    activeItem: activeItem,
+                    cornerRadius: cornerRadius,
+                    adaptiveContentMode: adaptiveContentMode,
+                    shouldLetterboxWide: shouldLetterboxActive,
+                    disableHDR: disableHDR,
+                    appState: appState,
+                    onTap: {
+                        guard !isHorizontalDragging,
+                              abs(dragProgress) < 0.04,
+                              Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
+                        onTapCard(activeIdx)
+                    },
+                    onDragChanged: { dx in
+                        if !isHorizontalDragging {
+                            isHorizontalDragging = true
+                            replySwipeLock?.setDraggingMedia(true)
+                        }
+                        dragProgress = max(-1.15, min(1.15, -dx / 210.0))
+                    },
+                    onDragEnded: { dx, predicted, cancelled in
+                        lastDragEndedAt = Date()
+                        isHorizontalDragging = false
+                        replySwipeLock?.setDraggingMedia(false)
+                        guard !cancelled else {
+                            withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
                                 dragProgress = 0
-                                beginDeckSettleWindow()
-                                withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
-                                    deckPhase = base + deltaStep
-                                }
                             }
-                        )
-                        .frame(width: activeCardSize.width, height: activeCardSize.height)
-                    }
-                    .frame(width: activeCardSize.width, height: activeCardSize.height)
-                    .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                    .applyZoomSource(id: frontSourceID, in: zoomNamespace, cornerRadius: cornerRadius)
-                    .contextMenu {
-                        contextMenuBuilder(activeItem, activeIdx)
-                    } preview: {
-                        MediaContextMenuPreview(item: activeItem, disableHDR: disableHDR)
-                    }
-                    .padding(.leading, leftInset)
-                    .padding(.trailing, rightInset)
-                    .padding(.bottom, bottomInset)
+                            return
+                        }
+                        let deltaStep: CGFloat
+                        if dx < -38 || predicted < -85 {
+                            deltaStep = 1
+                        } else if dx > 38 || predicted > 85 {
+                            deltaStep = -1
+                        } else {
+                            deltaStep = 0
+                        }
+                        let combined = deckPhase + dragProgress
+                        let base = deckPhase.rounded()
+                        deckPhase = combined
+                        dragProgress = 0
+                        withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+                            deckPhase = base + deltaStep
+                        }
+                    },
+                    onPreviewLiftedChanged: { lifted in
+                        isPreviewLifted = lifted
+                    },
+                    onShareFile: onShareFile
+                )
+                .frame(width: activeCardSize.width, height: activeCardSize.height)
+                .padding(.leading, leftInset)
+                .padding(.trailing, rightInset)
+                .padding(.bottom, bottomInset)
             }
 
             // Stationary floating controls anchored cleanly to the active front card size.
@@ -667,27 +673,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
             }
     }
 
-    private func beginDeckSettleWindow() {
-        isDeckAnimating = true
-        let ticket = UUID()
-        deckAnimationTicket = ticket
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 420_000_000)
-            if deckAnimationTicket == ticket {
-                isDeckAnimating = false
-            }
-        }
-    }
-
-    private func updateDetectedRatio(index: Int, size: CGSize) {
-        guard size.width > 0, size.height > 0 else { return }
-        let ratio = size.width / size.height
-        if let existing = detectedRatios[index], abs(existing - ratio) < 0.01 { return }
-        detectedRatios[index] = ratio
-    }
-
     private func stepDeck(by delta: CGFloat) {
-        beginDeckSettleWindow()
         withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
             deckPhase = deckPhase.rounded() + delta
         }
@@ -928,57 +914,51 @@ public struct MediaContextMenuPreview: View {
         self._displayResult = State(initialValue: initial)
     }
 
-    public var body: some View {
+    public static func preferredSize(for item: FeedMedia, imageSize: CGSize? = nil) -> CGSize {
         let inferredRatio = MediaGridView.inferredAspectRatio(from: item.sourceUrl)
             ?? MediaGridView.inferredAspectRatio(from: item.thumbnailUrl)
             ?? 1.25
         let actualRatio: CGFloat = {
-            if let img = displayResult?.image, img.size.height > 0 {
-                return img.size.width / img.size.height
+            if let imageSize, imageSize.height > 0 {
+                return imageSize.width / imageSize.height
             }
             return inferredRatio
         }()
         let clampedRatio = max(0.38, min(actualRatio, 2.6))
         let maxW: CGFloat = 340
         let maxH: CGFloat = 460
-        let (width, height): (CGFloat, CGFloat) = {
-            if clampedRatio >= (maxW / maxH) {
-                let w = maxW
-                let h = max(110, w / clampedRatio)
-                return (w, h)
-            } else {
-                let h = maxH
-                let w = max(150, h * clampedRatio)
-                return (w, h)
-            }
-        }()
+        if clampedRatio >= (maxW / maxH) {
+            let w = maxW
+            let h = max(110, w / clampedRatio)
+            return CGSize(width: w, height: h)
+        } else {
+            let h = maxH
+            let w = max(150, h * clampedRatio)
+            return CGSize(width: w, height: h)
+        }
+    }
+
+    public var body: some View {
+        let previewSize = Self.preferredSize(for: item, imageSize: displayResult?.image.size)
+        let width = previewSize.width
+        let height = previewSize.height
         let isHDR = item.isHdr || (displayResult?.hasHDRGainMap ?? false)
         let showHDR = !disableHDR && isHDR
         let isLive = (liveVideoURL != nil) || item.isLivePhoto || ImagePipeline.cachedLiveFlagSync(urlString: item.sourceUrl)
 
         ZStack(alignment: .topTrailing) {
             ZStack {
-                if displayResult == nil && !(gifData != nil && item.isGif) {
-                    Color(.secondarySystemGroupedBackground)
-                } else {
-                    Color.clear
-                }
+                Color(.secondarySystemGroupedBackground)
 
                 if let gifData, item.isGif {
                     AnimatedGIFView(data: gifData, contentMode: .scaleAspectFill)
                 } else if let displayResult {
-                    let imageView = Image(uiImage: displayResult.image)
+                    Image(uiImage: displayResult.image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(width: width, height: height)
                         .clipped()
-                    Group {
-                        if showHDR {
-                            imageView.allowedDynamicRange(.high)
-                        } else {
-                            imageView.allowedDynamicRange(.standard)
-                        }
-                    }
+                        .allowedDynamicRange(showHDR ? .high : .standard)
 
                     if let liveVideoURL, showLiveVideo {
                         LiveVideoPlayerView(
@@ -1080,16 +1060,33 @@ private struct MediaShareActivityView: UIViewControllerRepresentable {
 struct HorizontalDeckPanOverlay: UIViewRepresentable {
     let isEnabled: Bool
     let activeCardSize: CGSize
+    let activeItem: FeedMedia
+    let cornerRadius: CGFloat
+    let adaptiveContentMode: Bool
+    let shouldLetterboxWide: Bool
+    let disableHDR: Bool
+    let appState: AppState
     let onTap: () -> Void
     let onDragChanged: (CGFloat) -> Void
     let onDragEnded: (CGFloat, CGFloat, Bool) -> Void
+    let onPreviewLiftedChanged: (Bool) -> Void
+    let onShareFile: ((URL) -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             isEnabled: isEnabled,
+            activeCardSize: activeCardSize,
+            activeItem: activeItem,
+            cornerRadius: cornerRadius,
+            adaptiveContentMode: adaptiveContentMode,
+            shouldLetterboxWide: shouldLetterboxWide,
+            disableHDR: disableHDR,
+            appState: appState,
             onTap: onTap,
             onDragChanged: onDragChanged,
-            onDragEnded: onDragEnded
+            onDragEnded: onDragEnded,
+            onPreviewLiftedChanged: onPreviewLiftedChanged,
+            onShareFile: onShareFile
         )
     }
 
@@ -1099,6 +1096,8 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         view.isOpaque = false
         view.isMultipleTouchEnabled = false
         view.activeCardSize = activeCardSize
+        view.cardBackingView.frame = CGRect(origin: .zero, size: activeCardSize)
+        view.cardBackingView.layer.cornerRadius = cornerRadius
 
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
         pan.delegate = context.coordinator
@@ -1108,28 +1107,66 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
         tap.require(toFail: pan)
 
+        let contextMenu = UIContextMenuInteraction(delegate: context.coordinator)
+
         context.coordinator.panRecognizer = pan
+        context.coordinator.overlayView = view
         view.addGestureRecognizer(pan)
         view.addGestureRecognizer(tap)
+        view.addInteraction(contextMenu)
         return view
     }
 
     func updateUIView(_ uiView: OverlayView, context: Context) {
         uiView.activeCardSize = activeCardSize
         uiView.isUserInteractionEnabled = isEnabled
+        uiView.cardBackingView.frame = CGRect(origin: .zero, size: activeCardSize)
+        uiView.cardBackingView.layer.cornerRadius = cornerRadius
+
         context.coordinator.isEnabled = isEnabled
+        context.coordinator.activeCardSize = activeCardSize
+        context.coordinator.activeItem = activeItem
+        context.coordinator.cornerRadius = cornerRadius
+        context.coordinator.adaptiveContentMode = adaptiveContentMode
+        context.coordinator.shouldLetterboxWide = shouldLetterboxWide
+        context.coordinator.disableHDR = disableHDR
+        context.coordinator.appState = appState
         context.coordinator.onTap = onTap
         context.coordinator.onDragChanged = onDragChanged
         context.coordinator.onDragEnded = onDragEnded
+        context.coordinator.onPreviewLiftedChanged = onPreviewLiftedChanged
+        context.coordinator.onShareFile = onShareFile
+        context.coordinator.overlayView = uiView
     }
 
     static func dismantleUIView(_ uiView: OverlayView, coordinator: Coordinator) {
         uiView.isUserInteractionEnabled = false
+        uiView.cardBackingView.isHidden = true
         coordinator.isEnabled = false
+        coordinator.isPreviewMenuActive = false
     }
 
     final class OverlayView: UIView {
         var activeCardSize: CGSize = .zero
+        let cardBackingView: UIImageView = {
+            let iv = UIImageView()
+            iv.backgroundColor = .secondarySystemGroupedBackground
+            iv.contentMode = .scaleAspectFill
+            iv.clipsToBounds = true
+            iv.layer.cornerCurve = .continuous
+            iv.isUserInteractionEnabled = false
+            iv.isHidden = true
+            return iv
+        }()
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            addSubview(cardBackingView)
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
 
         override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
             guard isUserInteractionEnabled, bounds.contains(point) else { return nil }
@@ -1149,23 +1186,52 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate, UIContextMenuInteractionDelegate {
         var isEnabled: Bool
+        var activeCardSize: CGSize
+        var activeItem: FeedMedia
+        var cornerRadius: CGFloat
+        var adaptiveContentMode: Bool
+        var shouldLetterboxWide: Bool
+        var disableHDR: Bool
+        var appState: AppState
         var onTap: () -> Void
         var onDragChanged: (CGFloat) -> Void
         var onDragEnded: (CGFloat, CGFloat, Bool) -> Void
+        var onPreviewLiftedChanged: (Bool) -> Void
+        var onShareFile: ((URL) -> Void)?
+        var isPreviewMenuActive = false
         weak var panRecognizer: UIPanGestureRecognizer?
+        weak var overlayView: OverlayView?
 
         init(
             isEnabled: Bool,
+            activeCardSize: CGSize,
+            activeItem: FeedMedia,
+            cornerRadius: CGFloat,
+            adaptiveContentMode: Bool,
+            shouldLetterboxWide: Bool,
+            disableHDR: Bool,
+            appState: AppState,
             onTap: @escaping () -> Void,
             onDragChanged: @escaping (CGFloat) -> Void,
-            onDragEnded: @escaping (CGFloat, CGFloat, Bool) -> Void
+            onDragEnded: @escaping (CGFloat, CGFloat, Bool) -> Void,
+            onPreviewLiftedChanged: @escaping (Bool) -> Void,
+            onShareFile: ((URL) -> Void)?
         ) {
             self.isEnabled = isEnabled
+            self.activeCardSize = activeCardSize
+            self.activeItem = activeItem
+            self.cornerRadius = cornerRadius
+            self.adaptiveContentMode = adaptiveContentMode
+            self.shouldLetterboxWide = shouldLetterboxWide
+            self.disableHDR = disableHDR
+            self.appState = appState
             self.onTap = onTap
             self.onDragChanged = onDragChanged
             self.onDragEnded = onDragEnded
+            self.onPreviewLiftedChanged = onPreviewLiftedChanged
+            self.onShareFile = onShareFile
         }
 
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
@@ -1213,6 +1279,154 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             guard isEnabled, gestureRecognizer === panRecognizer else { return false }
             return otherGestureRecognizer is UIPanGestureRecognizer
                 && !(otherGestureRecognizer is UIScreenEdgePanGestureRecognizer)
+        }
+
+        private func cachedDisplayImage(for item: FeedMedia) -> UIImage? {
+            let loaded = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
+                ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
+                ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
+                ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 960, preferHDR: false)
+                ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080, preferHDR: false)
+                ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 960, preferHDR: false)
+                ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 420, preferHDR: false)
+                ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 320, preferHDR: false)
+            return loaded?.image
+        }
+
+        private func prepareCardBackingView() -> OverlayView? {
+            guard let overlay = overlayView else { return nil }
+            let iv = overlay.cardBackingView
+            iv.frame = CGRect(origin: .zero, size: activeCardSize)
+            iv.contentMode = shouldLetterboxWide ? .scaleAspectFit : .scaleAspectFill
+            iv.layer.cornerRadius = cornerRadius
+            iv.image = cachedDisplayImage(for: activeItem)
+            iv.isHidden = false
+            return overlay
+        }
+
+        private func targetedCardPreview(for overlay: OverlayView) -> UITargetedPreview {
+            let params = UIPreviewParameters()
+            params.backgroundColor = .clear
+            params.visiblePath = UIBezierPath(
+                roundedRect: overlay.cardBackingView.bounds,
+                cornerRadius: cornerRadius
+            )
+            return UITargetedPreview(view: overlay.cardBackingView, parameters: params)
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            configurationForMenuAtLocation location: CGPoint
+        ) -> UIContextMenuConfiguration? {
+            guard isEnabled else { return nil }
+            let item = activeItem
+            let cachedImg = cachedDisplayImage(for: item)
+            let previewSize = MediaContextMenuPreview.preferredSize(for: item, imageSize: cachedImg?.size)
+            let disableHDR = self.disableHDR
+            let appState = self.appState
+            let hasShareHandler = (self.onShareFile != nil)
+
+            return UIContextMenuConfiguration(identifier: nil) {
+                let host = UIHostingController(
+                    rootView: MediaContextMenuPreview(item: item, disableHDR: disableHDR)
+                        .environment(appState)
+                )
+                host.preferredContentSize = previewSize
+                host.view.backgroundColor = .secondarySystemGroupedBackground
+                return host
+            } actionProvider: { [weak self] _ in
+                var actions: [UIAction] = [
+                    UIAction(
+                        title: "查看大图",
+                        image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
+                    ) { [weak self] _ in
+                        Task { @MainActor [weak self] in
+                            self?.onTap()
+                        }
+                    },
+                    UIAction(
+                        title: "保存到相册",
+                        image: UIImage(systemName: "square.and.arrow.down")
+                    ) { _ in
+                        Task { @MainActor in
+                            await MediaActionsContextMenu.saveImageToPhotos(item, appState: appState)
+                        }
+                    },
+                    UIAction(
+                        title: "复制图片",
+                        image: UIImage(systemName: "doc.on.doc")
+                    ) { _ in
+                        Task { @MainActor in
+                            await MediaActionsContextMenu.copyImageToPasteboard(item, appState: appState)
+                        }
+                    },
+                    UIAction(
+                        title: "复制图片链接",
+                        image: UIImage(systemName: "link")
+                    ) { _ in
+                        Task { @MainActor in
+                            UIPasteboard.general.string = item.sourceUrl
+                            appState.showToast("已复制图片链接")
+                        }
+                    }
+                ]
+                if hasShareHandler {
+                    actions.append(
+                        UIAction(
+                            title: "分享图片",
+                            image: UIImage(systemName: "square.and.arrow.up")
+                        ) { [weak self] _ in
+                            Task { @MainActor [weak self] in
+                                guard let self, let share = self.onShareFile else { return }
+                                await MediaActionsContextMenu.shareImageFile(
+                                    item,
+                                    appState: appState,
+                                    onShareFile: share
+                                )
+                            }
+                        }
+                    )
+                }
+                return UIMenu(title: "", children: actions)
+            }
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration
+        ) -> UITargetedPreview? {
+            guard let overlay = prepareCardBackingView() else { return nil }
+            isPreviewMenuActive = true
+            onPreviewLiftedChanged(true)
+            return targetedCardPreview(for: overlay)
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration
+        ) -> UITargetedPreview? {
+            guard let overlay = overlayView else { return nil }
+            overlay.cardBackingView.frame = CGRect(origin: .zero, size: activeCardSize)
+            overlay.cardBackingView.layer.cornerRadius = cornerRadius
+            return targetedCardPreview(for: overlay)
+        }
+
+        func contextMenuInteraction(
+            _ interaction: UIContextMenuInteraction,
+            willEndFor configuration: UIContextMenuConfiguration,
+            animator: (any UIContextMenuInteractionAnimating)?
+        ) {
+            isPreviewMenuActive = false
+            animator?.addCompletion { [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.onPreviewLiftedChanged(false)
+                    try? await Task.sleep(nanoseconds: 50_000_000)
+                    if !self.isPreviewMenuActive {
+                        self.overlayView?.cardBackingView.isHidden = true
+                    }
+                }
+            }
         }
     }
 }

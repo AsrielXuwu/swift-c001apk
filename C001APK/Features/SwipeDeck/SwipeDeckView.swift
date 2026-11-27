@@ -291,6 +291,7 @@ private struct SwipeFeedCardItemView: View {
                         onTapCard: { idx in
                             appState.openMedia(items, at: idx, sourcePrefix: "media-\(transitionSeed)")
                         },
+                        onShareFile: onShareFile,
                         contextMenuBuilder: { item, idx in
                             MediaActionsContextMenu(
                                 item: item,

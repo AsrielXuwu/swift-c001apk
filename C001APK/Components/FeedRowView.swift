@@ -61,7 +61,6 @@ public struct FeedRowView: View {
         }
         .padding(14)
         .c001CardStyle(cornerRadius: 22)
-        .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 22, style: .continuous))
         .modifier(OptionalDestructiveContextMenu(title: contextDeleteTitle, action: onContextDelete))

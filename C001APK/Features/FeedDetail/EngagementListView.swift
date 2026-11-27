@@ -19,7 +19,6 @@ public struct EngagementListView: View {
     public let mode: Mode
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
-    @Namespace private var sheetZoomNamespace
     @State private var navPath: [AppRoute] = []
     @State private var modalPushID = UUID()
     @State private var users: [UserBrief] = []
@@ -77,10 +76,8 @@ public struct EngagementListView: View {
                     Button("关闭") { dismiss() }
                 }
             }
-            .environment(\.zoomNamespace, sheetZoomNamespace)
             .navigationDestination(for: AppRoute.self) { route in
-                AppRouteDestinationView(route: route, zoomNamespace: sheetZoomNamespace)
-                    .environment(\.zoomNamespace, sheetZoomNamespace)
+                AppRouteDestinationView(route: route, zoomNamespace: nil)
             }
             .task {
                 guard !hasLoaded else { return }
