@@ -153,15 +153,15 @@ public struct AppRouteDestinationView: View {
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .user(uid, initialUsername, initialAvatar, transitionID):
             UserDetailView(uid: uid, initialUsername: initialUsername, initialAvatar: initialAvatar)
-                .c001NativeTopBar()
+                .scrollEdgeEffectHidden(true, for: .top)
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .topic(tag, transitionID):
             TopicDetailView(tag: tag)
-                .c001NativeTopBar()
+                .scrollEdgeEffectHidden(true, for: .top)
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .product(id, initialTitle, transitionID):
             ProductDetailView(productID: id, initialTitle: initialTitle)
-                .c001NativeTopBar()
+                .scrollEdgeEffectHidden(true, for: .top)
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .app(id, initialTitle, transitionID):
             AppDetailView(appID: id, initialTitle: initialTitle)

@@ -1524,6 +1524,8 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         private let containerView = UIView()
         private let immediateImageView = UIImageView()
         private let bridge = ContextMenuPreviewBridge()
+        private let onImageUpgraded: ((UIImage) -> Void)?
+        private(set) var currentDisplayImage: UIImage?
 
         init(
             item: FeedMedia,
@@ -1531,7 +1533,8 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             disableHDR: Bool,
             cornerRadius: CGFloat,
             appState: AppState,
-            targetSize: CGSize
+            targetSize: CGSize,
+            onImageUpgraded: ((UIImage) -> Void)? = nil
         ) {
             self.item = item
             self.initialImage = initialImage
@@ -1539,6 +1542,8 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             self.cornerRadius = cornerRadius
             self.appState = appState
             self.targetSize = targetSize
+            self.onImageUpgraded = onImageUpgraded
+            self.currentDisplayImage = initialImage
             super.init(nibName: nil, bundle: nil)
             self.preferredContentSize = targetSize
         }
@@ -1585,7 +1590,9 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                     hasBackingImageView: initialImage != nil,
                     bridge: bridge,
                     onImageUpgraded: { [weak self] upgradedImage in
+                        self?.currentDisplayImage = upgradedImage
                         self?.immediateImageView.image = upgradedImage
+                        self?.onImageUpgraded?(upgradedImage)
                     }
                 )
                 .environment(appState)
@@ -1806,7 +1813,15 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                     disableHDR: disableHDR,
                     cornerRadius: cornerRadius,
                     appState: appState,
-                    targetSize: previewSize
+                    targetSize: previewSize,
+                    onImageUpgraded: { [weak self] upgraded in
+                        guard let self, let overlay = self.overlayView, let curCfg = self.previewConfig else { return }
+                        overlay.cardBackingView.configure(
+                            image: upgraded,
+                            letterbox: curCfg.shouldLetterboxWide,
+                            cornerRadius: curCfg.cornerRadius
+                        )
+                    }
                 )
                 self?.activePreviewController = controller
                 return controller
@@ -1868,6 +1883,29 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             }
         }
 
+        private func prepareCardBackingViewForDismissal(cfg: DeckContextPreviewConfig) -> OverlayView? {
+            guard let overlay = overlayView else { return nil }
+            let targetSize = overlay.bounds.size.width > 1 && overlay.bounds.size.height > 1
+                ? overlay.bounds.size
+                : activeCardSize
+            overlay.configureBackingGeometry(size: targetSize, cornerRadius: cfg.cornerRadius)
+            let img = activePreviewController?.currentDisplayImage ?? cachedDisplayImage(
+                for: cfg.activeItem,
+                adaptiveContentMode: cfg.adaptiveContentMode,
+                disableHDR: cfg.disableHDR
+            )
+            overlay.cardBackingView.configure(
+                image: img,
+                letterbox: cfg.shouldLetterboxWide,
+                cornerRadius: cfg.cornerRadius
+            )
+            // Keep allowsVisibility = true DURING the dismissal morph animation so UIKit has a live,
+            // non-hidden target view at the exact original card bounds and morphs 1:1 back to the card
+            // instead of collapsing into a tiny dot at the top-center.
+            overlay.cardBackingView.allowsVisibility = (img != nil)
+            return overlay
+        }
+
         func contextMenuInteraction(
             _ interaction: UIContextMenuInteraction,
             previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration
@@ -1882,7 +1920,8 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             _ interaction: UIContextMenuInteraction,
             previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration
         ) -> UITargetedPreview? {
-            guard let overlay = overlayView, let cfg = previewConfig else { return nil }
+            guard let cfg = previewConfig,
+                  let overlay = prepareCardBackingViewForDismissal(cfg: cfg) else { return nil }
             return targetedCardPreview(for: overlay, cornerRadius: cfg.cornerRadius)
         }
 
@@ -1891,18 +1930,17 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             willDisplayMenuFor configuration: UIContextMenuConfiguration,
             animator: (any UIContextMenuInteractionAnimating)?
         ) {
-            // Once the preview platter has lifted, keep cardBackingView hidden so the live SwiftUI
-            // OrbitalDeckStage underneath is always unobstructed.
-            animator?.addCompletion { [weak self] in
-                MainActor.assumeIsolated {
-                    self?.overlayView?.cardBackingView.allowsVisibility = false
-                }
-            }
+            isPreviewMenuActive = true
         }
 
         private func completePreviewDismissal() {
+            isPreviewMenuActive = false
             previewConfig?.onPreviewLiftedChanged(false)
             overlayView?.cardBackingView.allowsVisibility = false
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isPreviewMenuActive else { return }
+                self.overlayView?.cardBackingView.allowsVisibility = false
+            }
         }
 
         func contextMenuInteraction(
@@ -1910,8 +1948,9 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             willEndFor configuration: UIContextMenuConfiguration,
             animator: (any UIContextMenuInteractionAnimating)?
         ) {
-            isPreviewMenuActive = false
-            overlayView?.cardBackingView.allowsVisibility = false
+            if let cfg = previewConfig {
+                _ = prepareCardBackingViewForDismissal(cfg: cfg)
+            }
             activePreviewController?.prepareForDismissal()
             if let animator {
                 animator.addCompletion { [weak self] in

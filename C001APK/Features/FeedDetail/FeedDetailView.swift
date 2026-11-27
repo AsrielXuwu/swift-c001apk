@@ -172,7 +172,11 @@ public struct FeedDetailView: View {
             }
         }
         .sheet(item: $selectedReplyForThread) { reply in
-            ReplyThreadSheet(rootReply: reply, feedAuthorUID: viewModel.feed?.uid ?? "")
+            ReplyThreadSheet(rootReply: reply, feedAuthorUID: viewModel.feed?.uid ?? "") { updatedRoot in
+                if let idx = viewModel.replies.firstIndex(where: { $0.id == updatedRoot.id }) {
+                    viewModel.replies[idx] = updatedRoot
+                }
+            }
         }
         .sheet(item: $engagementMode) { selection in
             EngagementListView(mode: selection.mode)

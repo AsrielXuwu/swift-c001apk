@@ -5,10 +5,12 @@ import UIKit
 public struct ReplyThreadSheet: View {
     public let rootReply: ReplyItem
     public let feedAuthorUID: String
+    public var onRootReplyUpdated: ((ReplyItem) -> Void)?
 
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @Namespace private var sheetZoomNamespace
+    @State private var rootItem: ReplyItem
     @State private var mediaViewer: MediaViewerPresentation?
     @State private var items: [ReplyItem] = []
     @State private var isLoading = true
@@ -18,9 +20,15 @@ public struct ReplyThreadSheet: View {
     @State private var currentPage = 1
     @State private var threadComposeMode: ComposeMode?
 
-    public init(rootReply: ReplyItem, feedAuthorUID: String) {
+    public init(
+        rootReply: ReplyItem,
+        feedAuthorUID: String,
+        onRootReplyUpdated: ((ReplyItem) -> Void)? = nil
+    ) {
         self.rootReply = rootReply
         self.feedAuthorUID = feedAuthorUID
+        self.onRootReplyUpdated = onRootReplyUpdated
+        self._rootItem = State(initialValue: rootReply)
     }
 
     public var body: some View {
@@ -28,7 +36,7 @@ public struct ReplyThreadSheet: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 10) {
                     sectionHeader("原评论")
-                    replyCard(rootReply, isRoot: true)
+                    replyCard(rootItem, isRoot: true)
                         .padding(.horizontal, 12)
 
                     sectionHeader("全部回复")
@@ -82,7 +90,7 @@ public struct ReplyThreadSheet: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        openReplyComposer(for: rootReply)
+                        openReplyComposer(for: rootItem)
                     } label: {
                         Label("回复", systemImage: "square.and.pencil")
                     }
@@ -220,14 +228,40 @@ public struct ReplyThreadSheet: View {
             appState.showLoginSheet = true
             return
         }
-        let nextLiked = !target.isLiked
+        let isRootTarget = (target.id == rootItem.id)
+        let currentLiked: Bool
+        if isRootTarget {
+            currentLiked = rootItem.isLiked
+        } else if let idx = items.firstIndex(where: { $0.id == target.id }) {
+            currentLiked = items[idx].isLiked
+        } else {
+            currentLiked = target.isLiked
+        }
+        let nextLiked = !currentLiked
+
+        // Optimistic UI update on frame 0 so sub-reply liking feels just as instantaneous as main comments.
+        if isRootTarget {
+            rootItem.isLiked = nextLiked
+            rootItem.likeNum = max(0, rootItem.likeNum + (nextLiked ? 1 : -1))
+            onRootReplyUpdated?(rootItem)
+        }
+        if let idx = items.firstIndex(where: { $0.id == target.id }) {
+            items[idx].isLiked = nextLiked
+            items[idx].likeNum = max(0, items[idx].likeNum + (nextLiked ? 1 : -1))
+        }
+
         do {
             try await API.likeReply(id: target.id, liked: nextLiked)
-            if let idx = items.firstIndex(where: { $0.id == target.id }) {
-                items[idx].isLiked = nextLiked
-                items[idx].likeNum = max(0, items[idx].likeNum + (nextLiked ? 1 : -1))
-            }
         } catch {
+            if isRootTarget {
+                rootItem.isLiked = currentLiked
+                rootItem.likeNum = max(0, rootItem.likeNum + (nextLiked ? -1 : 1))
+                onRootReplyUpdated?(rootItem)
+            }
+            if let idx = items.firstIndex(where: { $0.id == target.id }) {
+                items[idx].isLiked = currentLiked
+                items[idx].likeNum = max(0, items[idx].likeNum + (nextLiked ? -1 : 1))
+            }
             _ = await appState.handleAPIError(error)
         }
     }

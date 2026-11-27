@@ -145,10 +145,10 @@ public struct TopicDetailView: View {
                         ) {
                             if let currentTopic = topic ?? appState.cachedTopicDetail(tag: tag) {
                                 topicHeaderCard(currentTopic)
-                                    .padding(.top, 10)
+                                    .padding(.top, 8)
                             } else {
                                 topicPlaceholderHeaderCard
-                                    .padding(.top, 10)
+                                    .padding(.top, 8)
                             }
                         } tabStrip: {
                             if !activeTabs.isEmpty {
@@ -387,7 +387,7 @@ public struct TopicDetailView: View {
                 .padding(.bottom, 88)
             }
         }
-        .scrollEdgeEffectStyle(.soft, for: .top)
+        .scrollEdgeEffectHidden(true, for: .top)
         .onScrollGeometryChange(for: CGFloat.self) { geo in
             geo.contentOffset.y + geo.contentInsets.top
         } action: { _, newOffset in
@@ -683,7 +683,7 @@ public struct ProductDetailView: View {
                         ) {
                             if let currentProduct = product ?? appState.cachedProductDetail(id: productID) {
                                 productHeaderCard(currentProduct)
-                                    .padding(.top, 10)
+                                    .padding(.top, 8)
                             } else if let initialTitle, !initialTitle.isEmpty {
                                 HStack(spacing: 12) {
                                     RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -705,7 +705,7 @@ public struct ProductDetailView: View {
                                 .padding(16)
                                 .c001CardStyle(cornerRadius: 22)
                                 .padding(.horizontal, 12)
-                                .padding(.top, 10)
+                                .padding(.top, 8)
                             }
                         } tabStrip: {
                             if !activeChips.isEmpty {
@@ -857,7 +857,7 @@ public struct ProductDetailView: View {
                 .padding(.bottom, 88)
             }
         }
-        .scrollEdgeEffectStyle(.soft, for: .top)
+        .scrollEdgeEffectHidden(true, for: .top)
         .onScrollGeometryChange(for: CGFloat.self) { geo in
             geo.contentOffset.y + geo.contentInsets.top
         } action: { _, newOffset in

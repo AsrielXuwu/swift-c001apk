@@ -37,6 +37,7 @@ public struct ComposeFloatingOverlayHost: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .animation(.easeOut(duration: 0.20), value: composeMode != nil)
     }
 }
@@ -47,6 +48,7 @@ public struct ComposeSheet: View {
 
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var envDismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var viewModel = ComposeViewModel()
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var showEmojiPanel = false
@@ -55,6 +57,9 @@ public struct ComposeSheet: View {
     @State private var searchedUsers: [UserBrief] = []
     @State private var searchedTopics: [TopicItem] = []
     @State private var isSearchingPicker = false
+    @State private var keyboardHeight: CGFloat = 0
+    @State private var lastKnownKeyboardHeight: CGFloat = 290
+    @State private var isHoldingSlotForKeyboard = false
     @FocusState private var isInputFocused: Bool
     @FocusState private var isPickerSearchFocused: Bool
 
@@ -69,7 +74,14 @@ public struct ComposeSheet: View {
         self.onDismiss = onDismiss
     }
 
+    private var activeBottomSlotHeight: CGFloat {
+        let emojiHeight = (showEmojiPanel || isHoldingSlotForKeyboard) ? max(260, lastKnownKeyboardHeight) : 0
+        return max(keyboardHeight, emojiHeight)
+    }
+
     private func closeSheet() {
+        showEmojiPanel = false
+        isHoldingSlotForKeyboard = false
         isInputFocused = false
         isPickerSearchFocused = false
         resignComposeKeyboardImmediately()
@@ -103,6 +115,10 @@ public struct ComposeSheet: View {
         }
     }
 
+    private var pickerSearchPrompt: String {
+        activePanel == .mentionTopic ? "搜索话题标签" : "搜索用户名"
+    }
+
     private var isQuickReply: Bool {
         if case .newFeed = mode { return false }
         return true
@@ -114,30 +130,75 @@ public struct ComposeSheet: View {
     }
 
     public var body: some View {
-        VStack(spacing: 12) {
-            cardHeader
+        let slotHeight = activeBottomSlotHeight
 
-            switch activePanel {
-            case .compose:
-                composeBody
-                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .bottom)))
-            case .mentionUser:
-                mentionUserPanel
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
-            case .mentionTopic:
-                mentionTopicPanel
-                    .transition(.opacity.combined(with: .move(edge: .trailing)))
+        VStack(spacing: 8) {
+            VStack(spacing: 12) {
+                cardHeader
+
+                // Keep both composeBody (with its TextField) and pickerContainer (with its search TextField)
+                // mounted simultaneously in a ZStack so transferring focus between them never tears down
+                // the active UIResponder or causes the system keyboard to close and re-open.
+                ZStack(alignment: .top) {
+                    composeBody
+                        .opacity(activePanel == .compose ? 1 : 0)
+                        .allowsHitTesting(activePanel == .compose)
+                        .accessibilityHidden(activePanel != .compose)
+
+                    pickerContainer
+                        .opacity(activePanel == .compose ? 0 : 1)
+                        .allowsHitTesting(activePanel != .compose)
+                        .accessibilityHidden(activePanel == .compose)
+                }
+            }
+            .padding(14)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .padding(.horizontal, 12)
+
+            if slotHeight > 0 {
+                ZStack(alignment: .top) {
+                    if showEmojiPanel || isHoldingSlotForKeyboard {
+                        EmojiPickerView(height: max(252, slotHeight - 8)) { name in
+                            viewModel.text += name
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.06), lineWidth: 0.5)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 6)
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(height: slotHeight)
+                .clipped()
             }
         }
-        .padding(14)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .padding(.horizontal, 12)
-        .padding(.bottom, 8)
-        .animation(.easeOut(duration: 0.20), value: activePanel)
+        .padding(.bottom, slotHeight > 0 ? 0 : 8)
         .onAppear {
             if activePanel == .compose {
                 isInputFocused = true
             }
+        }
+        .onChange(of: isInputFocused) { _, focused in
+            if focused, showEmojiPanel {
+                isHoldingSlotForKeyboard = true
+                showEmojiPanel = false
+            }
+        }
+        .onChange(of: isPickerSearchFocused) { _, focused in
+            if focused, showEmojiPanel {
+                isHoldingSlotForKeyboard = true
+                showEmojiPanel = false
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            handleKeyboardFrameNotification(note, isHiding: false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
+            handleKeyboardFrameNotification(note, isHiding: true)
         }
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
@@ -148,6 +209,73 @@ public struct ComposeSheet: View {
                     }
                 }
                 photoItems.removeAll()
+            }
+        }
+    }
+
+    private func currentBottomSafeAreaInset() -> CGFloat {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        for scene in scenes {
+            if let keyWindow = scene.windows.first(where: { $0.isKeyWindow }) {
+                return keyWindow.safeAreaInsets.bottom
+            }
+        }
+        return scenes.first?.windows.first?.safeAreaInsets.bottom ?? 0
+    }
+
+    private func handleKeyboardFrameNotification(_ note: Notification, isHiding: Bool) {
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let screenHeight = (UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.screen.bounds.height) ?? 852
+        let endFrame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
+        let bottomSafe = currentBottomSafeAreaInset()
+        let rawOverlap = isHiding ? 0 : max(0, screenHeight - endFrame.minY - bottomSafe)
+        let nextHeight = rawOverlap > 40 ? rawOverlap : 0
+
+        if nextHeight > 180 {
+            lastKnownKeyboardHeight = nextHeight
+        }
+
+        if nextHeight > 40 {
+            var transaction = Transaction(animation: .easeOut(duration: max(0.18, duration)))
+            transaction.disablesAnimations = (showEmojiPanel || isHoldingSlotForKeyboard) && abs(nextHeight - activeBottomSlotHeight) < 2
+            withTransaction(transaction) {
+                keyboardHeight = nextHeight
+                isHoldingSlotForKeyboard = false
+            }
+        } else {
+            if showEmojiPanel || isHoldingSlotForKeyboard {
+                keyboardHeight = 0
+            } else {
+                withAnimation(.easeOut(duration: max(0.18, duration))) {
+                    keyboardHeight = 0
+                    isHoldingSlotForKeyboard = false
+                }
+            }
+        }
+    }
+
+    private func toggleEmojiAndKeyboard() {
+        if showEmojiPanel {
+            isHoldingSlotForKeyboard = true
+            showEmojiPanel = false
+            if activePanel == .compose {
+                isInputFocused = true
+            } else {
+                isPickerSearchFocused = true
+            }
+        } else if isInputFocused || isPickerSearchFocused || keyboardHeight > 40 {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                showEmojiPanel = true
+                keyboardHeight = 0
+            }
+            isInputFocused = false
+            isPickerSearchFocused = false
+            resignComposeKeyboardImmediately()
+        } else {
+            withAnimation(.snappy(duration: 0.24)) {
+                showEmojiPanel = true
             }
         }
     }
@@ -219,163 +347,136 @@ public struct ComposeSheet: View {
         }
     }
 
-    @ViewBuilder
     private var composeBody: some View {
-        TextField(placeholderText, text: $viewModel.text, axis: .vertical)
-            .font(.body)
-            .lineLimit(isQuickReply ? 3...7 : 5...10)
-            .focused($isInputFocused)
-            .padding(12)
-            .background(
-                Color(.secondarySystemGroupedBackground).opacity(0.68),
-                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-            )
+        VStack(spacing: 12) {
+            TextField(placeholderText, text: $viewModel.text, axis: .vertical)
+                .font(.body)
+                .lineLimit(isQuickReply ? 4...7 : 5...10)
+                .focused($isInputFocused)
+                .padding(12)
+                .frame(minHeight: isQuickReply ? 104 : 132, alignment: .topLeading)
+                .background(
+                    Color(.secondarySystemGroupedBackground).opacity(0.68),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                )
 
-        if !viewModel.pickedImages.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(viewModel.pickedImages) { item in
-                        ZStack(alignment: .topTrailing) {
-                            Image(uiImage: item.image)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 68, height: 68)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            if !viewModel.pickedImages.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(viewModel.pickedImages) { item in
+                            ZStack(alignment: .topTrailing) {
+                                Image(uiImage: item.image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 68, height: 68)
+                                    .clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
-                            Button {
-                                viewModel.removeImage(id: item.id)
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundStyle(.white, .black.opacity(0.65))
+                                Button {
+                                    viewModel.removeImage(id: item.id)
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundStyle(.white, .black.opacity(0.65))
+                                }
+                                .padding(3)
                             }
-                            .padding(3)
                         }
                     }
                 }
             }
-        }
 
-        if showEmojiPanel {
-            EmojiPickerView { name in
-                viewModel.text += name
-            }
-            .frame(maxHeight: 175)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            toolbarStrip
         }
-
-        toolbarStrip
     }
 
-    private var mentionUserPanel: some View {
+    private var pickerContainer: some View {
         VStack(spacing: 10) {
-            pickerSearchBar(prompt: "搜索用户名") { value in
-                isSearchingPicker = true
-                let results = (try? await API.searchUsers(keyword: value)) ?? []
-                searchedUsers = results
-                isSearchingPicker = false
-            }
+            pickerSearchBar
 
             ScrollView {
                 LazyVStack(spacing: 8) {
                     if isSearchingPicker {
                         ProgressView()
                             .padding(.vertical, 24)
-                    } else if searchedUsers.isEmpty {
-                        Text(searchKeyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "输入用户名搜索" : "未找到匹配用户")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 24)
-                    } else {
-                        ForEach(searchedUsers) { user in
-                            Button {
-                                viewModel.text += " @\(user.username) "
-                                switchToCompose()
-                            } label: {
-                                HStack(spacing: 10) {
-                                    AvatarView(url: user.avatar, size: 34)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(user.username)
+                    } else if activePanel == .mentionUser {
+                        if searchedUsers.isEmpty {
+                            Text(searchKeyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "输入用户名搜索" : "未找到匹配用户")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 24)
+                        } else {
+                            ForEach(searchedUsers) { user in
+                                Button {
+                                    viewModel.text += " @\(user.username) "
+                                    switchToCompose()
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        AvatarView(url: user.avatar, size: 34)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(user.username)
+                                                .font(.subheadline.weight(.medium))
+                                                .foregroundStyle(.primary)
+                                            if user.level > 0 {
+                                                Text("Lv.\(user.level)")
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        Spacer()
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .c001CardStyle(cornerRadius: 14)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    } else if activePanel == .mentionTopic {
+                        if searchedTopics.isEmpty {
+                            Text(searchKeyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "输入话题名称搜索" : "未找到相关话题")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 24)
+                        } else {
+                            ForEach(searchedTopics) { topic in
+                                Button {
+                                    viewModel.text += " #\(topic.title)# "
+                                    switchToCompose()
+                                } label: {
+                                    HStack {
+                                        Text("#\(topic.title)#")
                                             .font(.subheadline.weight(.medium))
                                             .foregroundStyle(.primary)
-                                        if user.level > 0 {
-                                            Text("Lv.\(user.level)")
-                                                .font(.caption2)
-                                                .foregroundStyle(.secondary)
-                                        }
+                                        Spacer()
+                                        Text("\(Formatting.count(topic.feedNum)) 动态")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
                                     }
-                                    Spacer()
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 10)
+                                    .c001CardStyle(cornerRadius: 14)
                                 }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .c001CardStyle(cornerRadius: 14)
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
             }
-            .frame(height: 220)
+            .frame(height: isQuickReply ? 116 : 144)
         }
     }
 
-    private var mentionTopicPanel: some View {
-        VStack(spacing: 10) {
-            pickerSearchBar(prompt: "搜索话题标签") { value in
-                isSearchingPicker = true
-                let results = (try? await API.searchTags(keyword: value)) ?? []
-                searchedTopics = results
-                isSearchingPicker = false
-            }
-
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    if isSearchingPicker {
-                        ProgressView()
-                            .padding(.vertical, 24)
-                    } else if searchedTopics.isEmpty {
-                        Text(searchKeyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "输入话题名称搜索" : "未找到相关话题")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 24)
-                    } else {
-                        ForEach(searchedTopics) { topic in
-                            Button {
-                                viewModel.text += " #\(topic.title)# "
-                                switchToCompose()
-                            } label: {
-                                HStack {
-                                    Text("#\(topic.title)#")
-                                        .font(.subheadline.weight(.medium))
-                                        .foregroundStyle(.primary)
-                                    Spacer()
-                                    Text("\(Formatting.count(topic.feedNum)) 动态")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 10)
-                                .c001CardStyle(cornerRadius: 14)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-            .frame(height: 220)
-        }
-    }
-
-    private func pickerSearchBar(prompt: String, onSearch: @escaping (String) async -> Void) -> some View {
+    private var pickerSearchBar: some View {
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
-            TextField(prompt, text: $searchKeyword)
+            TextField(pickerSearchPrompt, text: $searchKeyword)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .focused($isPickerSearchFocused)
                 .onChange(of: searchKeyword) { _, value in
                     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let currentPanel = activePanel
                     Task {
                         guard !trimmed.isEmpty else {
                             searchedUsers = []
@@ -383,9 +484,17 @@ public struct ComposeSheet: View {
                             isSearchingPicker = false
                             return
                         }
-                        try? await Task.sleep(nanoseconds: 250_000_000)
+                        try? await Task.sleep(nanoseconds: 220_000_000)
                         guard searchKeyword.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
-                        await onSearch(trimmed)
+                        isSearchingPicker = true
+                        if currentPanel == .mentionUser {
+                            let results = (try? await API.searchUsers(keyword: trimmed)) ?? []
+                            searchedUsers = results
+                        } else if currentPanel == .mentionTopic {
+                            let results = (try? await API.searchTags(keyword: trimmed)) ?? []
+                            searchedTopics = results
+                        }
+                        isSearchingPicker = false
                     }
                 }
             if !searchKeyword.isEmpty {
@@ -413,22 +522,28 @@ public struct ComposeSheet: View {
         searchedUsers = []
         searchedTopics = []
         isSearchingPicker = false
-        showEmojiPanel = false
-        isInputFocused = false
-        activePanel = panel
-        Task {
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            isPickerSearchFocused = true
+        if showEmojiPanel {
+            isHoldingSlotForKeyboard = true
+            showEmojiPanel = false
         }
+        withAnimation(.snappy(duration: 0.20)) {
+            activePanel = panel
+        }
+        // Directly transfer focus to the already-mounted picker search TextField without resigning
+        // first responder first, so the system keyboard stays open seamlessly without any bounce.
+        isPickerSearchFocused = true
     }
 
     private func switchToCompose() {
-        isPickerSearchFocused = false
-        activePanel = .compose
-        Task {
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            isInputFocused = true
+        if showEmojiPanel {
+            isHoldingSlotForKeyboard = true
+            showEmojiPanel = false
         }
+        withAnimation(.snappy(duration: 0.20)) {
+            activePanel = .compose
+        }
+        // Directly transfer focus back to the already-mounted compose TextField without closing the keyboard.
+        isInputFocused = true
     }
 
     private var toolbarStrip: some View {
@@ -445,17 +560,12 @@ public struct ComposeSheet: View {
                 }
 
                 Button {
-                    if !showEmojiPanel {
-                        isInputFocused = false
-                    } else {
-                        isInputFocused = true
-                    }
-                    withAnimation(.snappy(duration: 0.22)) {
-                        showEmojiPanel.toggle()
-                    }
+                    toggleEmojiAndKeyboard()
                 } label: {
                     Image(systemName: showEmojiPanel ? "keyboard" : "face.smiling")
                         .font(.body.weight(.semibold))
+                        .contentTransition(.identity)
+                        .transaction { $0.animation = nil }
                         .frame(width: 42, height: 42)
                         .glassEffect(.regular.interactive(), in: .circle)
                         .foregroundStyle(showEmojiPanel ? Color.accentColor : Color.primary)

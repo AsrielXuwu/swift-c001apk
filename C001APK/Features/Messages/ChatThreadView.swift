@@ -182,7 +182,15 @@ public struct ChatThreadView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var lastObservedTailID: String?
     @State private var showEmojiPanel = false
+    @State private var keyboardHeight: CGFloat = 0
+    @State private var lastKnownKeyboardHeight: CGFloat = 290
+    @State private var isHoldingSlotForKeyboard = false
     @FocusState private var isComposerFocused: Bool
+
+    private var activeBottomSlotHeight: CGFloat {
+        let emojiHeight = (showEmojiPanel || isHoldingSlotForKeyboard) ? max(260, lastKnownKeyboardHeight) : 0
+        return max(keyboardHeight, emojiHeight)
+    }
 
     private let bottomAnchorID = "chat-bottom-anchor"
 
@@ -265,7 +273,10 @@ public struct ChatThreadView: View {
             }
             .onChange(of: isComposerFocused) { _, focused in
                 if focused {
-                    showEmojiPanel = false
+                    if showEmojiPanel {
+                        isHoldingSlotForKeyboard = true
+                        showEmojiPanel = false
+                    }
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 60_000_000)
                         withAnimation(.snappy(duration: 0.24)) {
@@ -276,7 +287,6 @@ public struct ChatThreadView: View {
             }
             .onChange(of: showEmojiPanel) { _, shown in
                 if shown {
-                    isComposerFocused = false
                     Task { @MainActor in
                         try? await Task.sleep(nanoseconds: 60_000_000)
                         withAnimation(.snappy(duration: 0.24)) {
@@ -286,11 +296,17 @@ public struct ChatThreadView: View {
                 }
             }
         }
-        // Use the exact same native bottom safeAreaInset pattern as FeedDetailView without
-        // `.toolbar(.hidden, for: .tabBar)` so returning to MessagesView preserves the bottom TabBar
-        // and transitions seamlessly with `.navigationTransition(.zoom)`.
+        // Use a unified keyboard/emoji bottom slot with `.ignoresSafeArea(.keyboard, edges: .bottom)`
+        // so switching between the system keyboard and the emoji panel never stacks their heights or bounces the buttons.
         .safeAreaInset(edge: .bottom, spacing: 0) {
             composerBar
+        }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            handleKeyboardFrameNotification(note, isHiding: false)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
+            handleKeyboardFrameNotification(note, isHiding: true)
         }
         .c001PageBackground()
         .navigationTitle(peerName.isEmpty ? "私信" : peerName)
@@ -514,10 +530,78 @@ public struct ChatThreadView: View {
         }
     }
 
+    private func currentBottomSafeAreaInset() -> CGFloat {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        for scene in scenes {
+            if let keyWindow = scene.windows.first(where: { $0.isKeyWindow }) {
+                return keyWindow.safeAreaInsets.bottom
+            }
+        }
+        return scenes.first?.windows.first?.safeAreaInsets.bottom ?? 0
+    }
+
+    private func handleKeyboardFrameNotification(_ note: Notification, isHiding: Bool) {
+        let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
+        let screenHeight = (UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.screen.bounds.height) ?? 852
+        let endFrame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
+        let bottomSafe = currentBottomSafeAreaInset()
+        let rawOverlap = isHiding ? 0 : max(0, screenHeight - endFrame.minY - bottomSafe)
+        let nextHeight = rawOverlap > 40 ? rawOverlap : 0
+
+        if nextHeight > 180 {
+            lastKnownKeyboardHeight = nextHeight
+        }
+
+        if nextHeight > 40 {
+            // Keyboard is rising: keep slot locked until keyboard reaches full height
+            var transaction = Transaction(animation: .easeOut(duration: max(0.18, duration)))
+            transaction.disablesAnimations = (showEmojiPanel || isHoldingSlotForKeyboard) && abs(nextHeight - activeBottomSlotHeight) < 2
+            withTransaction(transaction) {
+                keyboardHeight = nextHeight
+                isHoldingSlotForKeyboard = false
+            }
+        } else {
+            if showEmojiPanel {
+                // Switching from keyboard to emoji: keep slot stationary without animating a dip
+                keyboardHeight = 0
+            } else {
+                withAnimation(.easeOut(duration: max(0.18, duration))) {
+                    keyboardHeight = 0
+                    isHoldingSlotForKeyboard = false
+                }
+            }
+        }
+    }
+
+    private func toggleEmojiAndKeyboard() {
+        if showEmojiPanel {
+            // Emoji -> Keyboard: hold the bottom slot at the exact current height while the keyboard rises
+            isHoldingSlotForKeyboard = true
+            showEmojiPanel = false
+            isComposerFocused = true
+        } else if isComposerFocused || keyboardHeight > 40 {
+            // Keyboard -> Emoji: swap in place at the exact current keyboard height without moving the button bar
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                showEmojiPanel = true
+                keyboardHeight = 0
+            }
+            isComposerFocused = false
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        } else {
+            // Both closed -> Open Emoji smoothly
+            withAnimation(.snappy(duration: 0.24)) {
+                showEmojiPanel = true
+            }
+        }
+    }
+
     private var composerBar: some View {
         let canSend = !draftText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let slotHeight = activeBottomSlotHeight
 
-        return VStack(spacing: 8) {
+        return VStack(spacing: 0) {
             GlassEffectContainer(spacing: 10) {
                 HStack(alignment: .bottom, spacing: 10) {
                     PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
@@ -529,16 +613,12 @@ public struct ChatThreadView: View {
                     }
 
                     Button {
-                        if showEmojiPanel {
-                            showEmojiPanel = false
-                            isComposerFocused = true
-                        } else {
-                            isComposerFocused = false
-                            showEmojiPanel = true
-                        }
+                        toggleEmojiAndKeyboard()
                     } label: {
                         Image(systemName: showEmojiPanel ? "keyboard" : "face.smiling")
                             .font(.body.weight(.semibold))
+                            .contentTransition(.identity)
+                            .transaction { $0.animation = nil }
                             .frame(width: 44, height: 44)
                             .glassEffect(.regular.interactive(), in: .circle)
                             .foregroundStyle(showEmojiPanel ? Color.accentColor : Color.primary)
@@ -574,23 +654,30 @@ public struct ChatThreadView: View {
                     .disabled(!canSend)
                 }
             }
+            .padding(.bottom, 8)
 
-            if showEmojiPanel {
-                EmojiPickerView { name in
-                    draftText += name
+            if slotHeight > 0 {
+                ZStack(alignment: .top) {
+                    if showEmojiPanel || isHoldingSlotForKeyboard {
+                        EmojiPickerView(height: max(252, slotHeight - 6)) { name in
+                            draftText += name
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                                .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.06), lineWidth: 0.5)
+                        }
+                        .padding(.bottom, 6)
+                    } else {
+                        Color.clear
+                    }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.06), lineWidth: 0.5)
-                }
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .frame(height: slotHeight)
+                .clipped()
             }
         }
         .padding(.horizontal, 14)
         .padding(.top, 6)
-        .padding(.bottom, 8)
-        .animation(.snappy(duration: 0.22), value: showEmojiPanel)
     }
 }
 

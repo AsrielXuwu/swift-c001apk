@@ -91,7 +91,7 @@ public struct UserDetailView: View {
                     stripHeight: $stripHeight
                 ) {
                     headerCard
-                        .padding(.top, 10)
+                        .padding(.top, 8)
                 } tabStrip: {
                     FloatingTabStrip(
                         items: UserTab.allCases,
@@ -142,19 +142,20 @@ public struct UserDetailView: View {
                 if uid != appState.accounts.activeUID {
                     ToolbarItemGroup(placement: .topBarTrailing) {
                         if appState.accounts.isLoggedIn {
-                            let chatTID = "user-chat-\(transitionSeed)"
                             Button {
+                                let targetUID = profile?.id ?? uid
+                                let targetName = profile?.username ?? initialUsername ?? ""
+                                let targetAvatar = profile?.avatar ?? initialAvatar ?? ""
                                 appState.push(.chat(
-                                    ukey: profile?.id ?? uid,
-                                    uid: profile?.id ?? uid,
-                                    username: profile?.username ?? initialUsername ?? "",
-                                    avatar: profile?.avatar ?? initialAvatar ?? "",
-                                    transitionID: chatTID
+                                    ukey: targetUID,
+                                    uid: targetUID,
+                                    username: targetName,
+                                    avatar: targetAvatar
                                 ))
                             } label: {
                                 Image(systemName: "envelope")
-                                    .applyZoomSource(id: chatTID, in: zoomNamespace, cornerRadius: 16)
                             }
+                            .accessibilityLabel("发私信")
                         }
 
                         Menu {
@@ -256,7 +257,7 @@ public struct UserDetailView: View {
                 .padding(.bottom, 88)
             }
         }
-        .scrollEdgeEffectStyle(.soft, for: .top)
+        .scrollEdgeEffectHidden(true, for: .top)
         .onScrollGeometryChange(for: CGFloat.self) { geo in
             geo.contentOffset.y + geo.contentInsets.top
         } action: { _, newOffset in
