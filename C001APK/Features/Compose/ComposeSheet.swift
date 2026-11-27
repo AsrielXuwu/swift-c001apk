@@ -131,85 +131,100 @@ public struct ComposeSheet: View {
 
     public var body: some View {
         let slotHeight = activeBottomSlotHeight
-
-        VStack(spacing: 8) {
-            VStack(spacing: 12) {
-                cardHeader
-
-                // Keep both composeBody (with its TextField) and pickerContainer (with its search TextField)
-                // mounted simultaneously in a ZStack so transferring focus between them never tears down
-                // the active UIResponder or causes the system keyboard to close and re-open.
-                ZStack(alignment: .top) {
-                    composeBody
-                        .opacity(activePanel == .compose ? 1 : 0)
-                        .allowsHitTesting(activePanel == .compose)
-                        .accessibilityHidden(activePanel != .compose)
-
-                    pickerContainer
-                        .opacity(activePanel == .compose ? 0 : 1)
-                        .allowsHitTesting(activePanel != .compose)
-                        .accessibilityHidden(activePanel == .compose)
+        composeRootContainer(slotHeight: slotHeight)
+            .onAppear {
+                if activePanel == .compose {
+                    isInputFocused = true
                 }
             }
-            .padding(14)
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .padding(.horizontal, 12)
-
-            if slotHeight > 0 {
-                ZStack(alignment: .top) {
-                    if showEmojiPanel || isHoldingSlotForKeyboard {
-                        EmojiPickerView(height: max(252, slotHeight - 8)) { name in
-                            viewModel.text += name
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                                .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.06), lineWidth: 0.5)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 6)
-                    } else {
-                        Color.clear
-                    }
+            .onChange(of: isInputFocused) { _, focused in
+                if focused, showEmojiPanel {
+                    isHoldingSlotForKeyboard = true
+                    showEmojiPanel = false
                 }
-                .frame(height: slotHeight)
-                .clipped()
+            }
+            .onChange(of: isPickerSearchFocused) { _, focused in
+                if focused, showEmojiPanel {
+                    isHoldingSlotForKeyboard = true
+                    showEmojiPanel = false
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+                handleKeyboardFrameNotification(note, isHiding: false)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
+                handleKeyboardFrameNotification(note, isHiding: true)
+            }
+            .onChange(of: photoItems) { _, items in
+                handleSelectedPhotoItems(items)
+            }
+    }
+
+    @ViewBuilder
+    private func composeRootContainer(slotHeight: CGFloat) -> some View {
+        VStack(spacing: 8) {
+            composeMainGlassCard
+            if slotHeight > 0 {
+                composeBottomEmojiSlot(slotHeight: slotHeight)
             }
         }
         .padding(.bottom, slotHeight > 0 ? 0 : 8)
-        .onAppear {
-            if activePanel == .compose {
-                isInputFocused = true
+    }
+
+    private var composeMainGlassCard: some View {
+        let isComposePanel = (activePanel == .compose)
+        return VStack(spacing: 12) {
+            cardHeader
+
+            ZStack(alignment: .top) {
+                composeBody
+                    .opacity(isComposePanel ? 1 : 0)
+                    .allowsHitTesting(isComposePanel)
+                    .accessibilityHidden(!isComposePanel)
+
+                pickerContainer
+                    .opacity(isComposePanel ? 0 : 1)
+                    .allowsHitTesting(!isComposePanel)
+                    .accessibilityHidden(isComposePanel)
             }
         }
-        .onChange(of: isInputFocused) { _, focused in
-            if focused, showEmojiPanel {
-                isHoldingSlotForKeyboard = true
-                showEmojiPanel = false
-            }
-        }
-        .onChange(of: isPickerSearchFocused) { _, focused in
-            if focused, showEmojiPanel {
-                isHoldingSlotForKeyboard = true
-                showEmojiPanel = false
-            }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
-            handleKeyboardFrameNotification(note, isHiding: false)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
-            handleKeyboardFrameNotification(note, isHiding: true)
-        }
-        .onChange(of: photoItems) { _, items in
-            guard !items.isEmpty else { return }
-            Task {
-                for item in items {
-                    if let data = try? await item.loadTransferable(type: Data.self) {
-                        viewModel.addImageData(data)
-                    }
+        .padding(14)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(.horizontal, 12)
+    }
+
+    @ViewBuilder
+    private func composeBottomEmojiSlot(slotHeight: CGFloat) -> some View {
+        let strokeColor = Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.06)
+        ZStack(alignment: .top) {
+            if showEmojiPanel || isHoldingSlotForKeyboard {
+                EmojiPickerView(height: max(252, slotHeight - 8)) { name in
+                    viewModel.text += name
                 }
-                photoItems.removeAll()
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .strokeBorder(strokeColor, lineWidth: 0.5)
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 6)
+            } else {
+                Color.clear
             }
+        }
+        .frame(height: slotHeight)
+        .clipped()
+    }
+
+    private func handleSelectedPhotoItems(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        Task {
+            for item in items {
+                if let data = try? await item.loadTransferable(type: Data.self) {
+                    viewModel.addImageData(data)
+                }
+            }
+            photoItems.removeAll()
         }
     }
 

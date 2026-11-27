@@ -211,56 +211,248 @@ public struct HistoryListView: View {
     }
 }
 
-private struct CloudFavoriteEntry: Identifiable, Hashable {
-    let collectionID: String
-    let collectionTitle: String
-    let feed: FeedItem
+private enum NewFolderLocationMode: String, CaseIterable, Identifiable {
+    case local = "本机收藏夹"
+    case cloud = "云端收藏夹"
+    case both = "本机 + 云端同名"
 
-    var id: String { "\(collectionID)-\(feed.id)" }
+    var id: String { rawValue }
+}
+
+private struct MergedFavoriteFolderItem: Identifiable, Hashable {
+    let key: String
+    let title: String
+    let localFolder: LocalFavoriteFolder?
+    let cloudCollection: CollectionItem?
+    let localItemCount: Int
+    let cloudItemCount: Int
+
+    var id: String { key }
+    var hasLocal: Bool { localFolder != nil }
+    var hasCloud: Bool { cloudCollection != nil }
+    var logoURL: String { cloudCollection?.logo ?? "" }
+
+    var isDeletable: Bool {
+        let localCanDelete = (localFolder != nil && localFolder?.id != HistoryAndFavStore.defaultFolderID)
+        let cloudCanDelete = (cloudCollection != nil)
+        return localCanDelete || cloudCanDelete
+    }
+
+    var subtitleText: String {
+        if hasLocal && hasCloud {
+            let followText = cloudCollection.map { " · \(Formatting.count($0.followNum)) 关注" } ?? ""
+            return "本机 \(localItemCount) 条 · 云端 \(cloudItemCount) 条\(followText)"
+        } else if let col = cloudCollection {
+            return "\(max(col.itemNum, cloudItemCount)) 项云端内容 · \(Formatting.count(col.followNum)) 关注"
+        } else {
+            return "\(localItemCount) 条本机收藏"
+        }
+    }
+}
+
+private struct UnifiedFavoriteFeedItem: Identifiable {
+    let feedID: String
+    let localEntry: LocalFavoriteEntry?
+    let cloudEntry: CachedCloudFavoriteEntry?
+    let allCloudEntriesForFeed: [CachedCloudFavoriteEntry]
+
+    var id: String {
+        if let localEntry, !localEntry.resolvedIsCloudSynced {
+            return "local:\(feedID)"
+        }
+        if let cloudEntry {
+            return "cloud:\(cloudEntry.collectionID):\(feedID)"
+        }
+        return "fav:\(feedID)"
+    }
+
+    var isCloud: Bool {
+        if cloudEntry != nil { return true }
+        return localEntry?.resolvedIsCloudSynced ?? false
+    }
+
+    var isLocal: Bool {
+        if let localEntry, !localEntry.resolvedIsCloudSynced {
+            return true
+        }
+        return false
+    }
 }
 
 public struct FavoritesListView: View {
     @Environment(AppState.self) private var appState
-    @State private var remoteCollections: [CollectionItem] = []
-    @State private var cloudEntries: [CloudFavoriteEntry] = []
-    @State private var selectedFolderID: String? = nil
+    @State private var selectedFolderKey: String? = nil
     @State private var isSyncingCloud = false
-    @State private var isSelecting = false
-    @State private var selectedKeys: Set<String> = []
+    @State private var isSelectingItems = false
+    @State private var selectedItemIDs: Set<String> = []
+    @State private var isManagingFolders = false
+    @State private var selectedFolderKeys: Set<String> = []
     @State private var isBatchDeleting = false
+    @State private var showCreateFolderSheet = false
+    @State private var newFolderTitle = ""
+    @State private var newFolderDescription = ""
+    @State private var newFolderLocation: NewFolderLocationMode = .local
+    @State private var newFolderIsOpen = false
+    @State private var isCreatingFolder = false
 
     public init() {}
 
-    private var visibleLocalFavorites: [LocalFavoriteEntry] {
-        guard let selectedFolderID else { return appState.historyAndFav.favorites }
-        return appState.historyAndFav.favorites(inFolder: selectedFolderID)
+    private var activeCloudCollections: [CollectionItem] {
+        guard appState.settings.enableCloudFavoritesLoad && appState.accounts.isLoggedIn else { return [] }
+        return appState.historyAndFav.cachedCloudCollections
     }
 
-    private var visibleCloudFavorites: [CloudFavoriteEntry] {
-        guard appState.settings.enableCloudFavoritesLoad else { return [] }
-        let localIDSet = Set(visibleLocalFavorites.map(\.id))
-        let scoped: [CloudFavoriteEntry]
-        if let selectedFolderID {
-            scoped = cloudEntries.filter { $0.collectionID == selectedFolderID }
-        } else {
-            var seenFeedIDs = Set<String>()
-            scoped = cloudEntries.filter { seenFeedIDs.insert($0.feed.id).inserted }
+    private var activeCloudEntries: [CachedCloudFavoriteEntry] {
+        guard appState.settings.enableCloudFavoritesLoad && appState.accounts.isLoggedIn else { return [] }
+        return appState.historyAndFav.cachedCloudEntries
+    }
+
+    private var mergedFolders: [MergedFavoriteFolderItem] {
+        let pureLocalFolders = appState.historyAndFav.folders.filter { folder in
+            if !folder.isCloudLinked { return true }
+            return appState.historyAndFav.favorites.contains { $0.folderID == folder.id && !$0.resolvedIsCloudSynced }
         }
-        return scoped.filter { !localIDSet.contains($0.feed.id) }
+        let cloudCols = activeCloudCollections
+
+        var orderedTitles: [String] = []
+        var localByTitle: [String: LocalFavoriteFolder] = [:]
+        var cloudByTitle: [String: CollectionItem] = [:]
+
+        for folder in pureLocalFolders {
+            let norm = HistoryAndFavStore.normalizedFolderTitle(folder.title)
+            guard !norm.isEmpty else { continue }
+            if localByTitle[norm] == nil {
+                localByTitle[norm] = folder
+                if !orderedTitles.contains(norm) {
+                    orderedTitles.append(norm)
+                }
+            }
+        }
+
+        for col in cloudCols {
+            let norm = HistoryAndFavStore.normalizedFolderTitle(col.title)
+            guard !norm.isEmpty else { continue }
+            if cloudByTitle[norm] == nil {
+                cloudByTitle[norm] = col
+                if !orderedTitles.contains(norm) {
+                    orderedTitles.append(norm)
+                }
+            }
+        }
+
+        let cloudEntries = activeCloudEntries
+        return orderedTitles.map { norm in
+            let localFolder = localByTitle[norm]
+            let cloudCol = cloudByTitle[norm]
+            let localCount: Int = {
+                guard let lf = localFolder else { return 0 }
+                return appState.historyAndFav.favorites.filter { $0.folderID == lf.id && !$0.resolvedIsCloudSynced }.count
+            }()
+            let cloudCount: Int = {
+                guard let cc = cloudCol else { return 0 }
+                let loadedCount = cloudEntries.filter { $0.collectionID == cc.id }.count
+                return max(cc.itemNum, loadedCount)
+            }()
+            return MergedFavoriteFolderItem(
+                key: norm,
+                title: cloudCol?.title ?? localFolder?.title ?? norm,
+                localFolder: localFolder,
+                cloudCollection: cloudCol,
+                localItemCount: localCount,
+                cloudItemCount: cloudCount
+            )
+        }
+    }
+
+    private var selectedMergedFolder: MergedFavoriteFolderItem? {
+        guard let selectedFolderKey else { return nil }
+        return mergedFolders.first { $0.key == selectedFolderKey }
+    }
+
+    private var unifiedVisibleFavorites: [UnifiedFavoriteFeedItem] {
+        let localFavs: [LocalFavoriteEntry]
+        let cloudFavs: [CachedCloudFavoriteEntry]
+
+        if let folder = selectedMergedFolder {
+            if let lf = folder.localFolder {
+                localFavs = appState.historyAndFav.favorites.filter {
+                    $0.folderID == lf.id && !$0.resolvedIsCloudSynced
+                }
+            } else {
+                localFavs = []
+            }
+
+            if let cc = folder.cloudCollection {
+                let directCloud = activeCloudEntries.filter {
+                    $0.collectionID == cc.id || HistoryAndFavStore.normalizedFolderTitle($0.collectionTitle) == folder.key
+                }
+                cloudFavs = directCloud
+            } else {
+                cloudFavs = []
+            }
+        } else {
+            localFavs = appState.historyAndFav.favorites.filter { !$0.resolvedIsCloudSynced }
+            cloudFavs = activeCloudEntries
+        }
+
+        var orderedFeedIDs: [String] = []
+        var localByFeedID: [String: LocalFavoriteEntry] = [:]
+        var cloudByFeedID: [String: [CachedCloudFavoriteEntry]] = [:]
+
+        for entry in localFavs {
+            if localByFeedID[entry.id] == nil {
+                localByFeedID[entry.id] = entry
+                orderedFeedIDs.append(entry.id)
+            }
+        }
+
+        for entry in cloudFavs {
+            let fid = entry.feed.id
+            guard !fid.isEmpty else { continue }
+            if cloudByFeedID[fid] == nil && localByFeedID[fid] == nil {
+                orderedFeedIDs.append(fid)
+            }
+            cloudByFeedID[fid, default: []].append(entry)
+        }
+
+        for entry in appState.historyAndFav.favorites where entry.resolvedIsCloudSynced {
+            if let folder = selectedMergedFolder {
+                let matchesCloudID = folder.cloudCollection?.id == entry.folderID
+                let matchesLocalID = folder.localFolder?.id == entry.folderID
+                if !matchesCloudID && !matchesLocalID { continue }
+            }
+            if let feed = entry.feed {
+                let fid = feed.id
+                let synthetic = CachedCloudFavoriteEntry(
+                    collectionID: entry.folderID,
+                    collectionTitle: selectedMergedFolder?.title ?? "云端收藏夹",
+                    feed: feed
+                )
+                if cloudByFeedID[fid] == nil && localByFeedID[fid] == nil {
+                    orderedFeedIDs.append(fid)
+                }
+                if !(cloudByFeedID[fid]?.contains(where: { $0.collectionID == synthetic.collectionID }) ?? false) {
+                    cloudByFeedID[fid, default: []].append(synthetic)
+                }
+            }
+        }
+
+        return orderedFeedIDs.map { fid in
+            let lEntry = localByFeedID[fid]
+            let cEntries = cloudByFeedID[fid] ?? []
+            return UnifiedFavoriteFeedItem(
+                feedID: fid,
+                localEntry: lEntry,
+                cloudEntry: cEntries.first,
+                allCloudEntriesForFeed: cEntries
+            )
+        }
     }
 
     public var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    sectionHeader("收藏夹列表")
-                    Spacer()
-                    if isSyncingCloud {
-                        ProgressView()
-                            .controlSize(.small)
-                            .padding(.trailing, 16)
-                    }
-                }
+                folderSectionHeaderRow
 
                 if !appState.settings.enableCloudFavoritesLoad && appState.accounts.isLoggedIn {
                     Text("已关闭云端收藏夹加载，仅显示本机收藏数据（可在设置开启）。")
@@ -269,140 +461,35 @@ public struct FavoritesListView: View {
                         .padding(.horizontal, 16)
                 }
 
-                // Local folders with "本地" corner badge
-                ForEach(appState.historyAndFav.folders) { folder in
-                    let isSelected = selectedFolderID == folder.id
-                    Button {
-                        withAnimation(.snappy(duration: 0.2)) {
-                            selectedFolderID = isSelected ? nil : folder.id
+                ForEach(mergedFolders) { folder in
+                    SelectableCardWrapper(
+                        isSelecting: isManagingFolders,
+                        isSelected: selectedFolderKeys.contains(folder.key)
+                    ) {
+                        guard folder.isDeletable else {
+                            appState.showToast("默认本机收藏夹不可删除")
+                            return
                         }
-                    } label: {
-                        HStack(spacing: 12) {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill((folder.isCloudLinked ? Color.blue : Color.accentColor).opacity(0.14))
-                                .frame(width: 44, height: 44)
-                                .overlay {
-                                    Image(systemName: folder.isCloudLinked ? "icloud" : "bookmark.fill")
-                                        .foregroundStyle(folder.isCloudLinked ? Color.blue : Color.accentColor)
-                                }
-                            VStack(alignment: .leading, spacing: 3) {
-                                HStack(spacing: 6) {
-                                    Text(folder.title)
-                                        .font(.body.weight(.medium))
-                                        .foregroundStyle(.primary)
-                                    SourceOriginBadge(isCloud: false)
-                                }
-                                Text("\(appState.historyAndFav.count(inFolder: folder.id)) 条已缓存动态" + (isSelected ? " · 当前筛选中" : ""))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if isSelected {
-                                Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                                    .foregroundStyle(Color.accentColor)
-                            }
+                        if selectedFolderKeys.contains(folder.key) {
+                            selectedFolderKeys.remove(folder.key)
+                        } else {
+                            selectedFolderKeys.insert(folder.key)
                         }
-                        .padding(14)
-                        .c001CardStyle(cornerRadius: 20)
-                        .overlay {
-                            if isSelected {
-                                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                    .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1.5)
-                            }
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        if folder.id != HistoryAndFavStore.defaultFolderID {
-                            Button("删除收藏夹", role: .destructive) {
-                                if selectedFolderID == folder.id { selectedFolderID = nil }
-                                appState.historyAndFav.deleteFolder(id: folder.id)
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                }
-
-                // Cloud collections with filter + open detail + "云端" corner badge
-                if appState.settings.enableCloudFavoritesLoad && !remoteCollections.isEmpty {
-                    ForEach(remoteCollections) { col in
-                        let isSelected = selectedFolderID == col.id
-                        HStack(spacing: 12) {
-                            Button {
-                                withAnimation(.snappy(duration: 0.2)) {
-                                    selectedFolderID = isSelected ? nil : col.id
-                                }
-                                if !cloudEntries.contains(where: { $0.collectionID == col.id }) {
-                                    Task { await loadCloudCollectionItems(col) }
-                                }
-                            } label: {
-                                HStack(spacing: 12) {
-                                    RemoteImageView(url: col.logo, maxPixelSize: 132)
-                                        .frame(width: 44, height: 44)
-                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        HStack(spacing: 6) {
-                                            Text(col.title)
-                                                .font(.body.weight(.medium))
-                                                .foregroundStyle(.primary)
-                                            SourceOriginBadge(isCloud: true)
-                                        }
-                                        Text("\(col.itemNum) 项内容 · \(Formatting.count(col.followNum)) 关注" + (isSelected ? " · 当前筛选中" : ""))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                }
-                            }
-                            .buttonStyle(.plain)
-
-                            Button {
-                                appState.push(.collection(id: col.id, initialTitle: col.title))
-                            } label: {
-                                Image(systemName: isSelected ? "line.3.horizontal.decrease.circle.fill" : "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                                    .frame(width: 28, height: 28)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(14)
-                        .c001CardStyle(cornerRadius: 20)
-                        .overlay {
-                            if isSelected {
-                                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                                    .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1.5)
-                            }
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
-                        .padding(.horizontal, 12)
+                    } content: {
+                        mergedFolderCard(folder)
                     }
                 }
 
-                HStack {
-                    sectionHeader(selectedFolderID == nil ? "全部收藏内容" : "当前收藏夹内容")
-                    Spacer()
-                    if selectedFolderID != nil {
-                        Button("查看全部") {
-                            withAnimation(.snappy) { selectedFolderID = nil }
-                        }
-                        .font(.caption.weight(.medium))
-                        .padding(.trailing, 16)
-                    }
-                }
+                itemsSectionHeaderRow
 
-                if visibleLocalFavorites.isEmpty && visibleCloudFavorites.isEmpty {
+                let visibleItems = unifiedVisibleFavorites
+                if visibleItems.isEmpty {
                     if isSyncingCloud {
                         ProgressView("正在同步云端收藏…")
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 28)
                     } else {
-                        Text("暂无收藏动态")
+                        Text(selectedMergedFolder == nil ? "暂无收藏动态" : "该收藏夹暂无动态")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .padding(16)
@@ -411,61 +498,24 @@ public struct FavoritesListView: View {
                             .padding(.horizontal, 12)
                     }
                 } else {
-                    ForEach(visibleLocalFavorites) { entry in
-                        let key = "local:\(entry.id)"
+                    ForEach(visibleItems) { item in
                         SelectableCardWrapper(
-                            isSelecting: isSelecting,
-                            isSelected: selectedKeys.contains(key)
+                            isSelecting: isSelectingItems,
+                            isSelected: selectedItemIDs.contains(item.feedID)
                         ) {
-                            if selectedKeys.contains(key) {
-                                selectedKeys.remove(key)
+                            if selectedItemIDs.contains(item.feedID) {
+                                selectedItemIDs.remove(item.feedID)
                             } else {
-                                selectedKeys.insert(key)
+                                selectedItemIDs.insert(item.feedID)
                             }
                         } content: {
-                            StoredFeedCardRow(
-                                feedID: entry.id,
-                                snapshot: entry.feed,
-                                fallbackTitle: entry.title,
-                                fallbackPreview: entry.preview,
-                                fallbackUsername: entry.username,
-                                fallbackAvatar: entry.avatar,
-                                fallbackDate: entry.savedAt,
-                                badgeIsCloud: entry.resolvedIsCloudSynced,
-                                deleteTitle: "移除收藏",
-                                onDelete: {
-                                    appState.historyAndFav.removeFavorite(id: entry.id)
-                                }
-                            )
-                        }
-                    }
-
-                    ForEach(visibleCloudFavorites) { entry in
-                        let key = "cloud:\(entry.collectionID):\(entry.feed.id)"
-                        SelectableCardWrapper(
-                            isSelecting: isSelecting,
-                            isSelected: selectedKeys.contains(key)
-                        ) {
-                            if selectedKeys.contains(key) {
-                                selectedKeys.remove(key)
-                            } else {
-                                selectedKeys.insert(key)
-                            }
-                        } content: {
-                            FeedRowView(
-                                feed: entry.feed,
-                                originBadgeIsCloud: true,
-                                contextDeleteTitle: "移出云端收藏",
-                                onContextDelete: {
-                                    Task { await removeCloudFavorites([entry]) }
-                                }
-                            )
+                            favoriteFeedItemRow(item)
                         }
                     }
                 }
             }
             .padding(.vertical, 10)
-            .padding(.bottom, isSelecting ? 84 : 32)
+            .padding(.bottom, (isSelectingItems || isManagingFolders) ? 88 : 32)
         }
         .refreshable {
             await syncCloudFavorites(force: true)
@@ -476,16 +526,42 @@ public struct FavoritesListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                if !visibleLocalFavorites.isEmpty || !visibleCloudFavorites.isEmpty {
-                    Button(isSelecting ? "完成" : "多选") {
+                Button {
+                    newFolderLocation = (appState.accounts.isLoggedIn && appState.settings.defaultFavoriteTarget == .cloud) ? .cloud : .local
+                    showCreateFolderSheet = true
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                }
+                .accessibilityLabel("新建收藏夹")
+
+                if !unifiedVisibleFavorites.isEmpty && !isManagingFolders {
+                    Button(isSelectingItems ? "完成" : "多选") {
                         withAnimation(.snappy(duration: 0.2)) {
-                            isSelecting.toggle()
-                            if !isSelecting { selectedKeys.removeAll() }
+                            isSelectingItems.toggle()
+                            if !isSelectingItems { selectedItemIDs.removeAll() }
                         }
                     }
                 }
 
                 Menu {
+                    Button {
+                        newFolderLocation = (appState.accounts.isLoggedIn && appState.settings.defaultFavoriteTarget == .cloud) ? .cloud : .local
+                        showCreateFolderSheet = true
+                    } label: {
+                        Label("新建收藏夹…", systemImage: "folder.badge.plus")
+                    }
+
+                    Button {
+                        withAnimation(.snappy(duration: 0.2)) {
+                            isSelectingItems = false
+                            selectedItemIDs.removeAll()
+                            isManagingFolders.toggle()
+                            if !isManagingFolders { selectedFolderKeys.removeAll() }
+                        }
+                    } label: {
+                        Label(isManagingFolders ? "退出收藏夹管理" : "批量管理收藏夹", systemImage: "folder.badge.gearshape")
+                    }
+
                     if appState.settings.enableCloudFavoritesLoad && appState.accounts.isLoggedIn {
                         Button {
                             Task { await syncCloudFavorites(force: true) }
@@ -493,6 +569,8 @@ public struct FavoritesListView: View {
                             Label("立即同步云端收藏", systemImage: "arrow.triangle.2.circlepath")
                         }
                     }
+
+                    Divider()
 
                     Button {
                         if let data = appState.historyAndFav.exportBackupJSON(),
@@ -520,25 +598,46 @@ public struct FavoritesListView: View {
                 }
             }
         }
+        .sheet(isPresented: $showCreateFolderSheet) {
+            createFolderSheetView
+        }
         .safeAreaInset(edge: .bottom) {
-            if isSelecting {
-                let allVisibleKeys = Set(visibleLocalFavorites.map { "local:\($0.id)" })
-                    .union(visibleCloudFavorites.map { "cloud:\($0.collectionID):\($0.feed.id)" })
-                let allSelected = !allVisibleKeys.isEmpty && selectedKeys.isSuperset(of: allVisibleKeys)
+            if isManagingFolders {
+                let deletableKeys = Set(mergedFolders.filter(\.isDeletable).map(\.key))
+                let allSelected = !deletableKeys.isEmpty && selectedFolderKeys.isSuperset(of: deletableKeys)
                 BatchSelectionBottomBar(
-                    selectedCount: selectedKeys.count,
+                    selectedCount: selectedFolderKeys.count,
+                    allSelected: allSelected,
+                    deleteLabel: "删除收藏夹",
+                    isBusy: isBatchDeleting,
+                    onToggleSelectAll: {
+                        if allSelected {
+                            selectedFolderKeys.removeAll()
+                        } else {
+                            selectedFolderKeys = deletableKeys
+                        }
+                    },
+                    onDelete: {
+                        Task { await deleteSelectedFolders() }
+                    }
+                )
+            } else if isSelectingItems {
+                let allFeedIDs = Set(unifiedVisibleFavorites.map(\.feedID))
+                let allSelected = !allFeedIDs.isEmpty && selectedItemIDs.isSuperset(of: allFeedIDs)
+                BatchSelectionBottomBar(
+                    selectedCount: selectedItemIDs.count,
                     allSelected: allSelected,
                     deleteLabel: "删除收藏",
                     isBusy: isBatchDeleting,
                     onToggleSelectAll: {
                         if allSelected {
-                            selectedKeys.removeAll()
+                            selectedItemIDs.removeAll()
                         } else {
-                            selectedKeys = allVisibleKeys
+                            selectedItemIDs = allFeedIDs
                         }
                     },
                     onDelete: {
-                        Task { await deleteSelectedFavorites() }
+                        Task { await deleteSelectedFavoriteItems() }
                     }
                 )
             }
@@ -548,15 +647,360 @@ public struct FavoritesListView: View {
         }
     }
 
-    private func deleteSelectedFavorites() async {
-        guard !selectedKeys.isEmpty, !isBatchDeleting else { return }
+    private var folderSectionHeaderRow: some View {
+        HStack(spacing: 12) {
+            sectionHeader("收藏夹列表（同名本地与云端自动合并）")
+            Spacer()
+            if isSyncingCloud {
+                ProgressView()
+                    .controlSize(.small)
+            }
+            Button {
+                newFolderLocation = (appState.accounts.isLoggedIn && appState.settings.defaultFavoriteTarget == .cloud) ? .cloud : .local
+                showCreateFolderSheet = true
+            } label: {
+                Label("新建", systemImage: "plus")
+                    .font(.caption.weight(.semibold))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.accentColor)
+
+            if mergedFolders.contains(where: \.isDeletable) {
+                Button(isManagingFolders ? "完成" : "管理") {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        isSelectingItems = false
+                        selectedItemIDs.removeAll()
+                        isManagingFolders.toggle()
+                        if !isManagingFolders { selectedFolderKeys.removeAll() }
+                    }
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(isManagingFolders ? Color.accentColor : Color.secondary)
+            }
+        }
+        .padding(.trailing, 16)
+    }
+
+    private var itemsSectionHeaderRow: some View {
+        HStack {
+            if let folder = selectedMergedFolder {
+                sectionHeader("「\(folder.title)」收藏内容")
+            } else {
+                sectionHeader("全部收藏内容")
+            }
+            Spacer()
+            if selectedFolderKey != nil {
+                Button("查看全部") {
+                    withAnimation(.snappy) { selectedFolderKey = nil }
+                }
+                .font(.caption.weight(.medium))
+                .padding(.trailing, 16)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func mergedFolderCard(_ folder: MergedFavoriteFolderItem) -> some View {
+        let isSelected = selectedFolderKey == folder.key
+        HStack(spacing: 12) {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) {
+                    selectedFolderKey = isSelected ? nil : folder.key
+                }
+                if let col = folder.cloudCollection {
+                    Task { await loadCloudCollectionItems(col, force: false) }
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    if !folder.logoURL.isEmpty {
+                        RemoteImageView(url: folder.logoURL, maxPixelSize: 132, contentMode: .fill)
+                            .frame(width: 44, height: 44)
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                    } else {
+                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                            .fill((folder.hasCloud ? Color.blue : Color.accentColor).opacity(0.14))
+                            .frame(width: 44, height: 44)
+                            .overlay {
+                                Image(systemName: folder.hasCloud && folder.hasLocal ? "folder.fill.badge.person.crop" : (folder.hasCloud ? "icloud.fill" : "bookmark.fill"))
+                                    .foregroundStyle(folder.hasCloud ? Color.blue : Color.accentColor)
+                            }
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(folder.title)
+                                .font(.body.weight(.medium))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            if folder.hasLocal {
+                                SourceOriginBadge(isCloud: false)
+                            }
+                            if folder.hasCloud {
+                                SourceOriginBadge(isCloud: true)
+                            }
+                        }
+                        Text(folder.subtitleText + (isSelected ? " · 当前筛选中" : ""))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                }
+            }
+            .buttonStyle(.plain)
+
+            if let col = folder.cloudCollection {
+                Button {
+                    appState.push(.collection(id: col.id, initialTitle: col.title))
+                } label: {
+                    Image(systemName: isSelected ? "line.3.horizontal.decrease.circle.fill" : "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+            } else if isSelected {
+                Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                    .foregroundStyle(Color.accentColor)
+            }
+        }
+        .padding(14)
+        .c001CardStyle(cornerRadius: 20)
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 20, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1.5)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .contextMenu {
+            Button {
+                withAnimation(.snappy(duration: 0.2)) {
+                    selectedFolderKey = isSelected ? nil : folder.key
+                }
+                if let col = folder.cloudCollection {
+                    Task { await loadCloudCollectionItems(col, force: true) }
+                }
+            } label: {
+                Label(isSelected ? "取消筛选此收藏夹" : "筛选此收藏夹内容", systemImage: "line.3.horizontal.decrease.circle")
+            }
+
+            if let col = folder.cloudCollection {
+                Button {
+                    appState.push(.collection(id: col.id, initialTitle: col.title))
+                } label: {
+                    Label("打开云端收藏夹详情页", systemImage: "arrow.up.right.square")
+                }
+            }
+
+            if folder.isDeletable {
+                Divider()
+                if let lf = folder.localFolder, lf.id != HistoryAndFavStore.defaultFolderID, folder.hasCloud {
+                    Button(role: .destructive) {
+                        appState.historyAndFav.deleteFolder(id: lf.id)
+                        appState.showToast("已删除本机同名收藏夹")
+                    } label: {
+                        Label("仅删除本机收藏夹", systemImage: "trash")
+                    }
+                }
+                if let col = folder.cloudCollection, folder.hasLocal {
+                    Button(role: .destructive) {
+                        Task { await deleteFolders([folder], deleteLocal: false, deleteCloud: true) }
+                    } label: {
+                        Label("仅删除云端收藏夹", systemImage: "icloud.slash")
+                    }
+                }
+                Button(role: .destructive) {
+                    Task { await deleteFolders([folder], deleteLocal: true, deleteCloud: true) }
+                } label: {
+                    Label(folder.hasLocal && folder.hasCloud ? "同时删除本机与云端收藏夹" : "删除收藏夹", systemImage: "trash.fill")
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+    }
+
+    @ViewBuilder
+    private func favoriteFeedItemRow(_ item: UnifiedFavoriteFeedItem) -> some View {
+        if let cloudEntry = item.cloudEntry, !item.isLocal {
+            FeedRowView(
+                feed: cloudEntry.feed,
+                originBadgeIsCloud: true,
+                contextDeleteTitle: "取消云端收藏",
+                onContextDelete: {
+                    Task { await removeCloudFavorites(item.allCloudEntriesForFeed) }
+                }
+            )
+        } else if let localEntry = item.localEntry {
+            StoredFeedCardRow(
+                feedID: localEntry.id,
+                snapshot: localEntry.feed,
+                fallbackTitle: localEntry.title,
+                fallbackPreview: localEntry.preview,
+                fallbackUsername: localEntry.username,
+                fallbackAvatar: localEntry.avatar,
+                fallbackDate: localEntry.savedAt,
+                badgeIsCloud: item.isCloud && !item.isLocal,
+                deleteTitle: item.isCloud ? "同时移除本机与云端收藏" : "取消本机收藏",
+                onDelete: {
+                    appState.historyAndFav.removeFavorite(id: localEntry.id)
+                    if !item.allCloudEntriesForFeed.isEmpty {
+                        Task { await removeCloudFavorites(item.allCloudEntriesForFeed) }
+                    }
+                }
+            )
+        }
+    }
+
+    private var createFolderSheetView: some View {
+        NavigationStack {
+            Form {
+                Section("收藏夹信息") {
+                    TextField("收藏夹名称（必填）", text: $newFolderTitle)
+                    TextField("简介（可选）", text: $newFolderDescription)
+                }
+
+                Section {
+                    Picker("创建位置", selection: $newFolderLocation) {
+                        Text("本机收藏夹").tag(NewFolderLocationMode.local)
+                        if appState.accounts.isLoggedIn {
+                            Text("云端收藏夹").tag(NewFolderLocationMode.cloud)
+                            Text("本机 + 云端同名").tag(NewFolderLocationMode.both)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if newFolderLocation != .local {
+                        Toggle("公开云端收藏夹", isOn: $newFolderIsOpen)
+                    }
+                } header: {
+                    Text("存储位置")
+                } footer: {
+                    Text("同名本机收藏夹与云端收藏夹会在列表中自动合并为一个统一入口，并同时展示本地与云端角标。")
+                }
+            }
+            .navigationTitle("新建收藏夹")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        showCreateFolderSheet = false
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        Task { await createNewFolderAction() }
+                    } label: {
+                        if isCreatingFolder {
+                            ProgressView()
+                        } else {
+                            Text("创建")
+                        }
+                    }
+                    .disabled(newFolderTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isCreatingFolder)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func createNewFolderAction() async {
+        let title = newFolderTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let desc = newFolderDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !isCreatingFolder else { return }
+        isCreatingFolder = true
+        defer { isCreatingFolder = false }
+
+        var createdLocal = false
+        var createdCloud = false
+
+        if newFolderLocation == .local || newFolderLocation == .both {
+            _ = appState.historyAndFav.createFolder(title: title)
+            createdLocal = true
+        }
+
+        if (newFolderLocation == .cloud || newFolderLocation == .both) && appState.accounts.isLoggedIn {
+            do {
+                if let created = try await API.createCollection(title: title, description: desc, isOpen: newFolderIsOpen) {
+                    var cols = appState.historyAndFav.cachedCloudCollections
+                    if !cols.contains(where: { $0.id == created.id }) {
+                        cols.insert(created, at: 0)
+                    }
+                    appState.historyAndFav.updateCloudCache(collections: cols, entries: appState.historyAndFav.cachedCloudEntries)
+                    createdCloud = true
+                } else {
+                    await syncCloudFavorites(force: true)
+                    createdCloud = true
+                }
+            } catch {
+                _ = await appState.handleAPIError(error)
+            }
+        }
+
+        newFolderTitle = ""
+        newFolderDescription = ""
+        showCreateFolderSheet = false
+        selectedFolderKey = HistoryAndFavStore.normalizedFolderTitle(title)
+
+        if createdLocal && createdCloud {
+            appState.showToast("已创建本机与云端同名收藏夹")
+        } else if createdCloud {
+            appState.showToast("已创建云端收藏夹")
+        } else if createdLocal {
+            appState.showToast("已创建本机收藏夹")
+        }
+    }
+
+    private func deleteSelectedFolders() async {
+        let targets = mergedFolders.filter { selectedFolderKeys.contains($0.key) && $0.isDeletable }
+        guard !targets.isEmpty, !isBatchDeleting else { return }
         isBatchDeleting = true
         defer { isBatchDeleting = false }
 
-        let localIDs = Set(selectedKeys.compactMap { key -> String? in
-            key.hasPrefix("local:") ? String(key.dropFirst("local:".count)) : nil
-        })
-        let cloudToDelete = visibleCloudFavorites.filter { selectedKeys.contains("cloud:\($0.collectionID):\($0.feed.id)") }
+        await deleteFolders(targets, deleteLocal: true, deleteCloud: true)
+        selectedFolderKeys.removeAll()
+        isManagingFolders = false
+    }
+
+    private func deleteFolders(_ targets: [MergedFavoriteFolderItem], deleteLocal: Bool, deleteCloud: Bool) async {
+        var deletedCount = 0
+        for folder in targets {
+            var didDeleteThis = false
+            if deleteLocal, let lf = folder.localFolder, lf.id != HistoryAndFavStore.defaultFolderID {
+                appState.historyAndFav.deleteFolder(id: lf.id)
+                didDeleteThis = true
+            }
+            if deleteCloud, let col = folder.cloudCollection {
+                do {
+                    try await API.deleteCollection(id: col.id)
+                    appState.historyAndFav.removeCloudCachedCollection(id: col.id)
+                    didDeleteThis = true
+                } catch {
+                    _ = await appState.handleAPIError(error)
+                }
+            }
+            if didDeleteThis {
+                deletedCount += 1
+                if selectedFolderKey == folder.key {
+                    selectedFolderKey = nil
+                }
+            }
+        }
+        if deletedCount > 0 {
+            appState.showToast("已删除 \(deletedCount) 个收藏夹")
+        }
+    }
+
+    private func deleteSelectedFavoriteItems() async {
+        guard !selectedItemIDs.isEmpty, !isBatchDeleting else { return }
+        isBatchDeleting = true
+        defer { isBatchDeleting = false }
+
+        let targets = unifiedVisibleFavorites.filter { selectedItemIDs.contains($0.feedID) }
+        let localIDs = Set(targets.compactMap { $0.localEntry?.id })
+        let cloudToDelete = targets.flatMap(\.allCloudEntriesForFeed)
 
         if !localIDs.isEmpty {
             appState.historyAndFav.removeFavorites(ids: localIDs)
@@ -565,16 +1009,17 @@ public struct FavoritesListView: View {
             await removeCloudFavorites(cloudToDelete)
         }
 
-        let removedCount = localIDs.count + cloudToDelete.count
-        selectedKeys.removeAll()
-        isSelecting = false
+        let removedCount = targets.count
+        selectedItemIDs.removeAll()
+        isSelectingItems = false
         if removedCount > 0 {
             appState.showToast("已删除 \(removedCount) 条收藏")
         }
     }
 
-    private func removeCloudFavorites(_ entries: [CloudFavoriteEntry]) async {
+    private func removeCloudFavorites(_ entries: [CachedCloudFavoriteEntry]) async {
         var removedIDs = Set<String>()
+        var removedFeedIDs = Set<String>()
         for entry in entries {
             do {
                 try await API.collectFeedToCollection(
@@ -583,70 +1028,76 @@ public struct FavoritesListView: View {
                     cancelCollectionIDs: [entry.collectionID]
                 )
                 removedIDs.insert(entry.id)
+                removedFeedIDs.insert(entry.feed.id)
             } catch {
                 _ = await appState.handleAPIError(error)
             }
         }
         if !removedIDs.isEmpty {
-            cloudEntries.removeAll { removedIDs.contains($0.id) }
+            appState.historyAndFav.removeCloudCachedEntries(ids: removedIDs)
+            for fid in removedFeedIDs {
+                if let entry = appState.historyAndFav.favorites.first(where: { $0.id == fid && $0.resolvedIsCloudSynced }) {
+                    appState.historyAndFav.removeFavorite(id: entry.id)
+                }
+            }
+            appState.showToast("已取消云端收藏")
         }
     }
 
     private func syncCloudFavorites(force: Bool) async {
         guard appState.settings.enableCloudFavoritesLoad,
-              appState.accounts.isLoggedIn,
-              let uid = appState.accounts.activeUID else {
-            remoteCollections = []
-            cloudEntries = []
+              appState.accounts.isLoggedIn else {
             return
         }
-        if !force && !remoteCollections.isEmpty { return }
+        if !force && !appState.historyAndFav.cachedCloudCollections.isEmpty && !appState.historyAndFav.cachedCloudEntries.isEmpty {
+            return
+        }
         isSyncingCloud = true
         defer { isSyncingCloud = false }
 
+        let uid = appState.accounts.activeUID ?? ""
         do {
             let cols = try await API.collectionList(uid: uid, page: 1)
-            remoteCollections = cols
-            let collected = await withTaskGroup(of: [CloudFavoriteEntry].self) { group in
-                for col in cols.prefix(6) {
+            let collected = await withTaskGroup(of: [CachedCloudFavoriteEntry].self) { group in
+                for col in cols.prefix(12) {
                     group.addTask {
                         let rows = (try? await API.collectionItems(id: col.id, page: 1)) ?? []
-                        return rows.compactMap { row -> CloudFavoriteEntry? in
+                        return rows.compactMap { row -> CachedCloudFavoriteEntry? in
                             if case let .feed(feed) = row {
-                                return CloudFavoriteEntry(collectionID: col.id, collectionTitle: col.title, feed: feed)
+                                return CachedCloudFavoriteEntry(collectionID: col.id, collectionTitle: col.title, feed: feed)
                             }
                             return nil
                         }
                     }
                 }
-                var merged: [CloudFavoriteEntry] = []
+                var merged: [CachedCloudFavoriteEntry] = []
                 for await batch in group {
                     merged.append(contentsOf: batch)
                 }
                 return merged
             }
-            cloudEntries = collected
+            if !cols.isEmpty || force {
+                appState.historyAndFav.updateCloudCache(collections: cols, entries: collected)
+            }
         } catch {
-            if remoteCollections.isEmpty {
+            if appState.historyAndFav.cachedCloudCollections.isEmpty {
                 _ = await appState.handleAPIError(error)
             }
         }
     }
 
-    private func loadCloudCollectionItems(_ col: CollectionItem) async {
+    private func loadCloudCollectionItems(_ col: CollectionItem, force: Bool) async {
+        let alreadyLoaded = appState.historyAndFav.cachedCloudEntries.contains { $0.collectionID == col.id }
+        if !force && alreadyLoaded { return }
         guard let rows = try? await API.collectionItems(id: col.id, page: 1) else { return }
-        let existingIDs = Set(cloudEntries.map(\.id))
-        var appended: [CloudFavoriteEntry] = []
-        for row in rows {
+        let entries = rows.compactMap { row -> CachedCloudFavoriteEntry? in
             if case let .feed(feed) = row {
-                let entry = CloudFavoriteEntry(collectionID: col.id, collectionTitle: col.title, feed: feed)
-                if !existingIDs.contains(entry.id) {
-                    appended.append(entry)
-                }
+                return CachedCloudFavoriteEntry(collectionID: col.id, collectionTitle: col.title, feed: feed)
             }
+            return nil
         }
-        if !appended.isEmpty {
-            cloudEntries.append(contentsOf: appended)
+        if !entries.isEmpty {
+            appState.historyAndFav.appendCloudCachedEntries(entries)
         }
     }
 

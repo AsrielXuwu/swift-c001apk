@@ -68,11 +68,19 @@ public struct TopicDetailView: View {
         topic != nil && headerHeight > 1 && scrollOffset >= headerHeight * 0.55
     }
 
-    private let fallbackTabs: [HomeSection] = [
+    private let fallbackSortOptions: [HomeSection] = [
         HomeSection(id: "lastupdate_desc", title: "最新回复", subtitle: "lastupdate_desc", url: "", style: ""),
         HomeSection(id: "dateline_desc", title: "最新发布", subtitle: "dateline_desc", url: "", style: ""),
         HomeSection(id: "popular", title: "热门", subtitle: "popular", url: "", style: "")
     ]
+
+    private let singleDefaultTopicTab = HomeSection(
+        id: "all_topic_feeds",
+        title: "讨论",
+        subtitle: "lastupdate_desc",
+        url: "",
+        style: ""
+    )
 
     public init(tag: String) { self.tag = tag }
 
@@ -80,22 +88,24 @@ public struct TopicDetailView: View {
         if let apiTabs = (topic ?? appState.cachedTopicDetail(tag: tag))?.tabs, !apiTabs.isEmpty {
             return apiTabs
         }
-        return fallbackTabs
+        if didResolveTopicMetadata {
+            return [singleDefaultTopicTab]
+        }
+        return []
     }
 
     private var selectedTabItem: HomeSection {
         activeTabs.first { $0.id == activeTabID }
             ?? activeTabs.first
-            ?? fallbackTabs[0]
+            ?? singleDefaultTopicTab
     }
 
     private func sortOptions(for tabItem: HomeSection) -> [HomeSection] {
         if let dynamic = sortOptionsByTab[tabItem.id], !dynamic.isEmpty {
             return dynamic
         }
-        let tabs = activeTabs
-        if !tabs.isEmpty, tabs != fallbackTabs, tabItem.title == "讨论" {
-            return fallbackTabs
+        if tabItem.id == singleDefaultTopicTab.id || tabItem.title == "讨论" || tabItem.url.isEmpty {
+            return fallbackSortOptions
         }
         return []
     }
@@ -151,7 +161,7 @@ public struct TopicDetailView: View {
                                     .padding(.top, 8)
                             }
                         } tabStrip: {
-                            if !activeTabs.isEmpty {
+                            if activeTabs.count > 1 {
                                 FloatingTabStrip(
                                     items: activeTabs,
                                     selection: selectedTabItem,
@@ -260,7 +270,7 @@ public struct TopicDetailView: View {
                     appState.cacheTopicDetail(loadedTopic, forTag: tag)
                 }
                 let effectiveTopic = loadedTopic ?? topic
-                let resolvedTabs = (effectiveTopic?.tabs.isEmpty == false) ? effectiveTopic!.tabs : fallbackTabs
+                let resolvedTabs = (effectiveTopic?.tabs.isEmpty == false) ? effectiveTopic!.tabs : [singleDefaultTopicTab]
                 let saved = appState.pageTabSelections["topic-\(tag)"]
                 let initialTab: HomeSection? = if let saved, let matchedSaved = resolvedTabs.first(where: { $0.id == saved }) {
                     matchedSaved
@@ -457,9 +467,7 @@ public struct TopicDetailView: View {
             if let chosenSort, !chosenSort.url.isEmpty {
                 fetched = try await API.linkFeed(link: chosenSort.url, page: 1)
             } else {
-                let listType = (activeTabs == fallbackTabs)
-                    ? tabItem.id
-                    : (chosenSort?.id ?? "lastupdate_desc")
+                let listType = chosenSort?.id ?? "lastupdate_desc"
                 fetched = try await API.topicTabFeeds(
                     tag: activeTag,
                     topicID: topic?.id,
@@ -584,9 +592,8 @@ public struct ProductDetailView: View {
     @State private var isLoadingSpecs = false
 
     private let fallbackTabs: [ChoiceChip] = [
-        ChoiceChip(id: "lastupdate_desc", title: "最新回复"),
-        ChoiceChip(id: "dateline_desc", title: "最新发布"),
-        ChoiceChip(id: "popular", title: "热门讨论")
+        ChoiceChip(id: "all_product_feeds", title: "讨论"),
+        ChoiceChip(id: "__specs__", title: "参数")
     ]
 
     private let fallbackSortOptions: [HomeSection] = [
@@ -611,13 +618,17 @@ public struct ProductDetailView: View {
 
     private var activeChips: [ChoiceChip] {
         let effectiveTabs = !apiTabs.isEmpty ? apiTabs : (product?.tabs ?? appState.cachedProductDetail(id: productID)?.tabs ?? [])
-        var base: [ChoiceChip] = !effectiveTabs.isEmpty
-            ? effectiveTabs.map { ChoiceChip(id: $0.url, title: $0.title) }
-            : fallbackTabs
-        if !base.contains(where: { isConfigTab(id: $0.id, title: $0.title) }) {
-            base.append(ChoiceChip(id: "__specs__", title: "参数"))
+        if !effectiveTabs.isEmpty {
+            var base = effectiveTabs.map { ChoiceChip(id: $0.url, title: $0.title) }
+            if !base.contains(where: { isConfigTab(id: $0.id, title: $0.title) }) {
+                base.append(ChoiceChip(id: "__specs__", title: "参数"))
+            }
+            return base
         }
-        return base
+        if didResolveProductTabs {
+            return fallbackTabs
+        }
+        return []
     }
 
     private var selectedChip: ChoiceChip {
@@ -631,7 +642,7 @@ public struct ProductDetailView: View {
         if let dynamic = sortOptionsByTab[chip.id], !dynamic.isEmpty {
             return dynamic
         }
-        if !apiTabs.isEmpty, chip.title == "讨论" {
+        if chip.title == "讨论" || chip.id == "all_product_feeds" || apiTabs.isEmpty {
             return fallbackSortOptions
         }
         return []
@@ -1168,8 +1179,8 @@ public struct ProductDetailView: View {
         pageByTab[tabID] = 1
         hasMoreByTab[tabID] = true
         let chosenSort = selectedSortOption(for: tabID)
-        let tabURL: String? = apiTabs.isEmpty ? nil : tabID
-        let sort = chosenSort?.id ?? (apiTabs.isEmpty ? tabID : "lastupdate_desc")
+        let tabURL: String? = (apiTabs.isEmpty || tabID == "all_product_feeds") ? nil : tabID
+        let sort = chosenSort?.id ?? "lastupdate_desc"
         do {
             let fetched: [HomeFeedRow]
             if let chosenSort, !chosenSort.url.isEmpty {
@@ -1212,8 +1223,8 @@ public struct ProductDetailView: View {
         defer { loadingMoreTabs.remove(tabID) }
         let next = (pageByTab[tabID] ?? 1) + 1
         let chosenSort = selectedSortOption(for: tabID)
-        let tabURL: String? = apiTabs.isEmpty ? nil : tabID
-        let sort = chosenSort?.id ?? (apiTabs.isEmpty ? tabID : "lastupdate_desc")
+        let tabURL: String? = (apiTabs.isEmpty || tabID == "all_product_feeds") ? nil : tabID
+        let sort = chosenSort?.id ?? "lastupdate_desc"
         let fetched: [HomeFeedRow]?
         if let chosenSort, !chosenSort.url.isEmpty {
             fetched = try? await API.linkFeed(link: chosenSort.url, page: next)

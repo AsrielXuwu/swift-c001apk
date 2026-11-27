@@ -151,8 +151,8 @@ public struct AppRouteDestinationView: View {
             FeedDetailView(feedID: id, initialFeed: initial)
                 .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
-        case let .user(uid, initialUsername, initialAvatar, transitionID):
-            UserDetailView(uid: uid, initialUsername: initialUsername, initialAvatar: initialAvatar)
+        case let .user(uid, initialUsername, initialAvatar, transitionID, initialTab):
+            UserDetailView(uid: uid, initialUsername: initialUsername, initialAvatar: initialAvatar, initialTab: initialTab)
                 .scrollEdgeEffectHidden(true, for: .top)
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .topic(tag, transitionID):

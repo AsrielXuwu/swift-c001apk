@@ -31,6 +31,8 @@ public struct FollowView: View {
                     floatingSegmentStrip
                     if viewModel.segment == .topics && !viewModel.followedTopics.isEmpty {
                         topicChipsStrip
+                    } else if viewModel.segment == .products && !viewModel.followedProducts.isEmpty {
+                        productChipsStrip
                     }
                 }
             }
@@ -41,7 +43,7 @@ public struct FollowView: View {
                     Button {
                         appState.push(.localFollowList)
                     } label: {
-                        Label("本机关注名单", systemImage: "person.badge.shield.checkmark")
+                        Label("关注名单", systemImage: "person.badge.shield.checkmark")
                     }
                 }
             }
@@ -83,16 +85,19 @@ public struct FollowView: View {
         )
     }
 
-    private struct FollowTopicChip: Identifiable, Hashable {
+    private struct FollowSubChip: Identifiable, Hashable {
         let id: String
         let title: String
     }
 
     private var topicChipsStrip: some View {
-        let items = viewModel.followedTopics.map {
-            FollowTopicChip(id: $0.title, title: TopicItem.cleanTitle($0.title))
-        }
-        let selected = items.first { $0.id == viewModel.selectedTopicTag }
+        var items: [FollowSubChip] = [
+            FollowSubChip(id: FollowViewModel.allTopicsChipID, title: "全部话题")
+        ]
+        items.append(contentsOf: viewModel.followedTopics.map {
+            FollowSubChip(id: $0.title, title: TopicItem.cleanTitle($0.title))
+        })
+        let selected = items.first { $0.id == viewModel.selectedTopicTag } ?? items.first
         return FloatingTabStrip(
             items: items,
             selection: selected,
@@ -108,6 +113,29 @@ public struct FollowView: View {
         )
     }
 
+    private var productChipsStrip: some View {
+        var items: [FollowSubChip] = [
+            FollowSubChip(id: FollowViewModel.allProductsChipID, title: "全部数码")
+        ]
+        items.append(contentsOf: viewModel.followedProducts.map {
+            FollowSubChip(id: $0.id, title: $0.title)
+        })
+        let selected = items.first { $0.id == viewModel.selectedProductID } ?? items.first
+        return FloatingTabStrip(
+            items: items,
+            selection: selected,
+            titleProvider: \.title,
+            onSelect: { chip in
+                viewModel.selectedProductID = chip.id
+                Task { await viewModel.loadInitial(segment: .products, appState: appState, force: true) }
+            },
+            onReselect: { chip in
+                viewModel.selectedProductID = chip.id
+                Task { await viewModel.loadInitial(segment: .products, appState: appState, force: true) }
+            }
+        )
+    }
+
     @ViewBuilder
     private func segmentContent(for seg: FollowSegment) -> some View {
         let segRows = viewModel.rowsBySegment[seg] ?? []
@@ -116,14 +144,25 @@ public struct FollowView: View {
         let segLoadingMore = viewModel.loadingMoreSegments.contains(seg)
         let segError = viewModel.errorBySegment[seg]
 
-        if !appState.accounts.isLoggedIn && seg == .topics {
+        if !appState.accounts.isLoggedIn && seg.requiresCloudLogin {
             ContentUnavailableView {
                 Label("需要登录酷安账号", systemImage: "person.crop.circle.badge.exclamationmark")
             } description: {
-                Text("游客模式可切换到“全部”“关注用户”或“本机关注”浏览本地关注动态。")
+                Text("登录后可查看已关注的\(seg.rawValue)；游客模式可切换到“全部”“用户”或“本机关注”浏览本地关注动态。")
             } actions: {
                 Button("立即登录") { appState.showLoginSheet = true }
                     .buttonStyle(.borderedProminent)
+            }
+        } else if appState.accounts.isLoggedIn && !appState.settings.enableCloudFollowLoad && seg.requiresCloudLogin {
+            ContentUnavailableView {
+                Label("已关闭云端关注读取", systemImage: "eye.slash")
+            } description: {
+                Text("当前已在防风控设置中关闭“读取云端关注列表与关注流”，开启后即可加载已关注的\(seg.rawValue)。")
+            } actions: {
+                Button("开启云端关注读取") {
+                    appState.settings.enableCloudFollowLoad = true
+                }
+                .buttonStyle(.borderedProminent)
             }
         } else if segLoading && segRows.isEmpty {
             ProgressView()
@@ -142,7 +181,7 @@ public struct FollowView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if segRows.isEmpty {
             ContentUnavailableView {
-                Label("暂无\(seg.rawValue)动态", systemImage: "person.2")
+                Label("暂无\(seg.rawValue)内容", systemImage: emptyIcon(for: seg))
             } description: {
                 Text(emptyDescription(for: seg))
             }
@@ -177,6 +216,18 @@ public struct FollowView: View {
         }
     }
 
+    private func emptyIcon(for seg: FollowSegment) -> String {
+        switch seg {
+        case .all, .users: return "person.2"
+        case .topics: return "number"
+        case .products: return "iphone"
+        case .apps: return "app.badge.checkmark"
+        case .dyh: return "newspaper"
+        case .collections: return "folder.badge.person.crop"
+        case .local: return "person.badge.shield.checkmark"
+        }
+    }
+
     private func emptyDescription(for seg: FollowSegment) -> String {
         switch seg {
         case .local:
@@ -185,8 +236,16 @@ public struct FollowView: View {
             return appState.accounts.isLoggedIn ? "暂未关注任何酷友，或所关注用户暂无最新动态。" : "登录后可查看关注的酷友动态。"
         case .topics:
             return "暂未关注任何话题，关注感兴趣的话题即可在这里查看。"
+        case .products:
+            return "暂未关注任何数码设备或机型吧。"
+        case .apps:
+            return "暂未关注任何应用或板块。"
+        case .dyh:
+            return "暂未订阅任何看看号。"
+        case .collections:
+            return "暂无已创建或关注的云端收藏夹。"
         case .all:
-            return "关注更多酷友或话题即可在这里查看最新动态。"
+            return "关注更多酷友、话题或数码机型即可在这里查看最新动态。"
         }
     }
 }

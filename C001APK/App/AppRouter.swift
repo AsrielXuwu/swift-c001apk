@@ -148,7 +148,7 @@ public enum RootTab: Hashable, Sendable {
 
 public enum AppRoute: Hashable, Sendable {
     case feed(id: String, initial: FeedItem? = nil, transitionID: String? = nil)
-    case user(uid: String, initialUsername: String? = nil, initialAvatar: String? = nil, transitionID: String? = nil)
+    case user(uid: String, initialUsername: String? = nil, initialAvatar: String? = nil, transitionID: String? = nil, initialTab: String? = nil)
     case topic(tag: String, transitionID: String? = nil)
     case product(id: String, initialTitle: String? = nil, transitionID: String? = nil)
     case app(id: String, initialTitle: String? = nil, transitionID: String? = nil)
@@ -177,7 +177,7 @@ public enum AppRoute: Hashable, Sendable {
     public var transitionID: String? {
         switch self {
         case let .feed(_, _, id),
-             let .user(_, _, _, id),
+             let .user(_, _, _, id, _),
              let .topic(_, id),
              let .product(_, _, id),
              let .app(_, _, id),

@@ -126,16 +126,12 @@ struct BannerCarouselView: View {
         return ((rounded % count) + count) % count
     }
 
+    private let bannerCropAspectRatio: CGFloat = 4.5
+
     private func cardSize(at index: Int, maxStageWidth: CGFloat) -> CGSize {
-        let url = banners.indices.contains(index) ? banners[index].image : ""
-        let rawRatio = detectedRatios[index]
-            ?? MediaGridView.inferredAspectRatio(from: url)
-            ?? 1.85
-        let clamped = max(0.45, min(rawRatio, 2.8))
-        let width = min(maxStageWidth, max(160, maxStageWidth))
-        let height = min(420, max(110, width / clamped))
-        let adjustedWidth = min(maxStageWidth, height * clamped)
-        return CGSize(width: adjustedWidth, height: height)
+        let width = max(160, round(maxStageWidth))
+        let height = max(56, round(width / bannerCropAspectRatio))
+        return CGSize(width: width, height: height)
     }
 
     private func updateDetectedRatio(index: Int, size: CGSize) {
@@ -170,9 +166,11 @@ struct BannerCarouselView: View {
                     Color(.secondarySystemGroupedBackground)
                         .frame(width: itemSize.width, height: itemSize.height)
                         .overlay {
-                            RemoteImageView(url: banner.image, maxPixelSize: 1080, contentMode: .fit) { size in
+                            RemoteImageView(url: banner.image, maxPixelSize: 1200, contentMode: .fill) { size in
                                 updateDetectedRatio(index: idx, size: size)
                             }
+                            .frame(width: itemSize.width, height: itemSize.height)
+                            .clipped()
                         }
                         .clipped()
                         .overlay(alignment: .bottomLeading) {

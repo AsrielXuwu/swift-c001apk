@@ -5,6 +5,7 @@ public struct UserDetailView: View {
     public let uid: String
     public let initialUsername: String?
     public let initialAvatar: String?
+    public let initialTab: String?
 
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
@@ -61,10 +62,14 @@ public struct UserDetailView: View {
         var id: String { rawValue }
     }
 
-    public init(uid: String, initialUsername: String? = nil, initialAvatar: String? = nil) {
+    public init(uid: String, initialUsername: String? = nil, initialAvatar: String? = nil, initialTab: String? = nil) {
         self.uid = uid
         self.initialUsername = initialUsername
         self.initialAvatar = initialAvatar.map(coolapkNormalizedURL)
+        self.initialTab = initialTab
+        let resolvedTab = UserTab(rawValue: initialTab ?? "") ?? .feeds
+        self._tab = State(initialValue: resolvedTab)
+        self._scrolledTab = State(initialValue: resolvedTab)
     }
 
     public var body: some View {

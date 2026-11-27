@@ -428,7 +428,7 @@ public enum API: Sendable {
             default:
                 if item.feedInfo.exists {
                     rows.append(.feed(FeedItem(json: item.feedInfo)))
-                } else if !item.message.string.isEmpty && !item.uid.identifier.isEmpty {
+                } else if !item.message.string.isEmpty && (!item.uid.identifier.isEmpty || !item.userInfo.uid.identifier.isEmpty) {
                     rows.append(.feed(FeedItem(json: item)))
                 } else if !item.title.string.isEmpty && !item.url.string.isEmpty {
                     rows.append(.linkBar("misc-\(index)", [
