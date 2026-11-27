@@ -269,7 +269,7 @@ public struct NotificationItem: Identifiable, Hashable, Sendable {
         let patterns = [
             #"(?:fid|feed_id|feedId)=(\d+)"#,
             #"/(?:feed|question|picture|dyhArticle|answer)/(\d+)"#,
-            #"/(?:feed/detail|feed/replyList|feed/replyDetail)\?[^"'\s<>]*?id=(\d+)"#
+            #"/(?:feed/detail|feed/replyList|feed/replyDetail)\?[^"'\s<>]*?\bid=(\d+)"#
         ]
         for pattern in patterns {
             if let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
@@ -305,7 +305,7 @@ public struct NotificationItem: Identifiable, Hashable, Sendable {
 
     private static func extractQueryID(from urlString: String, key: String) -> String? {
         guard !urlString.isEmpty,
-              let regex = try? NSRegularExpression(pattern: "(?:\\?|&)\\(key)=(\\d+)"),
+              let regex = try? NSRegularExpression(pattern: "(?:\\?|&)\(key)=(\\d+)"),
               let match = regex.firstMatch(in: urlString, range: NSRange(urlString.startIndex..<urlString.endIndex, in: urlString)),
               let range = Range(match.range(at: 1), in: urlString) else {
             return nil
