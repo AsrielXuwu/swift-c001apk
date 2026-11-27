@@ -66,41 +66,38 @@ private struct WebLoginRepresentable: UIViewRepresentable {
 
         func webView(
             _ webView: WKWebView,
-            decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-        ) {
+            decidePolicyFor navigationAction: WKNavigationAction
+        ) async -> WKNavigationActionPolicy {
             let url = navigationAction.request.url
             let scheme = url?.scheme?.lowercased() ?? ""
-            if !scheme.isEmpty && scheme != "http" && scheme != "https" && scheme != "about" {
-                decisionHandler(.cancel)
-                return
+            if !scheme.isEmpty && scheme != "http" && scheme != "https" && scheme != "about" && scheme != "blob" && scheme != "data" {
+                return .cancel
             }
 
+            await captureCookiesIfReady(from: webView)
+            if finished {
+                return .cancel
+            }
+
+            let abs = url?.absoluteString.lowercased() ?? ""
             let host = url?.host?.lowercased() ?? ""
-            let isExternalAppRedirect =
-                (!host.isEmpty && !host.contains("coolapk.com") && !host.contains("coolmarket.com") && !host.contains("qq.com") && !host.contains("weibo.com") && !host.contains("alipay.com") && !host.contains("geetest.com"))
-                || (url?.absoluteString.contains("openapp") == true)
-                || (url?.absoluteString.contains("coolmarket") == true)
-
-            Task { @MainActor [weak self] in
-                await self?.captureCookiesIfReady(from: webView)
-                if self?.finished == true || isExternalAppRedirect {
-                    decisionHandler(.cancel)
-                } else {
-                    decisionHandler(.allow)
-                }
-            }
+            let path = url?.path.lowercased() ?? ""
+            let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+            let isAppHandoff =
+                abs.contains("openapp")
+                || abs.contains("coolmarket")
+                || host == "apps.apple.com"
+                || host == "itunes.apple.com"
+                || (isMainFrame && host.contains("coolapk.com") && (path.hasPrefix("/dl") || path.hasPrefix("/apk")))
+            return isAppHandoff ? .cancel : .allow
         }
 
         func webView(
             _ webView: WKWebView,
-            decidePolicyFor navigationResponse: WKNavigationResponse,
-            decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
-        ) {
-            Task { @MainActor [weak self] in
-                await self?.captureCookiesIfReady(from: webView)
-                decisionHandler(self?.finished == true ? .cancel : .allow)
-            }
+            decidePolicyFor navigationResponse: WKNavigationResponse
+        ) async -> WKNavigationResponsePolicy {
+            await captureCookiesIfReady(from: webView)
+            return finished ? .cancel : .allow
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

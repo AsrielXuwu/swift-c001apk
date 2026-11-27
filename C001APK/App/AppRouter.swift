@@ -10,8 +10,10 @@ private struct SuppressMediaTapKey: EnvironmentKey {
     static let defaultValue: Bool = false
 }
 
+public typealias MediaOpenAction = @MainActor @Sendable ([FeedMedia], Int, String?) -> Void
+
 private struct MediaOpenActionKey: EnvironmentKey {
-    static let defaultValue: (([FeedMedia], Int, String?) -> Void)? = nil
+    static let defaultValue: MediaOpenAction? = nil
 }
 
 private struct OledPureBlackKey: EnvironmentKey {
@@ -29,7 +31,7 @@ public extension EnvironmentValues {
         set { self[SuppressMediaTapKey.self] = newValue }
     }
 
-    var mediaOpenAction: (([FeedMedia], Int, String?) -> Void)? {
+    var mediaOpenAction: MediaOpenAction? {
         get { self[MediaOpenActionKey.self] }
         set { self[MediaOpenActionKey.self] = newValue }
     }
