@@ -339,6 +339,8 @@ public struct PhotoStackCardView<MenuContent: View>: View {
     @Environment(\.replyCardCoordinateSpace) private var replyCardCoordinateSpace
     @State private var dragProgress: CGFloat = 0
     @State private var isHorizontalDragging = false
+    @State private var isDeckAnimating = false
+    @State private var deckAnimationTicket = UUID()
     @State private var lastDragEndedAt: Date = .distantPast
     @State private var availableWidth: CGFloat
     @State private var detectedRatios: [Int: CGFloat] = [:]
@@ -414,6 +416,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
             ? ((0..<count).map { cardFrame(at: $0, maxStageWidth: innerStageWidth).height }.max() ?? activeCardSize.height)
             : cardHeight
         let activeRatio = ratioForItem(at: activeIdx)
+        let isRestingFrontActive = count > 1 && !isHorizontalDragging && !isDeckAnimating && abs(dragProgress) < 0.001
 
         ZStack {
             OrbitalDeckStage(
@@ -422,109 +425,107 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                 cardHeight: maxCardHeight
             ) { itemIndex, isFront in
                 let item = items[itemIndex]
-                let sourceID = (isFront && enableZoomSource) ? "media-\(transitionSeed)-\(itemIndex)" : nil
-                let ratio = ratioForItem(at: itemIndex)
                 let itemSize = cardFrame(at: itemIndex, maxStageWidth: innerStageWidth)
-                let shouldLetterboxWide = adaptiveContentMode && (ratio ?? 1.0) > 1.38
+                let shouldOwnSingleSource = enableZoomSource && ((count == 1 && isFront) || (count > 1 && isFront && !isRestingFrontActive))
+                let sourceID = shouldOwnSingleSource ? "media-\(transitionSeed)-\(itemIndex)" : nil
 
-                Color(.secondarySystemGroupedBackground)
-                    .frame(width: itemSize.width, height: itemSize.height)
-                    .overlay {
-                        if shouldLetterboxWide {
-                            ZStack {
-                                RemoteImageView(
-                                    url: item.thumbnailUrl,
-                                    maxPixelSize: 120,
-                                    contentMode: .fill
-                                )
-                                .blur(radius: 14)
-                                .opacity(0.45)
-                                RemoteImageView(
-                                    url: item.sourceUrl,
-                                    maxPixelSize: 960,
-                                    contentMode: .fit
-                                ) { size in
-                                    updateDetectedRatio(index: itemIndex, size: size)
-                                }
-                            }
-                        } else {
-                            RemoteImageView(
-                                url: adaptiveContentMode ? item.sourceUrl : item.thumbnailUrl,
-                                maxPixelSize: adaptiveContentMode ? 960 : 1080,
-                                contentMode: .fill
-                            ) { size in
-                                updateDetectedRatio(index: itemIndex, size: size)
-                            }
+                if count == 1 {
+                    deckCardSurface(at: itemIndex, size: itemSize)
+                        .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: cornerRadius)
+                        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                        .contextMenu {
+                            contextMenuBuilder(item, itemIndex)
+                        } preview: {
+                            MediaContextMenuPreview(item: item, disableHDR: disableHDR)
                         }
-                    }
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                    .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
-                    }
-                    .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: cornerRadius)
-                    .onTapGesture {
-                        guard isFront,
-                              !isHorizontalDragging,
-                              abs(dragProgress) < 0.04,
-                              Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
-                        onTapCard(itemIndex)
-                    }
+                        .onTapGesture {
+                            guard isFront,
+                                  !isHorizontalDragging,
+                                  abs(dragProgress) < 0.04,
+                                  Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
+                            onTapCard(itemIndex)
+                        }
+                } else {
+                    deckCardSurface(at: itemIndex, size: itemSize)
+                        .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: cornerRadius)
+                        .opacity((isFront && isRestingFrontActive) ? 0 : 1)
+                        .onTapGesture {
+                            guard isFront,
+                                  !isHorizontalDragging,
+                                  abs(dragProgress) < 0.04,
+                                  Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
+                            onTapCard(itemIndex)
+                        }
+                }
             }
             .padding(.leading, leftInset)
             .padding(.trailing, rightInset)
             .padding(.bottom, bottomInset)
 
             if count > 1 {
-                HorizontalDeckPanOverlay(
-                    isEnabled: count > 1,
-                    activeCardSize: activeCardSize,
-                    onTap: {
-                        guard !isHorizontalDragging,
-                              abs(dragProgress) < 0.04,
-                              Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
-                        onTapCard(activeIdx)
-                    },
-                    onDragChanged: { dx in
-                        if !isHorizontalDragging {
-                            isHorizontalDragging = true
-                            replySwipeLock?.setDraggingMedia(true)
-                        }
-                        dragProgress = max(-1.15, min(1.15, -dx / 210.0))
-                    },
-                    onDragEnded: { dx, predicted, cancelled in
-                        lastDragEndedAt = Date()
-                        isHorizontalDragging = false
-                        replySwipeLock?.setDraggingMedia(false)
-                        guard !cancelled else {
-                            withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
+                let frontSourceID = (enableZoomSource && isRestingFrontActive) ? "media-\(transitionSeed)-\(activeIdx)" : nil
+                deckCardSurface(at: activeIdx, size: activeCardSize)
+                    .opacity(isRestingFrontActive ? 1 : 0)
+                    .overlay {
+                        HorizontalDeckPanOverlay(
+                            isEnabled: true,
+                            activeCardSize: activeCardSize,
+                            onTap: {
+                                guard !isHorizontalDragging,
+                                      abs(dragProgress) < 0.04,
+                                      Date().timeIntervalSince(lastDragEndedAt) > 0.30 else { return }
+                                onTapCard(activeIdx)
+                            },
+                            onDragChanged: { dx in
+                                if !isHorizontalDragging {
+                                    isHorizontalDragging = true
+                                    replySwipeLock?.setDraggingMedia(true)
+                                }
+                                dragProgress = max(-1.15, min(1.15, -dx / 210.0))
+                            },
+                            onDragEnded: { dx, predicted, cancelled in
+                                lastDragEndedAt = Date()
+                                isHorizontalDragging = false
+                                replySwipeLock?.setDraggingMedia(false)
+                                guard !cancelled else {
+                                    beginDeckSettleWindow()
+                                    withAnimation(.interpolatingSpring(stiffness: 240, damping: 26)) {
+                                        dragProgress = 0
+                                    }
+                                    return
+                                }
+                                let deltaStep: CGFloat
+                                if dx < -38 || predicted < -85 {
+                                    deltaStep = 1
+                                } else if dx > 38 || predicted > 85 {
+                                    deltaStep = -1
+                                } else {
+                                    deltaStep = 0
+                                }
+                                let combined = deckPhase + dragProgress
+                                let base = deckPhase.rounded()
+                                deckPhase = combined
                                 dragProgress = 0
+                                beginDeckSettleWindow()
+                                withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
+                                    deckPhase = base + deltaStep
+                                }
                             }
-                            return
-                        }
-                        let deltaStep: CGFloat
-                        if dx < -38 || predicted < -85 {
-                            deltaStep = 1
-                        } else if dx > 38 || predicted > 85 {
-                            deltaStep = -1
-                        } else {
-                            deltaStep = 0
-                        }
-                        let combined = deckPhase + dragProgress
-                        let base = deckPhase.rounded()
-                        deckPhase = combined
-                        dragProgress = 0
-                        withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
-                            deckPhase = base + deltaStep
-                        }
+                        )
+                        .frame(width: activeCardSize.width, height: activeCardSize.height)
                     }
-                )
-                .frame(height: maxCardHeight)
-                .padding(.leading, leftInset)
-                .padding(.trailing, rightInset)
-                .padding(.bottom, bottomInset)
+                    .frame(width: activeCardSize.width, height: activeCardSize.height)
+                    .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                    .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                    .applyZoomSource(id: frontSourceID, in: zoomNamespace, cornerRadius: cornerRadius)
+                    .contextMenu {
+                        contextMenuBuilder(activeItem, activeIdx)
+                    } preview: {
+                        MediaContextMenuPreview(item: activeItem, disableHDR: disableHDR)
+                    }
+                    .padding(.leading, leftInset)
+                    .padding(.trailing, rightInset)
+                    .padding(.bottom, bottomInset)
             }
 
             // Stationary floating controls anchored cleanly to the active front card size.
@@ -619,12 +620,62 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                     }
             }
         }
-        .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .contextMenu {
-            contextMenuBuilder(activeItem, activeIdx)
-        } preview: {
-            MediaContextMenuPreview(item: activeItem, disableHDR: disableHDR)
+    }
+
+    @ViewBuilder
+    private func deckCardSurface(at itemIndex: Int, size itemSize: CGSize) -> some View {
+        let item = items[itemIndex]
+        let ratio = ratioForItem(at: itemIndex)
+        let shouldLetterboxWide = adaptiveContentMode && (ratio ?? 1.0) > 1.38
+
+        Color(.secondarySystemGroupedBackground)
+            .frame(width: itemSize.width, height: itemSize.height)
+            .overlay {
+                if shouldLetterboxWide {
+                    ZStack {
+                        RemoteImageView(
+                            url: item.thumbnailUrl,
+                            maxPixelSize: 120,
+                            contentMode: .fill
+                        )
+                        .blur(radius: 14)
+                        .opacity(0.45)
+                        RemoteImageView(
+                            url: item.sourceUrl,
+                            maxPixelSize: 960,
+                            contentMode: .fit
+                        ) { size in
+                            updateDetectedRatio(index: itemIndex, size: size)
+                        }
+                    }
+                } else {
+                    RemoteImageView(
+                        url: adaptiveContentMode ? item.sourceUrl : item.thumbnailUrl,
+                        maxPixelSize: adaptiveContentMode ? 960 : 1080,
+                        contentMode: .fill
+                    ) { size in
+                        updateDetectedRatio(index: itemIndex, size: size)
+                    }
+                }
+            }
+            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
+            }
+    }
+
+    private func beginDeckSettleWindow() {
+        isDeckAnimating = true
+        let ticket = UUID()
+        deckAnimationTicket = ticket
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 420_000_000)
+            if deckAnimationTicket == ticket {
+                isDeckAnimating = false
+            }
         }
     }
 
@@ -636,6 +687,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
     }
 
     private func stepDeck(by delta: CGFloat) {
+        beginDeckSettleWindow()
         withAnimation(.interpolatingSpring(stiffness: 220, damping: 24)) {
             deckPhase = deckPhase.rounded() + delta
         }
@@ -868,7 +920,9 @@ public struct MediaContextMenuPreview: View {
         let initial = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
+            ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 960, preferHDR: false)
             ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 1080, preferHDR: false)
+            ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 960, preferHDR: false)
             ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 420, preferHDR: false)
             ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 320, preferHDR: false)
         self._displayResult = State(initialValue: initial)
