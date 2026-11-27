@@ -653,7 +653,7 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
     }
 }
 
-public struct CollectionItem: Identifiable, Hashable, Sendable {
+public struct CollectionItem: Codable, Identifiable, Hashable, Sendable {
     public let id: String
     public var title: String
     public var subtitle: String
@@ -669,19 +669,29 @@ public struct CollectionItem: Identifiable, Hashable, Sendable {
     public var isBeCollected: Bool
 
     public init(json: JSON) {
-        id = json.id.exists ? json.id.identifier : json.entityId.identifier
+        let primaryID = json.id.exists ? json.id.identifier : json.entityId.identifier
+        id = primaryID.isEmpty ? json.target_id.identifier : primaryID
         title = json.title.string
         subtitle = json.sub_title.string
         description = json.description.string.isEmpty ? json.intro.string : json.description.string
-        logo = coolapkNormalizedURL(json.logo.string.isEmpty ? json.pic.string : json.logo.string)
+        let rawLogo = !json.cover_pic.string.isEmpty
+            ? json.cover_pic.string
+            : (!json.coverPic.string.isEmpty
+                ? json.coverPic.string
+                : (!json.logo.string.isEmpty ? json.logo.string : json.pic.string))
+        logo = coolapkNormalizedURL(rawLogo)
         username = json.username.string.isEmpty ? json.userInfo.username.string : json.username.string
         avatar = coolapkNormalizedURL(json.userAvatar.string.isEmpty ? json.userInfo.userAvatar.string : json.userAvatar.string)
         uid = json.uid.identifier.isEmpty ? json.userInfo.uid.identifier : json.uid.identifier
-        itemNum = json.item_num.int
-        followNum = json.follow_num.int
+        itemNum = json.item_num.int > 0
+            ? json.item_num.int
+            : (json.itemNum.int > 0 ? json.itemNum.int : json.feed_num.int)
+        followNum = json.follow_num.int > 0
+            ? json.follow_num.int
+            : (json.followNum.int > 0 ? json.followNum.int : json.follownum.int)
         likeNum = json.like_num.int
         isFollowed = json.isFollowed.int > 0 || json.follow.int > 0
-        isBeCollected = json.isBeCollected.int > 0 || json.isBeCollected.bool
+        isBeCollected = json.isBeCollected.int > 0 || json.isBeCollected.bool || json.userAction.collect.int > 0
     }
 }
 

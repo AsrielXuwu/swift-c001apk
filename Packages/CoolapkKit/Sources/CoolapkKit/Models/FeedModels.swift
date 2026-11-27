@@ -446,16 +446,19 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         let explicitFeedID = [json.feed_id.identifier, json.feedId.identifier]
             .first { !$0.isEmpty && $0 != "0" }
             ?? (!rawEntityType.isEmpty && rawEntityType != "feed"
-                ? [json.fid.identifier].first { !$0.isEmpty && $0 != "0" }
+                ? [json.fid.identifier, json.target_id.identifier].first { !$0.isEmpty && $0 != "0" }
                 : nil)
             ?? Self.extractFeedIDFromURL(json.url.string)
             ?? ""
-        let resolvedID = !nonZeroResolvedID.isEmpty ? nonZeroResolvedID : explicitFeedID
+        let isCollectionItemWrapper = rawEntityType.contains("collection")
+        let resolvedID = (isCollectionItemWrapper && !explicitFeedID.isEmpty)
+            ? explicitFeedID
+            : (!nonZeroResolvedID.isEmpty ? nonZeroResolvedID : explicitFeedID)
         id = resolvedID
         targetFeedID = (!explicitFeedID.isEmpty && !rawEntityType.isEmpty && rawEntityType != "feed")
             ? explicitFeedID
             : resolvedID
-        uid = json.uid.identifier
+        uid = json.uid.identifier.isEmpty ? json.userInfo.uid.identifier : json.uid.identifier
         username = json.username.string.isEmpty ? json.userInfo.username.string : json.username.string
         avatar = coolapkNormalizedURL(
             [json.userAvatar.string, json.avatar.string, json.userInfo.userAvatar.string].first { !$0.isEmpty } ?? ""

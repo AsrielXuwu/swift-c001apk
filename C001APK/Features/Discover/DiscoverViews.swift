@@ -508,9 +508,7 @@ public struct TopicDetailView: View {
         if let chosenSort, !chosenSort.url.isEmpty {
             fetched = try? await API.linkFeed(link: chosenSort.url, page: next)
         } else {
-            let listType = (activeTabs == fallbackTabs)
-                ? tabItem.id
-                : (chosenSort?.id ?? "lastupdate_desc")
+            let listType = chosenSort?.id ?? "lastupdate_desc"
             fetched = try? await API.topicTabFeeds(
                 tag: activeTag,
                 topicID: topic?.id,

@@ -1127,18 +1127,90 @@ public enum API: Sendable {
         return rows(from: items)
     }
 
-    public static func collectionList(uid: String?, feedID: String? = nil, page: Int) async throws -> [CollectionItem] {
+    private static func expandListEntities(from items: [JSON]) -> [JSON] {
+        var expanded: [JSON] = []
+        for item in items {
+            let eType = item.entityType.string
+            let eTemplate = item.entityTemplate.string
+            if (eType == "card" || eTemplate == "listCard" || eTemplate == "iconLinkGridCard") && !item.entities.array.isEmpty {
+                expanded.append(contentsOf: item.entities.array)
+            } else {
+                expanded.append(item)
+                if !item.entities.array.isEmpty && item.title.string.isEmpty && item.message.string.isEmpty {
+                    expanded.append(contentsOf: item.entities.array)
+                }
+            }
+        }
+        return expanded
+    }
+
+    public static func collectionList(uid: String?, feedID: String? = nil, page: Int = 1) async throws -> [CollectionItem] {
+        let sessionUID = await client.sessionSnapshot().uid
+        let trimmedUID = (uid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedUID = trimmedUID.isEmpty ? sessionUID : trimmedUID
+
+        func parseCollections(from rawItems: [JSON]) -> [CollectionItem] {
+            let expanded = expandListEntities(from: rawItems)
+            var seen = Set<String>()
+            var result: [CollectionItem] = []
+            for raw in expanded {
+                let eType = raw.entityType.string
+                if eType == "card" || raw.entityTemplate.string == "iconMiniLinkGridCard" {
+                    continue
+                }
+                let col = CollectionItem(json: raw)
+                if !col.id.isEmpty && !col.title.isEmpty && seen.insert(col.id).inserted {
+                    result.append(col)
+                }
+            }
+            return result
+        }
+
+        func extractDataArray(from json: JSON) -> [JSON] {
+            if !json.data.array.isEmpty { return json.data.array }
+            if !json.data.entities.array.isEmpty { return json.data.entities.array }
+            if !json.data.list.array.isEmpty { return json.data.list.array }
+            return []
+        }
+
         var params: [String: String] = [
-            "uid": uid ?? "",
             "page": String(page),
             "showDefault": "1"
         ]
+        if !resolvedUID.isEmpty {
+            params["uid"] = resolvedUID
+        }
         if let feedID, !feedID.isEmpty {
             params["id"] = feedID
             params["type"] = "feed"
         }
-        let json = try await client.get("/v6/collection/list", params)
-        return json.data.array.map { CollectionItem(json: $0) }
+
+        let firstJSON = try await client.get("/v6/collection/list", params)
+        let firstList = parseCollections(from: extractDataArray(from: firstJSON))
+        if !firstList.isEmpty || page > 1 {
+            return firstList
+        }
+
+        // Fallback 1: query with showDefault=0
+        var secondParams = params
+        secondParams["showDefault"] = "0"
+        if let secondJSON = try? await client.get("/v6/collection/list", secondParams) {
+            let secondList = parseCollections(from: extractDataArray(from: secondJSON))
+            if !secondList.isEmpty { return secondList }
+        }
+
+        // Fallback 2: query via dataList #/collection/list
+        if !resolvedUID.isEmpty,
+           let thirdItems = try? await client.dataList(
+               url: "#/collection/list?uid=\(resolvedUID)",
+               page: page,
+               extra: ["title": "收藏夹"]
+           ) {
+            let thirdList = parseCollections(from: thirdItems)
+            if !thirdList.isEmpty { return thirdList }
+        }
+
+        return firstList
     }
 
     public static func collectFeedToCollection(
@@ -1163,12 +1235,18 @@ public enum API: Sendable {
         let json = try await client.post("/v6/collection/create", [
             "title": title,
             "description": description,
-            "isOpen": isOpen ? "1" : "0"
+            "isOpen": isOpen ? "1" : "0",
+            "is_open": isOpen ? "1" : "0"
         ])
         if json.data.isObject {
-            return CollectionItem(json: json.data)
+            let item = CollectionItem(json: json.data)
+            if !item.id.isEmpty { return item }
         }
         return nil
+    }
+
+    public static func deleteCollection(id: String) async throws {
+        _ = try await client.post("/v6/collection/delete", ["id": id])
     }
 
     public static func collectionDetail(id: String) async throws -> CollectionItem {
@@ -1176,9 +1254,140 @@ public enum API: Sendable {
         return CollectionItem(json: json.data)
     }
 
-    public static func collectionItems(id: String, page: Int) async throws -> [HomeFeedRow] {
+    public static func collectionItems(id: String, page: Int = 1) async throws -> [HomeFeedRow] {
         let json = try await client.get("/v6/collection/itemList", ["id": id, "page": String(page)])
-        return rows(from: json.data.array)
+        let rawArray: [JSON]
+        if !json.data.array.isEmpty {
+            rawArray = expandListEntities(from: json.data.array)
+        } else if !json.data.entities.array.isEmpty {
+            rawArray = expandListEntities(from: json.data.entities.array)
+        } else if !json.data.list.array.isEmpty {
+            rawArray = expandListEntities(from: json.data.list.array)
+        } else {
+            rawArray = []
+        }
+
+        var parsedRows: [HomeFeedRow] = []
+        var seenIDs = Set<String>()
+        for rawItem in rawArray {
+            if rawItem.entityType.string == "card" && rawItem.message.string.isEmpty && !rawItem.targetRow.isObject && !rawItem.feedInfo.isObject {
+                continue
+            }
+            let payload: JSON
+            if rawItem.feedInfo.isObject && (!rawItem.feedInfo.id.identifier.isEmpty || !rawItem.feedInfo.message.string.isEmpty) {
+                payload = rawItem.feedInfo
+            } else if rawItem.targetRow.isObject && (!rawItem.targetRow.id.identifier.isEmpty || !rawItem.targetRow.message.string.isEmpty || !rawItem.targetRow.title.string.isEmpty) {
+                payload = rawItem.targetRow
+            } else if rawItem.sourceFeed.isObject && (!rawItem.sourceFeed.id.identifier.isEmpty || !rawItem.sourceFeed.message.string.isEmpty) {
+                payload = rawItem.sourceFeed
+            } else {
+                payload = rawItem
+            }
+
+            var feed = FeedItem(json: payload)
+            if feed.message.isEmpty && !rawItem.message.string.isEmpty {
+                feed.message = rawItem.message.string
+            }
+            if feed.title.isEmpty {
+                let fallbackTitle = !rawItem.message_title.string.isEmpty ? rawItem.message_title.string : rawItem.title.string
+                if !fallbackTitle.isEmpty {
+                    feed.title = fallbackTitle
+                }
+            }
+            if feed.username.isEmpty {
+                let outerName = !rawItem.userInfo.username.string.isEmpty ? rawItem.userInfo.username.string : rawItem.username.string
+                if !outerName.isEmpty {
+                    feed.username = outerName
+                }
+            }
+            if feed.avatar.isEmpty {
+                let outerAvatar = !rawItem.userInfo.userAvatar.string.isEmpty ? rawItem.userInfo.userAvatar.string : rawItem.userAvatar.string
+                if !outerAvatar.isEmpty {
+                    feed.avatar = coolapkNormalizedURL(outerAvatar)
+                }
+            }
+
+            if !feed.id.isEmpty && (!feed.message.isEmpty || !feed.title.isEmpty || !feed.pics.isEmpty || !feed.mediaItems.isEmpty) {
+                if seenIDs.insert(feed.id).inserted {
+                    parsedRows.append(.feed(feed))
+                }
+                continue
+            }
+
+            for fallbackRow in rows(from: [rawItem]) {
+                if seenIDs.insert(fallbackRow.id).inserted {
+                    parsedRows.append(fallbackRow)
+                }
+            }
+        }
+        return parsedRows
+    }
+
+    public static func followedProducts(page: Int = 1) async throws -> [ProductItem] {
+        let rawItems = try await client.dataList(
+            url: "#/product/followProductList",
+            page: page,
+            extra: ["title": "我关注的数码吧"]
+        )
+        let expanded = expandListEntities(from: rawItems)
+        var seen = Set<String>()
+        var items: [ProductItem] = []
+        for raw in expanded {
+            let p = ProductItem(json: raw)
+            if !p.id.isEmpty && !p.title.isEmpty && seen.insert(p.id).inserted {
+                items.append(p)
+            }
+        }
+        return items
+    }
+
+    public static func followedApps(uid: String? = nil, page: Int = 1) async throws -> [AppItem] {
+        let sessionUID = await client.sessionSnapshot().uid
+        let trimmedUID = (uid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedUID = trimmedUID.isEmpty ? sessionUID : trimmedUID
+        var params: [String: String] = ["page": String(page)]
+        if !resolvedUID.isEmpty {
+            params["uid"] = resolvedUID
+        }
+        let json = try await client.get("/v6/user/apkFollowList", params)
+        let expanded = expandListEntities(from: json.data.array)
+        var seen = Set<String>()
+        var items: [AppItem] = []
+        for raw in expanded {
+            let app = AppItem(json: raw)
+            if !app.id.isEmpty && !app.title.isEmpty && seen.insert(app.id).inserted {
+                items.append(app)
+            }
+        }
+        if items.isEmpty && page == 1 {
+            if let fallbackItems = try? await client.dataList(
+                url: "#/apk/userFollowList",
+                page: page,
+                extra: ["title": "我关注的应用"]
+            ) {
+                for raw in expandListEntities(from: fallbackItems) {
+                    let app = AppItem(json: raw)
+                    if !app.id.isEmpty && !app.title.isEmpty && seen.insert(app.id).inserted {
+                        items.append(app)
+                    }
+                }
+            }
+        }
+        return items
+    }
+
+    public static func followedDyhs(page: Int = 1) async throws -> [DyhItem] {
+        let json = try await client.get("/v6/user/dyhSubscribe", ["page": String(page)])
+        let expanded = expandListEntities(from: json.data.array)
+        var seen = Set<String>()
+        var items: [DyhItem] = []
+        for raw in expanded {
+            let dyh = DyhItem(json: raw)
+            if !dyh.id.isEmpty && !dyh.title.isEmpty && seen.insert(dyh.id).inserted {
+                items.append(dyh)
+            }
+        }
+        return items
     }
 
     public static func followCollection(id: String, follow: Bool) async throws {

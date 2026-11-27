@@ -4,7 +4,7 @@ import Observation
 
 public enum FollowSegment: String, CaseIterable, Identifiable, Sendable {
     case all = "全部"
-    case users = "用户"
+    case users = "关注用户"
     case topics = "话题"
     case products = "数码"
     case apps = "应用"
@@ -31,201 +31,322 @@ public final class FollowViewModel {
     public static let allProductsChipID = "__all_products__"
 
     public var segment: FollowSegment = .all
-    public var rowsBySegment: [FollowSegment: [HomeFeedRow]] = [:]
     public var followedTopics: [TopicItem] = []
-    public var selectedTopicTag: String = ""
+    public var selectedTopicTag: String = FollowViewModel.allTopicsChipID
     public var followedProducts: [ProductItem] = []
     public var selectedProductID: String = FollowViewModel.allProductsChipID
-    public var loadingSegments: Set<FollowSegment> = []
-    public var loadedSegments: Set<FollowSegment> = []
-    public var loadingMoreSegments: Set<FollowSegment> = []
-    public var errorBySegment: [FollowSegment: String] = [:]
+
+    public private(set) var rowsBySegment: [FollowSegment: [HomeFeedRow]] = [:]
+    public private(set) var loadingSegments: Set<FollowSegment> = []
+    public private(set) var loadedSegments: Set<FollowSegment> = []
+    public private(set) var loadingMoreSegments: Set<FollowSegment> = []
+    public private(set) var hasMoreBySegment: [FollowSegment: Bool] = [:]
+    public private(set) var errorBySegment: [FollowSegment: String] = [:]
 
     private var pageBySegment: [FollowSegment: Int] = [:]
-    private var hasMoreBySegment: [FollowSegment: Bool] = [:]
+    private var activeTasks: [FollowSegment: Task<Void, Never>] = [:]
+    private var cachedFollowedUIDs: Set<String> = []
+    private var cachedFollowedUsers: [UserBrief] = []
+    private var sessionMarker = -1
+    private var cloudFollowMarker: Bool?
 
     public init() {}
 
-    public var rows: [HomeFeedRow] {
-        rowsBySegment[segment] ?? []
+    public func syncSessionIfNeeded(appState: AppState) {
+        let cloudEnabled = appState.settings.enableCloudFollowLoad
+        if sessionMarker != appState.sessionVersion || cloudFollowMarker != cloudEnabled {
+            sessionMarker = appState.sessionVersion
+            cloudFollowMarker = cloudEnabled
+            activeTasks.values.forEach { $0.cancel() }
+            activeTasks.removeAll()
+            rowsBySegment.removeAll()
+            loadingSegments.removeAll()
+            loadedSegments.removeAll()
+            loadingMoreSegments.removeAll()
+            hasMoreBySegment.removeAll()
+            errorBySegment.removeAll()
+            pageBySegment.removeAll()
+            followedTopics = []
+            selectedTopicTag = Self.allTopicsChipID
+            followedProducts = []
+            selectedProductID = Self.allProductsChipID
+            cachedFollowedUIDs = []
+            cachedFollowedUsers = []
+        }
     }
 
-    public var isLoading: Bool {
-        loadingSegments.contains(segment)
-    }
-
-    public var isLoadingMore: Bool {
-        loadingMoreSegments.contains(segment)
-    }
-
-    public var errorMessage: String? {
-        errorBySegment[segment]
-    }
-
-    public func loadInitial(segment targetSeg: FollowSegment? = nil, appState: AppState, force: Bool = false) async {
-        let seg = targetSeg ?? segment
-        if loadingSegments.contains(seg) { return }
-        if !force, loadedSegments.contains(seg), !(rowsBySegment[seg]?.isEmpty ?? true) {
+    public func loadInitial(segment targetSegment: FollowSegment, appState: AppState, force: Bool = false) async {
+        syncSessionIfNeeded(appState: appState)
+        if !force, let existing = rowsBySegment[targetSegment], !existing.isEmpty {
             return
         }
+        activeTasks[targetSegment]?.cancel()
+        pageBySegment[targetSegment] = 1
+        hasMoreBySegment[targetSegment] = true
+        errorBySegment[targetSegment] = nil
+        loadingSegments.insert(targetSegment)
 
-        loadingSegments.insert(seg)
-        errorBySegment[seg] = nil
-        pageBySegment[seg] = 1
-        hasMoreBySegment[seg] = true
+        let expectedSession = appState.sessionVersion
+        let task = Task {
+            await fetchPage(
+                segment: targetSegment,
+                page: 1,
+                append: false,
+                appState: appState,
+                expectedSession: expectedSession
+            )
+        }
+        activeTasks[targetSegment] = task
+        await task.value
+    }
+
+    public func loadMore(segment targetSegment: FollowSegment, appState: AppState) async {
+        guard !loadingSegments.contains(targetSegment),
+              !loadingMoreSegments.contains(targetSegment),
+              hasMoreBySegment[targetSegment] != false else { return }
+        loadingMoreSegments.insert(targetSegment)
+        let nextPage = (pageBySegment[targetSegment] ?? 1) + 1
+        let expectedSession = appState.sessionVersion
+        await fetchPage(
+            segment: targetSegment,
+            page: nextPage,
+            append: true,
+            appState: appState,
+            expectedSession: expectedSession
+        )
+        loadingMoreSegments.remove(targetSegment)
+    }
+
+    private func fetchPage(
+        segment targetSegment: FollowSegment,
+        page: Int,
+        append: Bool,
+        appState: AppState,
+        expectedSession: Int
+    ) async {
         defer {
-            loadingSegments.remove(seg)
-            loadedSegments.insert(seg)
+            if !append {
+                loadingSegments.remove(targetSegment)
+            }
         }
-
         do {
-            let loadedRows = try await fetchRows(for: seg, page: 1, appState: appState)
-            rowsBySegment[seg] = loadedRows
-            hasMoreBySegment[seg] = !loadedRows.isEmpty
+            let loaded: [HomeFeedRow]
+            switch targetSegment {
+            case .local:
+                loaded = try await fetchLocalFollowRows(page: page, appState: appState)
+
+            case .users:
+                let localRows = (try? await fetchLocalFollowRows(page: page, appState: appState)) ?? []
+                if appState.settings.enableCloudFollowLoad,
+                   appState.accounts.isLoggedIn,
+                   let myUID = appState.accounts.activeUID {
+                    let cloudRows = try await fetchFollowedUsersRows(myUID: myUID, page: page)
+                    loaded = mergeFollowRows(primary: cloudRows, extra: localRows)
+                    hasMoreBySegment[targetSegment] = !loaded.isEmpty
+                } else {
+                    loaded = localRows
+                    hasMoreBySegment[targetSegment] = !localRows.isEmpty
+                }
+
+            case .topics:
+                guard appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn else {
+                    if !append { rowsBySegment[targetSegment] = [] }
+                    hasMoreBySegment[targetSegment] = false
+                    return
+                }
+                if followedTopics.isEmpty || page == 1 {
+                    let topics = (try? await API.followedTopics(page: 1)) ?? []
+                    if !topics.isEmpty { followedTopics = topics }
+                }
+                if selectedTopicTag == Self.allTopicsChipID || selectedTopicTag.isEmpty {
+                    let list = (page == 1 && !followedTopics.isEmpty)
+                        ? followedTopics
+                        : ((try? await API.followedTopics(page: page)) ?? [])
+                    loaded = list.map { .topic($0) }
+                } else {
+                    loaded = try await API.topicFeeds(tag: selectedTopicTag, page: page)
+                }
+
+            case .products:
+                guard appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn else {
+                    if !append { rowsBySegment[targetSegment] = [] }
+                    hasMoreBySegment[targetSegment] = false
+                    return
+                }
+                if followedProducts.isEmpty || page == 1 {
+                    let products = (try? await API.followedProducts(page: 1)) ?? []
+                    if !products.isEmpty { followedProducts = products }
+                }
+                if selectedProductID != Self.allProductsChipID,
+                   let target = followedProducts.first(where: { $0.id == selectedProductID }) {
+                    loaded = try await API.productFeeds(productID: target.id, title: target.title, page: page)
+                } else {
+                    let list = (page == 1 && !followedProducts.isEmpty)
+                        ? followedProducts
+                        : ((try? await API.followedProducts(page: page)) ?? [])
+                    loaded = list.map { .product($0) }
+                }
+
+            case .apps:
+                guard appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn else {
+                    if !append { rowsBySegment[targetSegment] = [] }
+                    hasMoreBySegment[targetSegment] = false
+                    return
+                }
+                let apps = try await API.followedApps(uid: appState.accounts.activeUID, page: page)
+                loaded = apps.map { .app($0) }
+
+            case .dyh:
+                guard appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn else {
+                    if !append { rowsBySegment[targetSegment] = [] }
+                    hasMoreBySegment[targetSegment] = false
+                    return
+                }
+                let dyhs = try await API.followedDyhs(page: page)
+                loaded = dyhs.map { .dyh($0) }
+
+            case .collections:
+                guard appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn else {
+                    if !append { rowsBySegment[targetSegment] = [] }
+                    hasMoreBySegment[targetSegment] = false
+                    return
+                }
+                let cols = try await API.collectionList(uid: appState.accounts.activeUID, page: page)
+                loaded = cols.map { .collection($0) }
+
+            case .all:
+                let localRows = (try? await fetchLocalFollowRows(page: page, appState: appState)) ?? []
+                if appState.settings.enableCloudFollowLoad, appState.accounts.isLoggedIn {
+                    let raw = try await API.pageFeed(pageName: API.followPageName, page: page)
+                    let cloudRows = raw.filter { row in
+                        switch row {
+                        case .linkBar, .linkList, .columnTabs: return false
+                        default: return true
+                        }
+                    }
+                    loaded = page == 1 ? mergeFollowRows(primary: cloudRows, extra: localRows) : cloudRows
+                } else {
+                    loaded = localRows
+                }
+            }
+
+            guard !Task.isCancelled, expectedSession == appState.sessionVersion else { return }
+            if append {
+                let current = rowsBySegment[targetSegment] ?? []
+                var existing = Set(current.map(\.id))
+                let unique = loaded.filter { existing.insert($0.id).inserted }
+                rowsBySegment[targetSegment] = current + unique
+                if unique.isEmpty {
+                    hasMoreBySegment[targetSegment] = false
+                } else {
+                    pageBySegment[targetSegment] = page
+                }
+            } else {
+                rowsBySegment[targetSegment] = loaded
+                hasMoreBySegment[targetSegment] = !loaded.isEmpty
+                pageBySegment[targetSegment] = page
+                loadedSegments.insert(targetSegment)
+            }
         } catch {
-            if !Task.isCancelled {
-                errorBySegment[seg] = error.localizedDescription
-                _ = await appState.handleAPIError(error)
+            guard !Task.isCancelled, expectedSession == appState.sessionVersion else { return }
+            if case APIError.sessionChanged = error {
+                if !append {
+                    await fetchPage(
+                        segment: targetSegment,
+                        page: page,
+                        append: false,
+                        appState: appState,
+                        expectedSession: expectedSession
+                    )
+                }
+                return
             }
+            let retried = await appState.handleAPIError(error)
+            if retried && !append {
+                await fetchPage(
+                    segment: targetSegment,
+                    page: page,
+                    append: false,
+                    appState: appState,
+                    expectedSession: expectedSession
+                )
+                return
+            }
+            if !append { errorBySegment[targetSegment] = error.localizedDescription }
         }
     }
 
-    public func loadMore(segment targetSeg: FollowSegment? = nil, appState: AppState) async {
-        let seg = targetSeg ?? segment
-        guard (hasMoreBySegment[seg] ?? true),
-              !loadingSegments.contains(seg),
-              !loadingMoreSegments.contains(seg) else { return }
-        loadingMoreSegments.insert(seg)
-        defer { loadingMoreSegments.remove(seg) }
-
-        let next = (pageBySegment[seg] ?? 1) + 1
-        do {
-            let nextRows = try await fetchRows(for: seg, page: next, appState: appState)
-            let current = rowsBySegment[seg] ?? []
-            var existingIDs = Set(current.map(\.id))
-            let unique = nextRows.filter { existingIDs.insert($0.id).inserted }
-            rowsBySegment[seg] = current + unique
-            hasMoreBySegment[seg] = !unique.isEmpty
-            if !unique.isEmpty {
-                pageBySegment[seg] = next
-            }
-        } catch {
-            // Keep existing rows on pagination failure
+    private func fetchFollowedUsersRows(myUID: String, page: Int) async throws -> [HomeFeedRow] {
+        if cachedFollowedUsers.isEmpty || page == 1 {
+            let users = try await API.userList(uid: myUID, followers: false, page: 1)
+            cachedFollowedUsers = users
+            cachedFollowedUIDs = Set(users.map(\.id))
         }
+        guard !cachedFollowedUsers.isEmpty else { return [] }
+
+        let candidateRows = (try? await API.pageFeed(pageName: API.followPageName, page: page, type: "user")) ?? []
+        let filteredFeeds = candidateRows.filter { row in
+            if case let .feed(feed) = row {
+                return cachedFollowedUIDs.contains(feed.uid)
+            }
+            return false
+        }
+        if filteredFeeds.count >= 3 {
+            return filteredFeeds
+        }
+
+        var collected: [HomeFeedRow] = filteredFeeds
+        await withTaskGroup(of: [HomeFeedRow].self) { group in
+            for user in cachedFollowedUsers.prefix(15) {
+                group.addTask {
+                    (try? await API.userFeeds(uid: user.id, page: page)) ?? []
+                }
+            }
+            for await batch in group {
+                collected.append(contentsOf: batch.filter {
+                    if case .feed = $0 { return true }
+                    return false
+                })
+            }
+        }
+        var seen: Set<String> = []
+        return collected
+            .filter { seen.insert($0.id).inserted }
+            .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
     }
 
-    private func fetchRows(for seg: FollowSegment, page: Int, appState: AppState) async throws -> [HomeFeedRow] {
-        switch seg {
-        case .local:
-            return await fetchLocalFollowedTimeline(page: page, appState: appState)
-
-        case .users:
-            var combined: [HomeFeedRow] = []
-            if appState.accounts.isLoggedIn && appState.settings.enableCloudFollowLoad {
-                let cloud = (try? await API.circleFollowFeed(page: page)) ?? []
-                combined.append(contentsOf: cloud)
+    private func mergeFollowRows(primary: [HomeFeedRow], extra: [HomeFeedRow]) -> [HomeFeedRow] {
+        guard !extra.isEmpty else { return primary }
+        var seen = Set<String>()
+        var combined: [HomeFeedRow] = []
+        for row in primary + extra {
+            if seen.insert(row.id).inserted {
+                combined.append(row)
             }
-            let local = await fetchLocalFollowedTimeline(page: page, appState: appState)
-            combined.append(contentsOf: local)
-            return deduplicateAndSortFeeds(combined)
-
-        case .topics:
-            guard appState.accounts.isLoggedIn && appState.settings.enableCloudFollowLoad else { return [] }
-            if followedTopics.isEmpty || page == 1 {
-                let topics = (try? await API.followedTopics(page: 1)) ?? []
-                if !topics.isEmpty {
-                    followedTopics = topics
-                }
-                if selectedTopicTag.isEmpty {
-                    selectedTopicTag = Self.allTopicsChipID
-                }
-            }
-            if selectedTopicTag == Self.allTopicsChipID || selectedTopicTag.isEmpty {
-                let topicList = (page == 1 && !followedTopics.isEmpty)
-                    ? followedTopics
-                    : ((try? await API.followedTopics(page: page)) ?? [])
-                return topicList.map { .topic($0) }
-            }
-            return try await API.topicFeeds(tag: selectedTopicTag, page: page)
-
-        case .products:
-            guard appState.accounts.isLoggedIn && appState.settings.enableCloudFollowLoad else { return [] }
-            if followedProducts.isEmpty || page == 1 {
-                let products = (try? await API.followedProducts(page: 1)) ?? []
-                if !products.isEmpty {
-                    followedProducts = products
-                }
-            }
-            if selectedProductID != Self.allProductsChipID,
-               let target = followedProducts.first(where: { $0.id == selectedProductID }) {
-                return try await API.productFeeds(productID: target.id, title: target.title, page: page)
-            }
-            let list = (page == 1 && !followedProducts.isEmpty)
-                ? followedProducts
-                : ((try? await API.followedProducts(page: page)) ?? [])
-            return list.map { .product($0) }
-
-        case .apps:
-            guard appState.accounts.isLoggedIn && appState.settings.enableCloudFollowLoad else { return [] }
-            let apps = try await API.followedApps(uid: appState.accounts.activeUID, page: page)
-            return apps.map { .app($0) }
-
-        case .dyh:
-            guard appState.accounts.isLoggedIn && appState.settings.enableCloudFollowLoad else { return [] }
-            let dyhs = try await API.followedDyhs(page: page)
-            return dyhs.map { .dyh($0) }
-
-        case .collections:
-            guard appState.accounts.isLoggedIn && appState.settings.enableCloudFollowLoad else { return [] }
-            let uid = appState.accounts.activeUID ?? ""
-            let cols = try await API.collectionList(uid: uid, page: page)
-            return cols.map { .collection($0) }
-
-        case .all:
-            var combined: [HomeFeedRow] = []
-            if appState.accounts.isLoggedIn && appState.settings.enableCloudFollowLoad {
-                let cloud = (try? await API.allFollowFeed(page: page)) ?? []
-                combined.append(contentsOf: cloud)
-            }
-            let local = await fetchLocalFollowedTimeline(page: page, appState: appState)
-            combined.append(contentsOf: local)
-            return deduplicateAndSortFeeds(combined)
         }
+        return combined.sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
     }
 
-    private func fetchLocalFollowedTimeline(page: Int, appState: AppState) async -> [HomeFeedRow] {
-        let localUsers = Array(appState.localFollow.users.prefix(15))
-        guard !localUsers.isEmpty else { return [] }
-
-        return await withTaskGroup(of: [HomeFeedRow].self) { group in
-            for user in localUsers {
+    private func fetchLocalFollowRows(page: Int, appState: AppState) async throws -> [HomeFeedRow] {
+        let localUsers = appState.localFollow.users
+        guard !localUsers.isEmpty else {
+            hasMoreBySegment[.local] = false
+            return []
+        }
+        var collected: [HomeFeedRow] = []
+        await withTaskGroup(of: [HomeFeedRow].self) { group in
+            for user in localUsers.prefix(15) {
                 group.addTask {
                     (try? await API.userFeeds(uid: user.uid, page: page)) ?? []
                 }
             }
-            var rows: [HomeFeedRow] = []
-            for await sub in group {
-                rows.append(contentsOf: sub)
-            }
-            return deduplicateAndSortFeeds(rows)
-        }
-    }
-
-    private func deduplicateAndSortFeeds(_ rows: [HomeFeedRow]) -> [HomeFeedRow] {
-        var seen = Set<String>()
-        var feeds: [FeedItem] = []
-        var others: [HomeFeedRow] = []
-
-        for row in rows {
-            guard seen.insert(row.id).inserted else { continue }
-            if case let .feed(f) = row {
-                feeds.append(f)
-            } else {
-                others.append(row)
+            for await batch in group {
+                collected.append(contentsOf: batch)
             }
         }
-
-        feeds.sort { ($0.dateline ?? .distantPast) > ($1.dateline ?? .distantPast) }
-        return others + feeds.map { .feed($0) }
+        var seen: Set<String> = []
+        return collected
+            .filter { seen.insert($0.id).inserted }
+            .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
     }
 }

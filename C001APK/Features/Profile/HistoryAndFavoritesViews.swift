@@ -222,7 +222,7 @@ private enum NewFolderLocationMode: String, CaseIterable, Identifiable {
 private struct MergedFavoriteFolderItem: Identifiable, Hashable {
     let key: String
     let title: String
-    let localFolder: LocalFavoriteFolder?
+    let localFolder: LocalCollectionFolder?
     let cloudCollection: CollectionItem?
     let localItemCount: Int
     let cloudItemCount: Int
@@ -310,12 +310,12 @@ public struct FavoritesListView: View {
     private var mergedFolders: [MergedFavoriteFolderItem] {
         let pureLocalFolders = appState.historyAndFav.folders.filter { folder in
             if !folder.isCloudLinked { return true }
-            return appState.historyAndFav.favorites.contains { $0.folderID == folder.id && !$0.resolvedIsCloudSynced }
+            return appState.historyAndFav.favorites.contains { $0.resolvedCollectionID == folder.id && !$0.resolvedIsCloudSynced }
         }
         let cloudCols = activeCloudCollections
 
         var orderedTitles: [String] = []
-        var localByTitle: [String: LocalFavoriteFolder] = [:]
+        var localByTitle: [String: LocalCollectionFolder] = [:]
         var cloudByTitle: [String: CollectionItem] = [:]
 
         for folder in pureLocalFolders {
@@ -346,7 +346,7 @@ public struct FavoritesListView: View {
             let cloudCol = cloudByTitle[norm]
             let localCount: Int = {
                 guard let lf = localFolder else { return 0 }
-                return appState.historyAndFav.favorites.filter { $0.folderID == lf.id && !$0.resolvedIsCloudSynced }.count
+                return appState.historyAndFav.favorites.filter { $0.resolvedCollectionID == lf.id && !$0.resolvedIsCloudSynced }.count
             }()
             let cloudCount: Int = {
                 guard let cc = cloudCol else { return 0 }
@@ -376,7 +376,7 @@ public struct FavoritesListView: View {
         if let folder = selectedMergedFolder {
             if let lf = folder.localFolder {
                 localFavs = appState.historyAndFav.favorites.filter {
-                    $0.folderID == lf.id && !$0.resolvedIsCloudSynced
+                    $0.resolvedCollectionID == lf.id && !$0.resolvedIsCloudSynced
                 }
             } else {
                 localFavs = []
@@ -417,14 +417,14 @@ public struct FavoritesListView: View {
 
         for entry in appState.historyAndFav.favorites where entry.resolvedIsCloudSynced {
             if let folder = selectedMergedFolder {
-                let matchesCloudID = folder.cloudCollection?.id == entry.folderID
-                let matchesLocalID = folder.localFolder?.id == entry.folderID
+                let matchesCloudID = folder.cloudCollection?.id == entry.resolvedCollectionID
+                let matchesLocalID = folder.localFolder?.id == entry.resolvedCollectionID
                 if !matchesCloudID && !matchesLocalID { continue }
             }
             if let feed = entry.feed {
                 let fid = feed.id
                 let synthetic = CachedCloudFavoriteEntry(
-                    collectionID: entry.folderID,
+                    collectionID: entry.resolvedCollectionID,
                     collectionTitle: selectedMergedFolder?.title ?? "云端收藏夹",
                     feed: feed
                 )
