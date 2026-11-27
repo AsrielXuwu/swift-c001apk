@@ -155,10 +155,10 @@ public enum AppRoute: Hashable, Sendable {
     case collection(id: String, initialTitle: String? = nil, transitionID: String? = nil)
     case dyh(id: String, initialTitle: String? = nil, transitionID: String? = nil)
     case event(id: String, initial: EventItem? = nil, transitionID: String? = nil)
-    case page(link: String, title: String)
+    case page(link: String, title: String, transitionID: String? = nil)
     case coolpic(tag: String)
     case messages
-    case chat(ukey: String, uid: String, username: String, avatar: String)
+    case chat(ukey: String, uid: String, username: String, avatar: String, transitionID: String? = nil)
     case history
     case favorites
     case localFollowList
@@ -183,7 +183,9 @@ public enum AppRoute: Hashable, Sendable {
              let .app(_, _, id),
              let .collection(_, _, id),
              let .dyh(_, _, id),
-             let .event(_, _, id):
+             let .event(_, _, id),
+             let .page(_, _, id),
+             let .chat(_, _, _, _, id):
             return id
         default:
             return nil
@@ -208,7 +210,7 @@ public enum AppRoute: Hashable, Sendable {
             let resolvedTitle = titleArg
                 ?? FeedLink.inferredPageTitle(from: link)
                 ?? "列表"
-            return .page(link: link, title: resolvedTitle)
+            return .page(link: link, title: resolvedTitle, transitionID: transitionID)
         case let .web(url): return .web(url: url)
         }
     }

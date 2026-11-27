@@ -1,5 +1,6 @@
 import CoolapkKit
 import Foundation
+import SwiftUI
 import UIKit
 
 @MainActor
@@ -10,8 +11,15 @@ public enum EmojiBundleStore {
         return cache
     }()
 
+    private static let inlineCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 240
+        return cache
+    }()
+
     public static func purgeCache() {
         cache.removeAllObjects()
+        inlineCache.removeAllObjects()
     }
 
     public static let allNames: [String] = {
@@ -37,6 +45,70 @@ public enum EmojiBundleStore {
         }
         cache.setObject(image, forKey: name as NSString)
         return image
+    }
+
+    public static func inlineImage(named name: String, pointSize: CGFloat = 20) -> UIImage? {
+        let key = "\(name)|\(Int(pointSize * 10))" as NSString
+        if let cached = inlineCache.object(forKey: key) { return cached }
+        guard let source = image(named: name) else { return nil }
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: pointSize, height: pointSize))
+        let rendered = renderer.image { _ in
+            source.draw(in: CGRect(x: 0, y: 0, width: pointSize, height: pointSize))
+        }
+        let aligned = rendered
+            .withRenderingMode(.alwaysOriginal)
+            .withBaselineOffset(fromBottom: 4)
+        inlineCache.setObject(aligned, forKey: key)
+        return aligned
+    }
+
+    public static func richEmojiText(
+        _ raw: String,
+        emojiPointSize: CGFloat = 20,
+        showEmoji: Bool = true
+    ) -> Text {
+        let tokens = FeedHTMLParser.tokenize(raw)
+        guard !tokens.isEmpty else { return Text("") }
+
+        var combined = Text("")
+        for token in tokens {
+            switch token {
+            case .newline:
+                combined = Text("\(combined)\n")
+            case let .emoji(name):
+                if showEmoji, let emoji = inlineImage(named: name, pointSize: emojiPointSize) {
+                    let imgText = Text(Image(uiImage: emoji))
+                    combined = Text("\(combined)\(imgText)")
+                } else {
+                    combined = Text("\(combined)\(name)")
+                }
+            case let .text(content, bold, italic, strike, link):
+                var piece: Text
+                if let link, let resolved = resolveLinkURL(link) {
+                    var attr = AttributedString(content)
+                    attr.link = resolved
+                    piece = Text(attr)
+                } else {
+                    piece = Text(content)
+                }
+                if bold { piece = piece.bold() }
+                if italic { piece = piece.italic() }
+                if strike { piece = piece.strikethrough() }
+                combined = Text("\(combined)\(piece)")
+            }
+        }
+        return combined
+    }
+
+    private static func resolveLinkURL(_ raw: String) -> URL? {
+        if let url = URL(string: raw), url.scheme != nil {
+            return url
+        }
+        if let encoded = raw.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed),
+           let custom = URL(string: "coolapk-internal://route?target=\(encoded)") {
+            return custom
+        }
+        return nil
     }
 }
 

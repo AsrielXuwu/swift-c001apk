@@ -434,7 +434,8 @@ public struct PhotoStackCardView<MenuContent: View>: View {
             OrbitalDeckStage(
                 phase: deckPhase + dragProgress,
                 count: count,
-                cardHeight: maxCardHeight
+                cardHeight: maxCardHeight,
+                isFrontLifted: isPreviewLifted
             ) { itemIndex, isFront in
                 let item = items[itemIndex]
                 let itemSize = cardFrame(at: itemIndex, maxStageWidth: innerStageWidth)
@@ -459,7 +460,6 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                 } else {
                     deckCardSurface(at: itemIndex, size: itemSize)
                         .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: cornerRadius)
-                        .opacity((isFront && isPreviewLifted) ? 0 : 1)
                         .onTapGesture {
                             guard isFront,
                                   !isHorizontalDragging,
@@ -481,6 +481,7 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                     previewConfig: DeckContextPreviewConfig(
                         activeItem: activeItem,
                         cornerRadius: cornerRadius,
+                        adaptiveContentMode: adaptiveContentMode,
                         shouldLetterboxWide: shouldLetterboxActive,
                         disableHDR: disableHDR,
                         appState: appState,
@@ -703,6 +704,7 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
     public var phase: CGFloat
     public let count: Int
     public let cardHeight: CGFloat
+    public let isFrontLifted: Bool
     @ViewBuilder public let cardBuilder: (Int, Bool) -> CardContent
 
     public var animatableData: CGFloat {
@@ -714,11 +716,13 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
         phase: CGFloat,
         count: Int,
         cardHeight: CGFloat,
+        isFrontLifted: Bool = false,
         @ViewBuilder cardBuilder: @escaping (Int, Bool) -> CardContent
     ) {
         self.phase = phase
         self.count = count
         self.cardHeight = cardHeight
+        self.isFrontLifted = isFrontLifted
         self.cardBuilder = cardBuilder
     }
 
@@ -739,7 +743,7 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
                     .scaleEffect(geometry.scale)
                     .rotationEffect(.degrees(geometry.angle))
                     .offset(x: geometry.x, y: geometry.y)
-                    .opacity(geometry.opacity)
+                    .opacity((isFront && isFrontLifted) ? 0 : geometry.opacity)
                     .zIndex(geometry.zIndex)
                     .allowsHitTesting(isFront)
             }
@@ -1068,6 +1072,7 @@ private struct MediaShareActivityView: UIViewControllerRepresentable {
 struct DeckContextPreviewConfig {
     let activeItem: FeedMedia
     let cornerRadius: CGFloat
+    let adaptiveContentMode: Bool
     let shouldLetterboxWide: Bool
     let disableHDR: Bool
     let appState: AppState
@@ -1141,8 +1146,10 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
     func updateUIView(_ uiView: OverlayView, context: Context) {
         uiView.activeCardSize = activeCardSize
         uiView.isUserInteractionEnabled = isEnabled
-        uiView.cardBackingView.frame = CGRect(origin: .zero, size: activeCardSize)
-        uiView.cardBackingView.layer.cornerRadius = previewConfig?.cornerRadius ?? 18
+        uiView.configureBackingGeometry(
+            size: activeCardSize,
+            cornerRadius: previewConfig?.cornerRadius ?? 18
+        )
 
         context.coordinator.isEnabled = isEnabled
         context.coordinator.activeCardSize = activeCardSize
@@ -1158,28 +1165,30 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         uiView.cardBackingView.isHidden = true
         coordinator.isEnabled = false
         coordinator.isPreviewMenuActive = false
+        coordinator.previewConfig?.onPreviewLiftedChanged(false)
     }
 
     final class OverlayView: UIView {
         var activeCardSize: CGSize = .zero
-        let cardBackingView: UIImageView = {
-            let iv = UIImageView()
-            iv.backgroundColor = .secondarySystemGroupedBackground
-            iv.contentMode = .scaleAspectFill
-            iv.clipsToBounds = true
-            iv.layer.cornerCurve = .continuous
-            iv.isUserInteractionEnabled = false
-            iv.isHidden = true
-            return iv
-        }()
+        let cardBackingView = CardBackingSurfaceView()
 
         override init(frame: CGRect) {
             super.init(frame: frame)
+            cardBackingView.isUserInteractionEnabled = false
+            cardBackingView.isHidden = true
             addSubview(cardBackingView)
         }
 
         required init?(coder: NSCoder) {
             fatalError("init(coder:) has not been implemented")
+        }
+
+        func configureBackingGeometry(size: CGSize, cornerRadius: CGFloat) {
+            let targetBounds = bounds.size.width > 1 && bounds.size.height > 1
+                ? bounds
+                : CGRect(origin: .zero, size: size)
+            cardBackingView.frame = targetBounds
+            cardBackingView.applyCornerRadius(cornerRadius)
         }
 
         override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -1196,6 +1205,67 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                 return nil
             }
             return self
+        }
+    }
+
+    final class CardBackingSurfaceView: UIView {
+        private let backdropImageView: UIImageView = {
+            let iv = UIImageView()
+            iv.contentMode = .scaleAspectFill
+            iv.clipsToBounds = true
+            iv.alpha = 0.45
+            iv.isHidden = true
+            return iv
+        }()
+
+        private let blurOverlayView: UIVisualEffectView = {
+            let view = UIVisualEffectView(effect: UIBlurEffect(style: .regular))
+            view.isHidden = true
+            return view
+        }()
+
+        private let mainImageView: UIImageView = {
+            let iv = UIImageView()
+            iv.contentMode = .scaleAspectFill
+            iv.clipsToBounds = true
+            return iv
+        }()
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            backgroundColor = .secondarySystemGroupedBackground
+            clipsToBounds = true
+            layer.cornerCurve = .continuous
+            addSubview(backdropImageView)
+            addSubview(blurOverlayView)
+            addSubview(mainImageView)
+        }
+
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            backdropImageView.frame = bounds
+            blurOverlayView.frame = bounds
+            mainImageView.frame = bounds
+        }
+
+        func applyCornerRadius(_ cornerRadius: CGFloat) {
+            layer.cornerRadius = cornerRadius
+            layer.cornerCurve = .continuous
+        }
+
+        func configure(image: UIImage?, letterbox: Bool, cornerRadius: CGFloat) {
+            applyCornerRadius(cornerRadius)
+            mainImageView.image = image
+            mainImageView.contentMode = letterbox ? .scaleAspectFit : .scaleAspectFill
+            backdropImageView.image = letterbox ? image : nil
+            backdropImageView.isHidden = !letterbox
+            blurOverlayView.isHidden = !letterbox
+            setNeedsLayout()
+            layoutIfNeeded()
         }
     }
 
@@ -1235,7 +1305,13 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         @objc func handlePan(_ recognizer: UIPanGestureRecognizer) {
             let dx = recognizer.translation(in: recognizer.view).x
             switch recognizer.state {
-            case .began, .changed:
+            case .began:
+                if !isPreviewMenuActive {
+                    overlayView?.cardBackingView.isHidden = true
+                    previewConfig?.onPreviewLiftedChanged(false)
+                }
+                onDragChanged(dx)
+            case .changed:
                 onDragChanged(dx)
             case .ended:
                 let vx = recognizer.velocity(in: recognizer.view).x
@@ -1274,8 +1350,15 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                 && !(otherGestureRecognizer is UIScreenEdgePanGestureRecognizer)
         }
 
-        private func cachedDisplayImage(for item: FeedMedia, disableHDR: Bool) -> UIImage? {
-            let loaded = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
+        private func cachedDisplayImage(
+            for item: FeedMedia,
+            adaptiveContentMode: Bool,
+            disableHDR: Bool
+        ) -> UIImage? {
+            let primaryURL = adaptiveContentMode ? item.sourceUrl : item.thumbnailUrl
+            let primaryMax: CGFloat = adaptiveContentMode ? 960 : 1080
+            let loaded = ImagePipeline.cachedImageSync(urlString: primaryURL, maxPixelSize: primaryMax, preferHDR: false)
+                ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
                 ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
                 ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
                 ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 960, preferHDR: false)
@@ -1288,23 +1371,52 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
 
         private func prepareCardBackingView(cfg: DeckContextPreviewConfig) -> OverlayView? {
             guard let overlay = overlayView else { return nil }
-            let iv = overlay.cardBackingView
-            iv.frame = CGRect(origin: .zero, size: activeCardSize)
-            iv.contentMode = cfg.shouldLetterboxWide ? .scaleAspectFit : .scaleAspectFill
-            iv.layer.cornerRadius = cfg.cornerRadius
-            iv.image = cachedDisplayImage(for: cfg.activeItem, disableHDR: cfg.disableHDR)
-            iv.isHidden = false
+            let targetSize = overlay.bounds.size.width > 1 && overlay.bounds.size.height > 1
+                ? overlay.bounds.size
+                : activeCardSize
+            overlay.configureBackingGeometry(size: targetSize, cornerRadius: cfg.cornerRadius)
+            let img = cachedDisplayImage(
+                for: cfg.activeItem,
+                adaptiveContentMode: cfg.adaptiveContentMode,
+                disableHDR: cfg.disableHDR
+            )
+            overlay.cardBackingView.configure(
+                image: img,
+                letterbox: cfg.shouldLetterboxWide,
+                cornerRadius: cfg.cornerRadius
+            )
+            overlay.cardBackingView.isHidden = false
             return overlay
         }
 
-        private func targetedCardPreview(for overlay: OverlayView, cornerRadius: CGFloat) -> UITargetedPreview {
+        private func targetedCardPreview(for overlay: OverlayView, cfg: DeckContextPreviewConfig) -> UITargetedPreview {
+            let targetBounds = overlay.bounds.size.width > 1 && overlay.bounds.size.height > 1
+                ? overlay.bounds
+                : CGRect(origin: .zero, size: activeCardSize)
+            let snapshot = CardBackingSurfaceView(frame: targetBounds)
+            let img = cachedDisplayImage(
+                for: cfg.activeItem,
+                adaptiveContentMode: cfg.adaptiveContentMode,
+                disableHDR: cfg.disableHDR
+            )
+            snapshot.configure(
+                image: img,
+                letterbox: cfg.shouldLetterboxWide,
+                cornerRadius: cfg.cornerRadius
+            )
+
             let params = UIPreviewParameters()
             params.backgroundColor = .clear
             params.visiblePath = UIBezierPath(
-                roundedRect: overlay.cardBackingView.bounds,
-                cornerRadius: cornerRadius
+                cgPath: RoundedRectangle(cornerRadius: cfg.cornerRadius, style: .continuous)
+                    .path(in: snapshot.bounds)
+                    .cgPath
             )
-            return UITargetedPreview(view: overlay.cardBackingView, parameters: params)
+            let target = UIPreviewTarget(
+                container: overlay,
+                center: CGPoint(x: overlay.bounds.midX, y: overlay.bounds.midY)
+            )
+            return UITargetedPreview(view: snapshot, parameters: params, target: target)
         }
 
         func contextMenuInteraction(
@@ -1313,11 +1425,20 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         ) -> UIContextMenuConfiguration? {
             guard isEnabled, let cfg = previewConfig else { return nil }
             let item = cfg.activeItem
-            let cachedImg = cachedDisplayImage(for: item, disableHDR: cfg.disableHDR)
+            let cachedImg = cachedDisplayImage(
+                for: item,
+                adaptiveContentMode: cfg.adaptiveContentMode,
+                disableHDR: cfg.disableHDR
+            )
             let previewSize = MediaContextMenuPreview.preferredSize(for: item, imageSize: cachedImg?.size)
             let disableHDR = cfg.disableHDR
+            let cornerRadius = cfg.cornerRadius
             let appState = cfg.appState
             let hasShareHandler = (cfg.onShareFile != nil)
+
+            // Pre-warm opaque backing surface and hide SwiftUI front card before highlight lift starts.
+            _ = prepareCardBackingView(cfg: cfg)
+            cfg.onPreviewLiftedChanged(true)
 
             return UIContextMenuConfiguration(identifier: nil) {
                 let host = UIHostingController(
@@ -1325,7 +1446,11 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                         .environment(appState)
                 )
                 host.preferredContentSize = previewSize
+                host.view.frame = CGRect(origin: .zero, size: previewSize)
                 host.view.backgroundColor = .secondarySystemGroupedBackground
+                host.view.layer.cornerRadius = cornerRadius
+                host.view.layer.cornerCurve = .continuous
+                host.view.clipsToBounds = true
                 return host
             } actionProvider: { [weak self] _ in
                 var actions: [UIAction] = [
@@ -1389,10 +1514,12 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             previewForHighlightingMenuWithConfiguration configuration: UIContextMenuConfiguration
         ) -> UITargetedPreview? {
             guard let cfg = previewConfig,
-                  let overlay = prepareCardBackingView(cfg: cfg) else { return nil }
+                  let overlay = overlayView else { return nil }
             isPreviewMenuActive = true
             cfg.onPreviewLiftedChanged(true)
-            return targetedCardPreview(for: overlay, cornerRadius: cfg.cornerRadius)
+            let preview = targetedCardPreview(for: overlay, cfg: cfg)
+            overlay.cardBackingView.isHidden = true
+            return preview
         }
 
         func contextMenuInteraction(
@@ -1400,15 +1527,17 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             previewForDismissingMenuWithConfiguration configuration: UIContextMenuConfiguration
         ) -> UITargetedPreview? {
             guard let overlay = overlayView, let cfg = previewConfig else { return nil }
-            overlay.cardBackingView.frame = CGRect(origin: .zero, size: activeCardSize)
-            overlay.cardBackingView.layer.cornerRadius = cfg.cornerRadius
-            return targetedCardPreview(for: overlay, cornerRadius: cfg.cornerRadius)
+            return targetedCardPreview(for: overlay, cfg: cfg)
         }
 
-        private func completePreviewDismissal() {
+        private func finishPreviewDismissal() {
+            guard !isPreviewMenuActive else { return }
+            if let cfg = previewConfig, let overlay = prepareCardBackingView(cfg: cfg) {
+                overlay.cardBackingView.isHidden = false
+            }
             previewConfig?.onPreviewLiftedChanged(false)
             Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 50_000_000)
+                try? await Task.sleep(nanoseconds: 80_000_000)
                 if self?.isPreviewMenuActive == false {
                     self?.overlayView?.cardBackingView.isHidden = true
                 }
@@ -1423,12 +1552,12 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             isPreviewMenuActive = false
             if let animator {
                 animator.addCompletion { [weak self] in
-                    Task { @MainActor [weak self] in
-                        self?.completePreviewDismissal()
+                    MainActor.assumeIsolated {
+                        self?.finishPreviewDismissal()
                     }
                 }
             } else {
-                completePreviewDismissal()
+                finishPreviewDismissal()
             }
         }
     }

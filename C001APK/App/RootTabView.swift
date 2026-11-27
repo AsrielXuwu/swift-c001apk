@@ -179,18 +179,20 @@ public struct AppRouteDestinationView: View {
             EventDetailView(eventID: id, initialEvent: initial)
                 .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
-        case let .page(link, title):
+        case let .page(link, title, transitionID):
             PageFeedView(link: link, title: title)
                 .c001NativeTopBar()
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .coolpic(tag):
             CoolPicView(initialTag: tag)
                 .c001NativeTopBar()
         case .messages:
             MessagesView()
                 .c001NativeTopBar()
-        case let .chat(ukey, uid, username, avatar):
+        case let .chat(ukey, uid, username, avatar, transitionID):
             ChatThreadView(ukey: ukey, peerUID: uid, peerName: username, peerAvatar: avatar)
                 .c001NativeTopBar()
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case .history:
             HistoryListView()
                 .c001NativeTopBar()
