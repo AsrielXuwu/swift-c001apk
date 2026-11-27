@@ -311,7 +311,7 @@ final class ModelTests: XCTestCase {
           "id": 75026859,
           "uid": 2001,
           "username": "交易卖家",
-          "message": "出个小配件，6元一个直接拿走，感兴趣私聊 <a href=\"https://www.bilibili.com/video/BV1xx411c7mD\">演示视频</a> 以及 https://example.com/detail",
+          "message": "出个小配件，6元一个直接拿走，感兴趣私聊 <a href='https://www.bilibili.com/video/BV1xx411c7mD'>演示视频</a> 以及 https://example.com/detail",
           "relationRows": [
             {"id": "10", "title": "酷安交易区", "url": "/t/酷安交易区", "entityType": "topic"}
           ]

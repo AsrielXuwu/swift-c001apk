@@ -1777,9 +1777,7 @@ public enum API: Sendable {
         let json = try await client.get("/v6/dyh/detail", ["dyhId": id])
         var item = DyhItem(json: json.data)
         if item.id.isEmpty {
-            var patched = json.data
-            _ = patched
-            return item
+            item = DyhItem(json: json)
         }
         return item
     }
