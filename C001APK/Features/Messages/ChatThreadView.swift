@@ -182,14 +182,32 @@ public struct ChatThreadView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var lastObservedTailID: String?
     @State private var showEmojiPanel = false
-    @State private var keyboardHeight: CGFloat = 0
-    @State private var lastKnownKeyboardHeight: CGFloat = 290
+    @State private var keyboardEndMinY: CGFloat = 0
+    @State private var containerGlobalMaxY: CGFloat = 0
+    @State private var restingContainerMaxY: CGFloat = 0
+    @State private var lastKnownKeyboardLift: CGFloat = 276
     @State private var isHoldingSlotForKeyboard = false
     @FocusState private var isComposerFocused: Bool
 
+    private var currentKeyboardOverlap: CGFloat {
+        guard keyboardEndMinY > 0, containerGlobalMaxY > keyboardEndMinY else { return 0 }
+        let overlap = containerGlobalMaxY - keyboardEndMinY
+        return overlap > 24 ? overlap : 0
+    }
+
+    private var currentSystemLift: CGFloat {
+        guard restingContainerMaxY > 0, containerGlobalMaxY > 0, restingContainerMaxY > containerGlobalMaxY else { return 0 }
+        return restingContainerMaxY - containerGlobalMaxY
+    }
+
     private var activeBottomSlotHeight: CGFloat {
-        let emojiHeight = (showEmojiPanel || isHoldingSlotForKeyboard) ? max(260, lastKnownKeyboardHeight) : 0
-        return max(keyboardHeight, emojiHeight)
+        let kbOverlap = currentKeyboardOverlap
+        if showEmojiPanel || isHoldingSlotForKeyboard {
+            let targetLift = max(256, lastKnownKeyboardLift)
+            let needed = max(0, targetLift - currentSystemLift)
+            return max(kbOverlap, needed)
+        }
+        return kbOverlap
     }
 
     private let bottomAnchorID = "chat-bottom-anchor"
@@ -218,90 +236,111 @@ public struct ChatThreadView: View {
         let items = visibleMessages
         let navAvatarID = "chat-nav-avatar-\(chatSeed)"
 
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    if viewModel.hasMore {
-                        Button("加载更早消息") {
-                            Task { await viewModel.loadOlder(appState: appState) }
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 8)
-                        .padding(.bottom, 6)
-                    }
-
-                    ForEach(Array(items.enumerated()), id: \.element.id) { index, msg in
-                        let prev = index > 0 ? items[index - 1] : nil
-                        let next = index + 1 < items.count ? items[index + 1] : nil
-                        let showsTimeAbove = shouldShowTimestampHeader(current: msg, previous: prev)
-                        let nextShowsTimeAbove = next.map { shouldShowTimestampHeader(current: $0, previous: msg) } ?? false
-                        let isFirstInCluster = showsTimeAbove || prev?.fromUID != msg.fromUID
-                        let isLastInCluster = nextShowsTimeAbove || next?.fromUID != msg.fromUID
-
-                        VStack(spacing: 6) {
-                            if showsTimeAbove {
-                                timestampHeader(for: msg)
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        if viewModel.hasMore {
+                            Button("加载更早消息") {
+                                Task { await viewModel.loadOlder(appState: appState) }
                             }
-                            messageRow(msg, isLastInCluster: isLastInCluster)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 8)
+                            .padding(.bottom, 6)
                         }
-                        .padding(.top, index == 0 ? 4 : (showsTimeAbove ? 14 : (isFirstInCluster ? 10 : 4)))
-                        .transition(.opacity.combined(with: .move(edge: .bottom)))
-                        .id(msg.id)
-                    }
 
-                    Color.clear
-                        .frame(height: 1)
-                        .id(bottomAnchorID)
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, msg in
+                            let prev = index > 0 ? items[index - 1] : nil
+                            let next = index + 1 < items.count ? items[index + 1] : nil
+                            let showsTimeAbove = shouldShowTimestampHeader(current: msg, previous: prev)
+                            let nextShowsTimeAbove = next.map { shouldShowTimestampHeader(current: $0, previous: msg) } ?? false
+                            let isFirstInCluster = showsTimeAbove || prev?.fromUID != msg.fromUID
+                            let isLastInCluster = nextShowsTimeAbove || next?.fromUID != msg.fromUID
+
+                            VStack(spacing: 6) {
+                                if showsTimeAbove {
+                                    timestampHeader(for: msg)
+                                }
+                                messageRow(msg, isLastInCluster: isLastInCluster)
+                            }
+                            .padding(.top, index == 0 ? 4 : (showsTimeAbove ? 14 : (isFirstInCluster ? 10 : 4)))
+                            .transition(.opacity.combined(with: .move(edge: .bottom)))
+                            .id(msg.id)
+                        }
+
+                        Color.clear
+                            .frame(height: 1)
+                            .id(bottomAnchorID)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, minHeight: 200, alignment: .bottom)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        dismissKeyboardAndEmoji()
+                    }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-            }
-            .defaultScrollAnchor(.bottom)
-            .scrollDismissesKeyboard(.interactively)
-            .onChange(of: items.last?.id) { _, lastID in
-                guard let lastID, lastID != lastObservedTailID else { return }
-                let shouldAnimate = (lastObservedTailID != nil)
-                lastObservedTailID = lastID
-                if shouldAnimate {
-                    withAnimation(.snappy(duration: 0.24)) {
+                .defaultScrollAnchor(.bottom)
+                .scrollDismissesKeyboard(.interactively)
+                .contentShape(Rectangle())
+                .simultaneousGesture(
+                    TapGesture().onEnded {
+                        if isComposerFocused || showEmojiPanel || isHoldingSlotForKeyboard {
+                            dismissKeyboardAndEmoji()
+                        }
+                    }
+                )
+                .onChange(of: items.last?.id) { _, lastID in
+                    guard let lastID, lastID != lastObservedTailID else { return }
+                    let shouldAnimate = (lastObservedTailID != nil)
+                    lastObservedTailID = lastID
+                    if shouldAnimate {
+                        withAnimation(.snappy(duration: 0.24)) {
+                            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                        }
+                    } else {
                         proxy.scrollTo(bottomAnchorID, anchor: .bottom)
                     }
-                } else {
-                    proxy.scrollTo(bottomAnchorID, anchor: .bottom)
                 }
-            }
-            .onChange(of: isComposerFocused) { _, focused in
-                if focused {
-                    if showEmojiPanel {
-                        isHoldingSlotForKeyboard = true
-                        showEmojiPanel = false
+                .onChange(of: isComposerFocused) { _, focused in
+                    if focused {
+                        if showEmojiPanel {
+                            isHoldingSlotForKeyboard = true
+                            showEmojiPanel = false
+                        }
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 60_000_000)
+                            withAnimation(.snappy(duration: 0.24)) {
+                                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                            }
+                        }
                     }
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 60_000_000)
-                        withAnimation(.snappy(duration: 0.24)) {
-                            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                }
+                .onChange(of: showEmojiPanel) { _, shown in
+                    if shown {
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 60_000_000)
+                            withAnimation(.snappy(duration: 0.24)) {
+                                proxy.scrollTo(bottomAnchorID, anchor: .bottom)
+                            }
                         }
                     }
                 }
             }
-            .onChange(of: showEmojiPanel) { _, shown in
-                if shown {
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 60_000_000)
-                        withAnimation(.snappy(duration: 0.24)) {
-                            proxy.scrollTo(bottomAnchorID, anchor: .bottom)
-                        }
-                    }
-                }
-            }
-        }
-        // Use a unified keyboard/emoji bottom slot with `.ignoresSafeArea(.keyboard, edges: .bottom)`
-        // so switching between the system keyboard and the emoji panel never stacks their heights or bounces the buttons.
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+
             composerBar
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onGeometryChange(for: CGFloat.self) { proxy in
+            proxy.frame(in: .global).maxY
+        } action: { _, newMaxY in
+            guard newMaxY > 100 else { return }
+            containerGlobalMaxY = newMaxY
+            if newMaxY > restingContainerMaxY {
+                restingContainerMaxY = newMaxY
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
             handleKeyboardFrameNotification(note, isHiding: false)
         }
@@ -540,33 +579,46 @@ public struct ChatThreadView: View {
         return scenes.first?.windows.first?.safeAreaInsets.bottom ?? 0
     }
 
+    private func dismissKeyboardAndEmoji() {
+        if isComposerFocused || keyboardEndMinY > 0 {
+            isComposerFocused = false
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
+        if showEmojiPanel || isHoldingSlotForKeyboard {
+            withAnimation(.snappy(duration: 0.22)) {
+                showEmojiPanel = false
+                isHoldingSlotForKeyboard = false
+            }
+        }
+    }
+
     private func handleKeyboardFrameNotification(_ note: Notification, isHiding: Bool) {
         let duration = (note.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double) ?? 0.25
         let screenHeight = (UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first?.screen.bounds.height) ?? 852
         let endFrame = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
-        let bottomSafe = currentBottomSafeAreaInset()
-        let rawOverlap = isHiding ? 0 : max(0, screenHeight - endFrame.minY - bottomSafe)
-        let nextHeight = rawOverlap > 40 ? rawOverlap : 0
+        let refMaxY = restingContainerMaxY > 100
+            ? restingContainerMaxY
+            : (containerGlobalMaxY > 100 ? containerGlobalMaxY : (screenHeight - currentBottomSafeAreaInset()))
+        let rawLiftFromResting = isHiding ? 0 : max(0, refMaxY - endFrame.minY)
+        let isKeyboardVisible = !isHiding && endFrame.minY > 0 && endFrame.minY < screenHeight - 40 && rawLiftFromResting > 40
 
-        if nextHeight > 180 {
-            lastKnownKeyboardHeight = nextHeight
+        if isKeyboardVisible && rawLiftFromResting > 160 {
+            lastKnownKeyboardLift = rawLiftFromResting
         }
 
-        if nextHeight > 40 {
-            // Keyboard is rising: keep slot locked until keyboard reaches full height
+        if isKeyboardVisible {
             var transaction = Transaction(animation: .easeOut(duration: max(0.18, duration)))
-            transaction.disablesAnimations = (showEmojiPanel || isHoldingSlotForKeyboard) && abs(nextHeight - activeBottomSlotHeight) < 2
+            transaction.disablesAnimations = (showEmojiPanel || isHoldingSlotForKeyboard) && abs(rawLiftFromResting - lastKnownKeyboardLift) < 4
             withTransaction(transaction) {
-                keyboardHeight = nextHeight
+                keyboardEndMinY = endFrame.minY
                 isHoldingSlotForKeyboard = false
             }
         } else {
             if showEmojiPanel {
-                // Switching from keyboard to emoji: keep slot stationary without animating a dip
-                keyboardHeight = 0
+                keyboardEndMinY = 0
             } else {
                 withAnimation(.easeOut(duration: max(0.18, duration))) {
-                    keyboardHeight = 0
+                    keyboardEndMinY = 0
                     isHoldingSlotForKeyboard = false
                 }
             }
@@ -579,13 +631,17 @@ public struct ChatThreadView: View {
             isHoldingSlotForKeyboard = true
             showEmojiPanel = false
             isComposerFocused = true
-        } else if isComposerFocused || keyboardHeight > 40 {
+        } else if isComposerFocused || currentKeyboardOverlap > 40 || currentSystemLift > 40 {
             // Keyboard -> Emoji: swap in place at the exact current keyboard height without moving the button bar
+            let activeLift = max(currentKeyboardOverlap + currentSystemLift, lastKnownKeyboardLift)
+            if activeLift > 160 {
+                lastKnownKeyboardLift = activeLift
+            }
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {
                 showEmojiPanel = true
-                keyboardHeight = 0
+                keyboardEndMinY = 0
             }
             isComposerFocused = false
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)

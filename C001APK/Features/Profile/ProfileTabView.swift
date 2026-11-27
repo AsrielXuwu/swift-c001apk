@@ -187,7 +187,22 @@ public struct ProfileTabView: View {
         .navigationTitle("我的")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    appState.push(.messages)
+                } label: {
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "bell")
+                        if appState.hasUnreadMessages {
+                            Circle()
+                                .fill(.red)
+                                .frame(width: 8, height: 8)
+                                .offset(x: 3, y: -2)
+                        }
+                    }
+                }
+                .accessibilityLabel("消息")
+
                 Button {
                     appState.push(.settings)
                 } label: {

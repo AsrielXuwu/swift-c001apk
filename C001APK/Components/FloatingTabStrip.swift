@@ -114,31 +114,31 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
 
     public var body: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            HStack(spacing: 7) {
+            HStack(spacing: 6) {
                 Button(action: onTapAvatar) {
                     HStack(spacing: 6) {
-                        AvatarView(url: avatarURL, size: 27)
+                        AvatarView(url: avatarURL, size: 24)
 
                         if !primaryLine.isEmpty || !secondaryLine.isEmpty {
-                            VStack(alignment: .leading, spacing: 0.5) {
+                            VStack(alignment: .leading, spacing: 0) {
                                 if !primaryLine.isEmpty {
                                     Text(primaryLine)
-                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .font(.system(size: 11, weight: .semibold))
                                         .foregroundStyle(Color(uiColor: .label))
                                         .lineLimit(1)
                                 }
                                 if !secondaryLine.isEmpty {
                                     Text(secondaryLine)
-                                        .font(.system(size: 10, weight: .regular))
+                                        .font(.system(size: 9.5, weight: .regular))
                                         .foregroundStyle(Color(uiColor: .secondaryLabel))
                                         .lineLimit(1)
                                 }
                             }
-                            .frame(height: 27, alignment: .center)
+                            .frame(height: 24, alignment: .center)
                             .fixedSize(horizontal: true, vertical: false)
                         }
                     }
-                    .frame(height: 27)
+                    .frame(height: 24)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -148,10 +148,10 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
                 if showFollowButton {
                     Button(action: onTapFollow) {
                         Text(isFollowed ? "已关注" : "关注")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 11.5, weight: .semibold))
                             .fixedSize(horizontal: true, vertical: false)
-                            .padding(.horizontal, 11)
-                            .frame(height: 27)
+                            .padding(.horizontal, 10)
+                            .frame(height: 24)
                             .foregroundStyle(isFollowed ? Color(uiColor: .label) : Color.white)
                             .background(
                                 isFollowed ? Color(uiColor: .tertiarySystemFill) : Color.accentColor,
@@ -172,9 +172,8 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
                     .accessibilityLabel(isFollowed ? "取消关注" : "关注")
                 }
             }
-            .frame(height: 27)
-            .padding(.leading, -2.5)
-            .padding(.trailing, showFollowButton ? -2.5 : 0)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
         }
     }
 }

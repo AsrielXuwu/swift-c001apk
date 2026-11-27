@@ -322,7 +322,7 @@ public struct FeedDetailView: View {
                         }
                     }
 
-                    if feed.isSecondHand || !feed.extraURL.isEmpty || !feed.xianyuURL.isEmpty {
+                    if feed.hasPriceDisplay || !feed.extraURL.isEmpty || !feed.xianyuURL.isEmpty {
                         SecondHandOrExtraCard(feed: feed)
                     }
 

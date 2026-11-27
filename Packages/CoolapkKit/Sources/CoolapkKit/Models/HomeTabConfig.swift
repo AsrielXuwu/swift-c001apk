@@ -7,6 +7,7 @@ public enum HomeTabType: String, CaseIterable, Codable, Identifiable, Sendable {
     case hot
     case topic
     case product
+    case dyh
     case coolpic
     case headline
     case question
@@ -23,6 +24,7 @@ public enum HomeTabType: String, CaseIterable, Codable, Identifiable, Sendable {
         case .hot: return "热门"
         case .topic: return "话题"
         case .product: return "数码"
+        case .dyh: return "看看号"
         case .coolpic: return "酷图"
         case .headline: return "头条"
         case .question: return "问答"
@@ -39,6 +41,7 @@ public struct HomeTabConfiguration: Codable, Equatable, Sendable {
         .headline,
         .topic,
         .product,
+        .dyh,
         .coolpic,
         .question,
         .goods,

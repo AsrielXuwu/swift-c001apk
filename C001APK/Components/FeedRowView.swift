@@ -5,6 +5,7 @@ import UIKit
 public struct FeedRowView: View {
     public let feed: FeedItem
     public var originBadgeIsCloud: Bool? = nil
+    public var showBothOriginBadges: Bool = false
     public var contextDeleteTitle: String? = nil
     public var onContextDelete: (() -> Void)? = nil
     public var onSelectFeed: (() -> Void)?
@@ -20,6 +21,7 @@ public struct FeedRowView: View {
     public init(
         feed: FeedItem,
         originBadgeIsCloud: Bool? = nil,
+        showBothOriginBadges: Bool = false,
         contextDeleteTitle: String? = nil,
         onContextDelete: (() -> Void)? = nil,
         onSelectFeed: (() -> Void)? = nil,
@@ -27,6 +29,7 @@ public struct FeedRowView: View {
     ) {
         self.feed = feed
         self.originBadgeIsCloud = originBadgeIsCloud
+        self.showBothOriginBadges = showBothOriginBadges
         self.contextDeleteTitle = contextDeleteTitle
         self.onContextDelete = onContextDelete
         self.onSelectFeed = onSelectFeed
@@ -48,7 +51,7 @@ public struct FeedRowView: View {
             if let source = feed.sourceFeed {
                 forwardedQuoteCard(source)
             }
-            if feed.isSecondHand || !feed.extraURL.isEmpty || !feed.xianyuURL.isEmpty {
+            if feed.hasPriceDisplay || !feed.extraURL.isEmpty || !feed.xianyuURL.isEmpty {
                 SecondHandOrExtraCard(feed: feed)
             }
             if !feed.relationEntities.isEmpty {
@@ -141,7 +144,12 @@ public struct FeedRowView: View {
 
             Spacer(minLength: 8)
 
-            if let originBadgeIsCloud {
+            if showBothOriginBadges {
+                HStack(spacing: 4) {
+                    SourceOriginBadge(isCloud: false)
+                    SourceOriginBadge(isCloud: true)
+                }
+            } else if let originBadgeIsCloud {
                 SourceOriginBadge(isCloud: originBadgeIsCloud)
             }
 
@@ -428,9 +436,9 @@ public struct SecondHandOrExtraCard: View {
             || feed.dealStatusText.contains("已交易")
 
         VStack(alignment: .leading, spacing: 8) {
-            if feed.isSecondHand {
+            if feed.hasPriceDisplay {
                 HStack(spacing: 8) {
-                    Text("二手交易")
+                    Text(feed.isSecondHand ? "二手交易" : "价格")
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
@@ -534,9 +542,9 @@ public struct SecondHandOrExtraCard: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(feed.isSecondHand && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty ? 10 : 0)
+        .padding(feed.hasPriceDisplay && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty ? 10 : 0)
         .modifier(ConditionalNestedSurfaceModifier(
-            enabled: feed.isSecondHand && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty,
+            enabled: feed.hasPriceDisplay && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty,
             cornerRadius: 16
         ))
     }

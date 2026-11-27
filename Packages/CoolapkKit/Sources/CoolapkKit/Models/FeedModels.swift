@@ -411,8 +411,12 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             || feedType == "ershou"
             || feedTypeName.contains("二手")
             || feedTypeName.contains("闲置")
-            || !priceText.isEmpty
             || !xianyuURL.isEmpty
+            || topicTags.contains { $0.contains("二手") || $0.contains("闲置") }
+    }
+
+    public var hasPriceDisplay: Bool {
+        isSecondHand || !priceText.isEmpty
     }
 
     public static func == (lhs: FeedItem, rhs: FeedItem) -> Bool {
@@ -689,16 +693,19 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
 
         let combinedTagString = (json.tags.array.map(\.string) + [json.tags.string, json.ttitle.string, json.targetRow.title.string])
             .joined(separator: " ")
+        let hasExplicitErshouPrice = json.ershou_price.double > 0
+            || (!json.ershou_price.string.isEmpty && json.ershou_price.string != "0" && json.ershou_price.string != "0.0" && json.ershou_price.string != "0.00")
         let isSecondHandPost = parsedType == "ershou"
             || parsedType.lowercased().contains("second")
             || json.feedTypeName.string.contains("二手")
             || json.feedTypeName.string.contains("闲置")
             || combinedTagString.contains("二手")
             || combinedTagString.contains("闲置")
-            || parsedPriceNum > 0
-            || !rawPriceString.isEmpty
+            || hasExplicitErshouPrice
             || !json.ershou_info.isNull
             || !json.ershou_data.isNull
+            || !json.second_hand.isNull
+            || !json.second_hand_info.isNull
             || !xianyuURL.isEmpty
 
         if parsedPriceNum > 0 {

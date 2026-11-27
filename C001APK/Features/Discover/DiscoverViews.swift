@@ -1794,20 +1794,116 @@ public struct CollectionDetailView: View {
         self.initialTitle = initialTitle
     }
 
+    private var isLocalOnlyRoute: Bool {
+        collectionID.hasPrefix("local:")
+    }
+
+    private var effectiveTitle: String {
+        if let colTitle = collection?.title, !colTitle.isEmpty { return colTitle }
+        if let initialTitle, !initialTitle.isEmpty { return initialTitle }
+        if let lf = matchedLocalFolder { return lf.title }
+        return "收藏夹"
+    }
+
+    private var matchedLocalFolder: LocalCollectionFolder? {
+        if isLocalOnlyRoute {
+            let localID = String(collectionID.dropFirst("local:".count))
+            return appState.historyAndFav.folders.first { $0.id == localID }
+        }
+        if let byCloudID = appState.historyAndFav.folders.first(where: { $0.cloudCollectionID == collectionID }) {
+            return byCloudID
+        }
+        let targetNorm = HistoryAndFavStore.normalizedFolderTitle(collection?.title ?? initialTitle ?? "")
+        guard !targetNorm.isEmpty else { return nil }
+        return appState.historyAndFav.folders.first {
+            HistoryAndFavStore.normalizedFolderTitle($0.title) == targetNorm
+        }
+    }
+
+    private var matchingLocalEntries: [LocalFavoriteEntry] {
+        let targetNorm = HistoryAndFavStore.normalizedFolderTitle(effectiveTitle)
+        let localFolderID = matchedLocalFolder?.id
+        return appState.historyAndFav.favorites.filter { entry in
+            guard !entry.resolvedIsCloudSynced else { return false }
+            if let localFolderID, entry.resolvedCollectionID == localFolderID {
+                return true
+            }
+            if !isLocalOnlyRoute && entry.resolvedCollectionID == collectionID {
+                return true
+            }
+            if !targetNorm.isEmpty,
+               let folder = appState.historyAndFav.folders.first(where: { $0.id == entry.resolvedCollectionID }),
+               HistoryAndFavStore.normalizedFolderTitle(folder.title) == targetNorm {
+                return true
+            }
+            return false
+        }
+    }
+
+    private var cloudFeedIDSet: Set<String> {
+        var ids = Set<String>()
+        for row in rows {
+            if case let .feed(feed) = row, !feed.id.isEmpty {
+                ids.insert(feed.id)
+            }
+        }
+        return ids
+    }
+
+    private var localFeedByID: [String: LocalFavoriteEntry] {
+        var dict: [String: LocalFavoriteEntry] = [:]
+        for entry in matchingLocalEntries where dict[entry.id] == nil {
+            dict[entry.id] = entry
+        }
+        return dict
+    }
+
+    private var localOnlyEntries: [LocalFavoriteEntry] {
+        let cIDs = cloudFeedIDSet
+        return matchingLocalEntries.filter { !cIDs.contains($0.id) }
+    }
+
     public var body: some View {
+        let localEntries = matchingLocalEntries
+        let localOnly = localOnlyEntries
+        let localMap = localFeedByID
+        let hasLocalFolder = matchedLocalFolder != nil || !localEntries.isEmpty
+        let hasCloudFolder = !isLocalOnlyRoute && (collection != nil || !rows.isEmpty)
+
         ScrollViewReader { proxy in
             ScrollView {
                 Color.clear.frame(height: 0).id("col-top")
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if let collection {
                         HStack(spacing: 12) {
-                            RemoteImageView(url: collection.logo, maxPixelSize: 180)
-                                .frame(width: 56, height: 56)
-                                .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            if !collection.logo.isEmpty {
+                                RemoteImageView(url: collection.logo, maxPixelSize: 180)
+                                    .frame(width: 56, height: 56)
+                                    .clipped()
+                                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                            } else {
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color.blue.opacity(0.14))
+                                    .frame(width: 56, height: 56)
+                                    .overlay {
+                                        Image(systemName: hasLocalFolder ? "folder.fill.badge.person.crop" : "icloud.fill")
+                                            .font(.title3)
+                                            .foregroundStyle(Color.blue)
+                                    }
+                            }
                             VStack(alignment: .leading, spacing: 4) {
-                                Text(collection.title).font(.headline)
-                                Text("\(collection.itemNum) 项 · \(Formatting.count(collection.followNum)) 关注")
+                                HStack(spacing: 6) {
+                                    Text(collection.title).font(.headline)
+                                    if hasLocalFolder {
+                                        SourceOriginBadge(isCloud: false)
+                                    }
+                                    SourceOriginBadge(isCloud: true)
+                                }
+                                let cloudCount = max(collection.itemNum, cloudFeedIDSet.count)
+                                let statText = hasLocalFolder
+                                    ? "本地 \(localEntries.count) 条 · 云端 \(cloudCount) 项 · \(Formatting.count(collection.followNum)) 关注"
+                                    : "\(cloudCount) 项 · \(Formatting.count(collection.followNum)) 关注"
+                                Text(statText)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -1834,21 +1930,82 @@ public struct CollectionDetailView: View {
                         .c001CardStyle(cornerRadius: 22)
                         .padding(.horizontal, 12)
                         .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
+                    } else if hasLocalFolder {
+                        HStack(spacing: 12) {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.accentColor.opacity(0.14))
+                                .frame(width: 56, height: 56)
+                                .overlay {
+                                    Image(systemName: "bookmark.fill")
+                                        .font(.title3)
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text(effectiveTitle).font(.headline)
+                                    SourceOriginBadge(isCloud: false)
+                                    if hasCloudFolder {
+                                        SourceOriginBadge(isCloud: true)
+                                    }
+                                }
+                                Text("本地 \(localEntries.count) 条收藏")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(14)
+                        .c001CardStyle(cornerRadius: 22)
+                        .padding(.horizontal, 12)
+                        .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
                     }
 
-                    if (!hasLoaded || isLoading) && rows.isEmpty {
+                    if (!hasLoaded || isLoading) && rows.isEmpty && localOnly.isEmpty {
                         ProgressView()
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 48)
-                    } else if rows.isEmpty {
+                    } else if rows.isEmpty && localOnly.isEmpty {
                         ContentUnavailableView("暂无收藏内容", systemImage: "star")
                             .frame(maxWidth: .infinity, minHeight: 200)
                     } else {
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
-                            HomeRowRenderer(row: row)
-                                .onAppear {
-                                    if idx >= rows.count - 4 { Task { await loadMore() } }
+                        ForEach(localOnly) { entry in
+                            StoredFeedCardRow(
+                                feedID: entry.id,
+                                snapshot: entry.feed,
+                                fallbackTitle: entry.title,
+                                fallbackPreview: entry.preview,
+                                fallbackUsername: entry.username,
+                                fallbackAvatar: entry.avatar,
+                                fallbackDate: entry.savedAt,
+                                badgeIsCloud: false,
+                                showBothBadges: false,
+                                deleteTitle: "取消本机收藏",
+                                onDelete: {
+                                    appState.historyAndFav.removeFavorite(id: entry.id)
                                 }
+                            )
+                        }
+
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            Group {
+                                if case let .feed(feed) = row {
+                                    let alsoInLocal = localMap[feed.id] != nil
+                                    FeedRowView(
+                                        feed: feed,
+                                        originBadgeIsCloud: true,
+                                        showBothOriginBadges: alsoInLocal,
+                                        contextDeleteTitle: alsoInLocal ? "取消本机收藏" : nil,
+                                        onContextDelete: alsoInLocal ? {
+                                            appState.historyAndFav.removeFavorite(id: feed.id)
+                                        } : nil
+                                    )
+                                } else {
+                                    HomeRowRenderer(row: row)
+                                }
+                            }
+                            .onAppear {
+                                if idx >= rows.count - 4 { Task { await loadMore() } }
+                            }
                         }
                     }
                 }
@@ -1870,13 +2027,13 @@ public struct CollectionDetailView: View {
             .scrollClipDisabled()
             .ignoresSafeArea(.container, edges: .bottom)
             .c001PageBackground()
-            .navigationTitle(collection?.title.isEmpty == false ? collection!.title : (initialTitle ?? ""))
+            .navigationTitle(effectiveTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let collection, compactNavProgress > 0.08 {
                     CollapsedNavEntityToolbar(
                         avatarURL: collection.logo,
-                        primaryLine: "\(collection.itemNum) 项内容",
+                        primaryLine: "\(max(collection.itemNum, cloudFeedIDSet.count) + localOnly.count) 项内容",
                         secondaryLine: "\(Formatting.count(collection.followNum)) 关注",
                         isFollowed: collection.isFollowed,
                         showFollowButton: true,
@@ -1891,12 +2048,12 @@ public struct CollectionDetailView: View {
                 }
             }
             .onAppear {
-                if collection == nil, let cached = appState.cachedCollectionDetail(id: collectionID) {
+                if !isLocalOnlyRoute, collection == nil, let cached = appState.cachedCollectionDetail(id: collectionID) {
                     collection = cached
                 }
             }
             .task(id: collectionID) {
-                if collection == nil, let cached = appState.cachedCollectionDetail(id: collectionID) {
+                if !isLocalOnlyRoute, collection == nil, let cached = appState.cachedCollectionDetail(id: collectionID) {
                     collection = cached
                 }
                 await reload()
@@ -1905,6 +2062,12 @@ public struct CollectionDetailView: View {
     }
 
     private func reload() async {
+        if isLocalOnlyRoute {
+            isLoading = false
+            hasLoaded = true
+            hasMore = false
+            return
+        }
         isLoading = true
         defer {
             isLoading = false

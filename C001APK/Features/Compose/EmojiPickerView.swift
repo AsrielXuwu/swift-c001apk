@@ -20,10 +20,36 @@ public struct EmojiPickerView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
-            TextField("筛选表情…", text: $searchText)
-                .textFieldStyle(.roundedBorder)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                TextField("筛选表情…", text: $searchText)
+                    .font(.subheadline)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .background(Color(.tertiarySystemFill), in: Capsule())
+            .overlay {
+                Capsule()
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
 
             ScrollView {
                 LazyVGrid(columns: Array(repeating: GridItem(.adaptive(minimum: 40), spacing: 8), count: 7), spacing: 10) {
@@ -44,7 +70,8 @@ public struct EmojiPickerView: View {
                 }
                 .padding(12)
             }
-            .frame(height: max(168, height - 48))
+            .scrollEdgeEffectHidden(true)
+            .frame(height: max(160, height - 54))
         }
         .frame(height: height)
         .background(Color(.secondarySystemBackground))

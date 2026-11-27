@@ -10,6 +10,8 @@ public struct HistoryListView: View {
     @State private var hasMoreCloud = true
     @State private var isSelecting = false
     @State private var selectedLocalIDs: Set<String> = []
+    @State private var isLocalHistoryCollapsed = false
+    @State private var isCloudHistoryCollapsed = false
 
     public init() {}
 
@@ -45,69 +47,135 @@ public struct HistoryListView: View {
                         }
 
                         if !appState.historyAndFav.history.isEmpty {
-                            Text("本机历史")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 16)
-                                .padding(.top, 4)
+                            Button {
+                                withAnimation(.snappy(duration: 0.24)) {
+                                    isLocalHistoryCollapsed.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(.secondary)
+                                        .rotationEffect(.degrees(isLocalHistoryCollapsed ? 0 : 90))
+                                    Text("本机浏览历史")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    SourceOriginBadge(isCloud: false)
+                                    Text("\(appState.historyAndFav.history.count)")
+                                        .font(.caption2.weight(.semibold))
+                                        .monospacedDigit()
+                                        .padding(.horizontal, 7)
+                                        .padding(.vertical, 2)
+                                        .background(Color.accentColor.opacity(0.14), in: Capsule())
+                                        .foregroundStyle(Color.accentColor)
+                                    Spacer()
+                                    Text(isLocalHistoryCollapsed ? "展开" : "收起")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 11)
+                                .c001CardStyle(cornerRadius: 16)
+                                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .padding(.horizontal, 12)
+                            }
+                            .buttonStyle(.plain)
 
-                            ForEach(appState.historyAndFav.history) { entry in
-                                SelectableCardWrapper(
-                                    isSelecting: isSelecting,
-                                    isSelected: selectedLocalIDs.contains(entry.id)
-                                ) {
-                                    if selectedLocalIDs.contains(entry.id) {
-                                        selectedLocalIDs.remove(entry.id)
-                                    } else {
-                                        selectedLocalIDs.insert(entry.id)
-                                    }
-                                } content: {
-                                    StoredFeedCardRow(
-                                        feedID: entry.id,
-                                        snapshot: entry.feed,
-                                        fallbackTitle: entry.title,
-                                        fallbackPreview: entry.preview,
-                                        fallbackUsername: entry.username,
-                                        fallbackAvatar: entry.avatar,
-                                        fallbackDate: entry.visitedAt,
-                                        badgeIsCloud: false,
-                                        deleteTitle: "删除此条历史",
-                                        onDelete: {
-                                            appState.historyAndFav.removeHistory(id: entry.id)
+                            if !isLocalHistoryCollapsed {
+                                ForEach(appState.historyAndFav.history) { entry in
+                                    SelectableCardWrapper(
+                                        isSelecting: isSelecting,
+                                        isSelected: selectedLocalIDs.contains(entry.id)
+                                    ) {
+                                        if selectedLocalIDs.contains(entry.id) {
+                                            selectedLocalIDs.remove(entry.id)
+                                        } else {
+                                            selectedLocalIDs.insert(entry.id)
                                         }
-                                    )
+                                    } content: {
+                                        StoredFeedCardRow(
+                                            feedID: entry.id,
+                                            snapshot: entry.feed,
+                                            fallbackTitle: entry.title,
+                                            fallbackPreview: entry.preview,
+                                            fallbackUsername: entry.username,
+                                            fallbackAvatar: entry.avatar,
+                                            fallbackDate: entry.visitedAt,
+                                            badgeIsCloud: false,
+                                            deleteTitle: "删除此条历史",
+                                            onDelete: {
+                                                appState.historyAndFav.removeHistory(id: entry.id)
+                                            }
+                                        )
+                                    }
                                 }
                             }
                         }
 
                         if appState.settings.enableCloudHistoryLoad && appState.accounts.isLoggedIn {
-                            Text("云端浏览历史")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 16)
-                                .padding(.top, 6)
-
-                            if isLoadingCloud && cloudRows.isEmpty {
-                                ProgressView()
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 24)
-                            } else if mergedCloudRows.isEmpty && cloudRows.isEmpty {
-                                Text("暂无云端浏览历史")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 16)
-                            } else {
-                                ForEach(Array(mergedCloudRows.enumerated()), id: \.element.id) { idx, row in
-                                    Group {
-                                        if case let .feed(feed) = row {
-                                            FeedRowView(feed: feed, originBadgeIsCloud: true)
-                                        } else {
-                                            HomeRowRenderer(row: row)
-                                        }
+                            Button {
+                                withAnimation(.snappy(duration: 0.24)) {
+                                    isCloudHistoryCollapsed.toggle()
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "chevron.right")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(.secondary)
+                                        .rotationEffect(.degrees(isCloudHistoryCollapsed ? 0 : 90))
+                                    Text("云端浏览历史")
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.primary)
+                                    SourceOriginBadge(isCloud: true)
+                                    if !mergedCloudRows.isEmpty {
+                                        Text("\(mergedCloudRows.count)+")
+                                            .font(.caption2.weight(.semibold))
+                                            .monospacedDigit()
+                                            .padding(.horizontal, 7)
+                                            .padding(.vertical, 2)
+                                            .background(Color.blue.opacity(0.14), in: Capsule())
+                                            .foregroundStyle(Color.blue)
                                     }
-                                    .onAppear {
-                                        if idx >= mergedCloudRows.count - 3 {
-                                            Task { await loadMoreCloud() }
+                                    Spacer()
+                                    if isLoadingCloud {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    }
+                                    Text(isCloudHistoryCollapsed ? "展开" : "收起")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(.secondary)
+                                }
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 11)
+                                .c001CardStyle(cornerRadius: 16)
+                                .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                                .padding(.horizontal, 12)
+                            }
+                            .buttonStyle(.plain)
+
+                            if !isCloudHistoryCollapsed {
+                                if isLoadingCloud && cloudRows.isEmpty {
+                                    ProgressView()
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 24)
+                                } else if mergedCloudRows.isEmpty && cloudRows.isEmpty {
+                                    Text("暂无云端浏览历史")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 16)
+                                } else {
+                                    ForEach(Array(mergedCloudRows.enumerated()), id: \.element.id) { idx, row in
+                                        Group {
+                                            if case let .feed(feed) = row {
+                                                FeedRowView(feed: feed, originBadgeIsCloud: true)
+                                            } else {
+                                                HomeRowRenderer(row: row)
+                                            }
+                                        }
+                                        .onAppear {
+                                            if idx >= mergedCloudRows.count - 3 {
+                                                Task { await loadMoreCloud() }
+                                            }
                                         }
                                     }
                                 }
@@ -281,6 +349,8 @@ private struct UnifiedFavoriteFeedItem: Identifiable {
 
 public struct FavoritesListView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
     @State private var selectedFolderKey: String? = nil
     @State private var isSyncingCloud = false
     @State private var isSelectingItems = false
@@ -345,8 +415,16 @@ public struct FavoritesListView: View {
             let localFolder = localByTitle[norm]
             let cloudCol = cloudByTitle[norm]
             let localCount: Int = {
-                guard let lf = localFolder else { return 0 }
-                return appState.historyAndFav.favorites.filter { $0.resolvedCollectionID == lf.id && !$0.resolvedIsCloudSynced }.count
+                return appState.historyAndFav.favorites.filter { entry in
+                    guard !entry.resolvedIsCloudSynced else { return false }
+                    if let lf = localFolder, entry.resolvedCollectionID == lf.id { return true }
+                    if let cc = cloudCol, entry.resolvedCollectionID == cc.id { return true }
+                    if let matchedFolder = appState.historyAndFav.folders.first(where: { $0.id == entry.resolvedCollectionID }),
+                       HistoryAndFavStore.normalizedFolderTitle(matchedFolder.title) == norm {
+                        return true
+                    }
+                    return false
+                }.count
             }()
             let cloudCount: Int = {
                 guard let cc = cloudCol else { return 0 }
@@ -374,12 +452,15 @@ public struct FavoritesListView: View {
         let cloudFavs: [CachedCloudFavoriteEntry]
 
         if let folder = selectedMergedFolder {
-            if let lf = folder.localFolder {
-                localFavs = appState.historyAndFav.favorites.filter {
-                    $0.resolvedCollectionID == lf.id && !$0.resolvedIsCloudSynced
+            localFavs = appState.historyAndFav.favorites.filter { entry in
+                guard !entry.resolvedIsCloudSynced else { return false }
+                if let lf = folder.localFolder, entry.resolvedCollectionID == lf.id { return true }
+                if let cc = folder.cloudCollection, entry.resolvedCollectionID == cc.id { return true }
+                if let matchedFolder = appState.historyAndFav.folders.first(where: { $0.id == entry.resolvedCollectionID }),
+                   HistoryAndFavStore.normalizedFolderTitle(matchedFolder.title) == folder.key {
+                    return true
                 }
-            } else {
-                localFavs = []
+                return false
             }
 
             if let cc = folder.cloudCollection {
@@ -648,37 +729,52 @@ public struct FavoritesListView: View {
     }
 
     private var folderSectionHeaderRow: some View {
-        HStack(spacing: 12) {
-            sectionHeader("收藏夹列表（同名本地与云端自动合并）")
+        HStack(spacing: 8) {
+            sectionHeader("收藏夹列表")
             Spacer()
             if isSyncingCloud {
                 ProgressView()
                     .controlSize(.small)
             }
-            Button {
-                newFolderLocation = (appState.accounts.isLoggedIn && appState.settings.defaultFavoriteTarget == .cloud) ? .cloud : .local
-                showCreateFolderSheet = true
-            } label: {
-                Label("新建", systemImage: "plus")
-                    .font(.caption.weight(.semibold))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.accentColor)
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    Button {
+                        newFolderLocation = (appState.accounts.isLoggedIn && appState.settings.defaultFavoriteTarget == .cloud) ? .cloud : .local
+                        showCreateFolderSheet = true
+                    } label: {
+                        Label("新建", systemImage: "plus")
+                            .font(.subheadline.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .contentShape(Capsule())
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                            .foregroundStyle(Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
 
-            if mergedFolders.contains(where: \.isDeletable) {
-                Button(isManagingFolders ? "完成" : "管理") {
-                    withAnimation(.snappy(duration: 0.2)) {
-                        isSelectingItems = false
-                        selectedItemIDs.removeAll()
-                        isManagingFolders.toggle()
-                        if !isManagingFolders { selectedFolderKeys.removeAll() }
+                    if mergedFolders.contains(where: \.isDeletable) {
+                        Button {
+                            withAnimation(.snappy(duration: 0.2)) {
+                                isSelectingItems = false
+                                selectedItemIDs.removeAll()
+                                isManagingFolders.toggle()
+                                if !isManagingFolders { selectedFolderKeys.removeAll() }
+                            }
+                        } label: {
+                            Label(isManagingFolders ? "完成" : "管理", systemImage: isManagingFolders ? "checkmark" : "slider.horizontal.3")
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .contentShape(Capsule())
+                                .glassEffect(.regular.interactive(), in: .capsule)
+                                .foregroundStyle(isManagingFolders ? Color.accentColor : Color.primary)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(isManagingFolders ? Color.accentColor : Color.secondary)
             }
         }
-        .padding(.trailing, 16)
+        .padding(.trailing, 14)
     }
 
     private var itemsSectionHeaderRow: some View {
@@ -690,91 +786,118 @@ public struct FavoritesListView: View {
             }
             Spacer()
             if selectedFolderKey != nil {
-                Button("查看全部") {
+                Button {
                     withAnimation(.snappy) { selectedFolderKey = nil }
+                } label: {
+                    Text("查看全部")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 5)
+                        .contentShape(Capsule())
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .foregroundStyle(Color.accentColor)
                 }
-                .font(.caption.weight(.medium))
-                .padding(.trailing, 16)
+                .buttonStyle(.plain)
+                .padding(.trailing, 14)
             }
+        }
+    }
+
+    private func openFolderDetail(_ folder: MergedFavoriteFolderItem, transitionID: String) {
+        if let col = folder.cloudCollection {
+            appState.cacheCollectionDetail(col)
+            appState.push(.collection(id: col.id, initialTitle: folder.title, transitionID: transitionID))
+        } else if let lf = folder.localFolder {
+            appState.push(.collection(id: "local:\(lf.id)", initialTitle: folder.title, transitionID: transitionID))
         }
     }
 
     @ViewBuilder
     private func mergedFolderCard(_ folder: MergedFavoriteFolderItem) -> some View {
         let isSelected = selectedFolderKey == folder.key
-        HStack(spacing: 12) {
-            Button {
+        let folderTID = "fav-folder-\(transitionSeed)-\(folder.key)"
+
+        HStack(spacing: 0) {
+            HStack(spacing: 12) {
+                if !folder.logoURL.isEmpty {
+                    RemoteImageView(url: folder.logoURL, maxPixelSize: 132, contentMode: .fill)
+                        .frame(width: 44, height: 44)
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                } else {
+                    RoundedRectangle(cornerRadius: 11, style: .continuous)
+                        .fill((folder.hasCloud ? Color.blue : Color.accentColor).opacity(0.14))
+                        .frame(width: 44, height: 44)
+                        .overlay {
+                            Image(systemName: folder.hasCloud && folder.hasLocal ? "folder.fill.badge.person.crop" : (folder.hasCloud ? "icloud.fill" : "bookmark.fill"))
+                                .foregroundStyle(folder.hasCloud ? Color.blue : Color.accentColor)
+                        }
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(folder.title)
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                        if folder.hasLocal {
+                            SourceOriginBadge(isCloud: false)
+                        }
+                        if folder.hasCloud {
+                            SourceOriginBadge(isCloud: true)
+                        }
+                    }
+                    Text(folder.subtitleText + (isSelected ? " · 当前筛选中" : ""))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                if isSelected {
+                    Image(systemName: "line.3.horizontal.decrease.circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.accentColor)
+                        .padding(.trailing, 4)
+                }
+            }
+            .padding(.leading, 14)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .onTapGesture {
                 withAnimation(.snappy(duration: 0.2)) {
                     selectedFolderKey = isSelected ? nil : folder.key
                 }
-                if let col = folder.cloudCollection {
-                    if !isSelected { Task { await loadCloudCollectionItems(col, force: true) } }
+                if let col = folder.cloudCollection, !isSelected {
+                    Task { await loadCloudCollectionItems(col, force: true) }
                 }
-            } label: {
-                HStack(spacing: 12) {
-                    if !folder.logoURL.isEmpty {
-                        RemoteImageView(url: folder.logoURL, maxPixelSize: 132, contentMode: .fill)
-                            .frame(width: 44, height: 44)
-                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                    } else {
-                        RoundedRectangle(cornerRadius: 11, style: .continuous)
-                            .fill((folder.hasCloud ? Color.blue : Color.accentColor).opacity(0.14))
-                            .frame(width: 44, height: 44)
-                            .overlay {
-                                Image(systemName: folder.hasCloud && folder.hasLocal ? "folder.fill.badge.person.crop" : (folder.hasCloud ? "icloud.fill" : "bookmark.fill"))
-                                    .foregroundStyle(folder.hasCloud ? Color.blue : Color.accentColor)
-                            }
-                    }
+            }
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(folder.title)
-                                .font(.body.weight(.medium))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                            if folder.hasLocal {
-                                SourceOriginBadge(isCloud: false)
-                            }
-                            if folder.hasCloud {
-                                SourceOriginBadge(isCloud: true)
-                            }
-                        }
-                        Text(folder.subtitleText + (isSelected ? " · 当前筛选中" : ""))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                }
+            Button {
+                openFolderDetail(folder, transitionID: folderTID)
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 44, height: 56)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-
-            if let col = folder.cloudCollection {
-                Button {
-                    appState.push(.collection(id: col.id, initialTitle: col.title))
-                } label: {
-                    Image(systemName: isSelected ? "line.3.horizontal.decrease.circle.fill" : "chevron.right")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                        .frame(width: 28, height: 28)
-                }
-                .buttonStyle(.plain)
-            } else if isSelected {
-                Image(systemName: "line.3.horizontal.decrease.circle.fill")
-                    .foregroundStyle(Color.accentColor)
-            }
+            .accessibilityLabel("进入收藏夹详情")
         }
-        .padding(14)
         .c001CardStyle(cornerRadius: 20)
         .overlay {
             if isSelected {
                 RoundedRectangle(cornerRadius: 20, style: .continuous)
                     .strokeBorder(Color.accentColor.opacity(0.55), lineWidth: 1.5)
+                    .allowsHitTesting(false)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
         .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .applyZoomSource(id: folderTID, in: zoomNamespace, cornerRadius: 20)
         .contextMenu {
             Button {
                 withAnimation(.snappy(duration: 0.2)) {
@@ -787,12 +910,10 @@ public struct FavoritesListView: View {
                 Label(isSelected ? "取消筛选此收藏夹" : "筛选此收藏夹内容", systemImage: "line.3.horizontal.decrease.circle")
             }
 
-            if let col = folder.cloudCollection {
-                Button {
-                    appState.push(.collection(id: col.id, initialTitle: col.title))
-                } label: {
-                    Label("打开云端收藏夹详情页", systemImage: "arrow.up.right.square")
-                }
+            Button {
+                openFolderDetail(folder, transitionID: folderTID)
+            } label: {
+                Label("进入收藏夹详情页", systemImage: "arrow.up.right.square")
             }
 
             if folder.isDeletable {
@@ -805,7 +926,7 @@ public struct FavoritesListView: View {
                         Label("仅删除本机收藏夹", systemImage: "trash")
                     }
                 }
-                if let col = folder.cloudCollection, folder.hasLocal {
+                if folder.cloudCollection != nil, folder.hasLocal {
                     Button(role: .destructive) {
                         Task { await deleteFolders([folder], deleteLocal: false, deleteCloud: true) }
                     } label: {
@@ -824,10 +945,12 @@ public struct FavoritesListView: View {
 
     @ViewBuilder
     private func favoriteFeedItemRow(_ item: UnifiedFavoriteFeedItem) -> some View {
+        let hasBoth = item.isLocal && item.isCloud
         if let cloudEntry = item.cloudEntry, !item.isLocal {
             FeedRowView(
                 feed: cloudEntry.feed,
                 originBadgeIsCloud: true,
+                showBothOriginBadges: false,
                 contextDeleteTitle: "取消云端收藏",
                 onContextDelete: {
                     Task { await removeCloudFavorites(item.allCloudEntriesForFeed) }
@@ -836,14 +959,15 @@ public struct FavoritesListView: View {
         } else if let localEntry = item.localEntry {
             StoredFeedCardRow(
                 feedID: localEntry.id,
-                snapshot: localEntry.feed,
+                snapshot: localEntry.feed ?? item.cloudEntry?.feed,
                 fallbackTitle: localEntry.title,
                 fallbackPreview: localEntry.preview,
                 fallbackUsername: localEntry.username,
                 fallbackAvatar: localEntry.avatar,
                 fallbackDate: localEntry.savedAt,
                 badgeIsCloud: item.isCloud && !item.isLocal,
-                deleteTitle: item.isCloud ? "同时移除本机与云端收藏" : "取消本机收藏",
+                showBothBadges: hasBoth,
+                deleteTitle: hasBoth ? "同时移除本机与云端收藏" : (item.isCloud ? "取消云端收藏" : "取消本机收藏"),
                 onDelete: {
                     appState.historyAndFav.removeFavorite(id: localEntry.id)
                     if !item.allCloudEntriesForFeed.isEmpty {
@@ -1574,17 +1698,18 @@ private struct LoggedInPagedActivityPage: View {
     }
 }
 
-private struct StoredFeedCardRow: View {
-    let feedID: String
-    let snapshot: FeedItem?
-    let fallbackTitle: String
-    let fallbackPreview: String
-    let fallbackUsername: String
-    let fallbackAvatar: String
-    let fallbackDate: Date
-    let badgeIsCloud: Bool?
-    let deleteTitle: String
-    let onDelete: () -> Void
+public struct StoredFeedCardRow: View {
+    public let feedID: String
+    public let snapshot: FeedItem?
+    public let fallbackTitle: String
+    public let fallbackPreview: String
+    public let fallbackUsername: String
+    public let fallbackAvatar: String
+    public let fallbackDate: Date
+    public let badgeIsCloud: Bool?
+    public var showBothBadges: Bool = false
+    public let deleteTitle: String
+    public let onDelete: () -> Void
 
     @Environment(AppState.self) private var appState
     @Environment(\.zoomNamespace) private var zoomNamespace
@@ -1592,12 +1717,39 @@ private struct StoredFeedCardRow: View {
     @State private var didAttemptHydration = false
     @State private var transitionSeed = UUID().uuidString
 
-    var body: some View {
+    public init(
+        feedID: String,
+        snapshot: FeedItem?,
+        fallbackTitle: String,
+        fallbackPreview: String,
+        fallbackUsername: String,
+        fallbackAvatar: String,
+        fallbackDate: Date,
+        badgeIsCloud: Bool?,
+        showBothBadges: Bool = false,
+        deleteTitle: String,
+        onDelete: @escaping () -> Void
+    ) {
+        self.feedID = feedID
+        self.snapshot = snapshot
+        self.fallbackTitle = fallbackTitle
+        self.fallbackPreview = fallbackPreview
+        self.fallbackUsername = fallbackUsername
+        self.fallbackAvatar = fallbackAvatar
+        self.fallbackDate = fallbackDate
+        self.badgeIsCloud = badgeIsCloud
+        self.showBothBadges = showBothBadges
+        self.deleteTitle = deleteTitle
+        self.onDelete = onDelete
+    }
+
+    public var body: some View {
         Group {
             if let feed = snapshot ?? hydrated {
                 FeedRowView(
                     feed: feed,
                     originBadgeIsCloud: badgeIsCloud,
+                    showBothOriginBadges: showBothBadges,
                     contextDeleteTitle: deleteTitle,
                     onContextDelete: onDelete
                 )
@@ -1632,7 +1784,12 @@ private struct StoredFeedCardRow: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    if let badgeIsCloud {
+                    if showBothBadges {
+                        HStack(spacing: 4) {
+                            SourceOriginBadge(isCloud: false)
+                            SourceOriginBadge(isCloud: true)
+                        }
+                    } else if let badgeIsCloud {
                         SourceOriginBadge(isCloud: badgeIsCloud)
                     }
                 }

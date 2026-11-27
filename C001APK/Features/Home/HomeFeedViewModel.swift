@@ -129,6 +129,8 @@ public final class HomeFeedViewModel {
                     let json = try await CoolapkClient.shared.get("/v6/product/categoryList", ["page": String(page)])
                     loaded = API.rows(from: json.data.array)
                 }
+            case .dyh:
+                loaded = try await API.dyhSubscribe(page: page)
             case .coolpic:
                 loaded = try await API.pageFeed(pageName: "V11_FIND_COOLPIC", page: page)
             case .app:

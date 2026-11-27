@@ -18,7 +18,8 @@ public struct ComposeFloatingOverlayHost: View {
     public var body: some View {
         ZStack(alignment: .bottom) {
             if let mode = composeMode {
-                Color.black.opacity(0.24)
+                Color.clear
+                    .contentShape(Rectangle())
                     .ignoresSafeArea()
                     .onTapGesture {
                         resignComposeKeyboardImmediately()
@@ -26,7 +27,6 @@ public struct ComposeFloatingOverlayHost: View {
                             composeMode = nil
                         }
                     }
-                    .transition(.opacity)
 
                 ComposeSheet(mode: mode) {
                     resignComposeKeyboardImmediately()
@@ -37,7 +37,9 @@ public struct ComposeFloatingOverlayHost: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .ignoresSafeArea(.keyboard, edges: .bottom)
+        .scrollEdgeEffectHidden(true)
         .animation(.easeOut(duration: 0.20), value: composeMode != nil)
     }
 }
@@ -398,6 +400,7 @@ public struct ComposeSheet: View {
                         }
                     }
                 }
+                .scrollEdgeEffectHidden(true)
             }
 
             toolbarStrip
@@ -408,8 +411,9 @@ public struct ComposeSheet: View {
         VStack(spacing: 10) {
             pickerSearchBar
 
-            ScrollView {
-                LazyVStack(spacing: 8) {
+            if activePanel != .compose {
+                ScrollView {
+                    LazyVStack(spacing: 8) {
                     if isSearchingPicker {
                         ProgressView()
                             .padding(.vertical, 24)
@@ -474,10 +478,12 @@ public struct ComposeSheet: View {
                                 .buttonStyle(.plain)
                             }
                         }
+                        }
                     }
                 }
+                .scrollEdgeEffectHidden(true)
+                .frame(height: isQuickReply ? 116 : 144)
             }
-            .frame(height: isQuickReply ? 116 : 144)
         }
     }
 
