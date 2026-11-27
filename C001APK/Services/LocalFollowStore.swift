@@ -40,6 +40,10 @@ public final class LocalFollowStore {
         users.contains { $0.uid == uid }
     }
 
+    public func isFollowed(uid: String) -> Bool {
+        contains(uid: uid)
+    }
+
     public func follow(uid: String, username: String, avatar: String) {
         guard !uid.isEmpty, uid.allSatisfy(\.isNumber) else { return }
         users.removeAll { $0.uid == uid }

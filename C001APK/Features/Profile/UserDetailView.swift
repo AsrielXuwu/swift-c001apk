@@ -438,7 +438,9 @@ public struct UserDetailView: View {
         case .feeds: return rows.isEmpty
         case .likes: return likedRows.isEmpty
         case .collections: return userCollections.isEmpty
-        case .following: return following.isEmpty
+        case .following:
+            let isSelf = appState.accounts.isLoggedIn && (appState.accounts.activeUID == uid || appState.currentUserProfile?.id == uid)
+            return following.isEmpty && (!isSelf || appState.localFollow.users.isEmpty)
         case .fans: return followers.isEmpty
         }
     }
@@ -491,7 +493,7 @@ public struct UserDetailView: View {
                     )
                 }
                 ForEach(Array(following.enumerated()), id: \.element.id) { idx, user in
-                    let alsoLocal = isSelf && appState.localFollow.isFollowed(uid: user.id)
+                    let alsoLocal = isSelf && appState.localFollow.contains(uid: user.id)
                     UserRowView(
                         user: user,
                         originBadgeIsCloud: isSelf ? true : nil,
