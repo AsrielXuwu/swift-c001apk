@@ -183,6 +183,7 @@ public struct ProfileTabView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .listSectionSpacing(10)
         .navigationTitle("我的")
         .navigationBarTitleDisplayMode(.large)
         .toolbar {

@@ -80,9 +80,8 @@ public struct FloatingTabStrip<Item: Identifiable & Hashable>: View where Item.I
     }
 }
 
-/// Concentrically aligned circular avatar + two-line metadata + capsule follow button for collapsed navigation toolbars.
-/// Inside iOS 26 UINavigationBar's 36pt capsule platter, a 28pt height with -8pt horizontal margin compensation
-/// yields uniform 4pt top/bottom/outer-edge insets (14pt inner radius + 4pt inset = 18pt outer platter radius).
+/// Compact circular avatar + two-line metadata + capsule follow button for collapsed navigation toolbars.
+/// Uses positive internal padding so all elements remain strictly inside the iOS 26 UINavigationBar capsule platter.
 public struct CollapsedNavEntityToolbar: ToolbarContent {
     public let avatarURL: String
     public let primaryLine: String
@@ -115,31 +114,31 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
 
     public var body: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Button(action: onTapAvatar) {
-                    HStack(spacing: 7) {
-                        AvatarView(url: avatarURL, size: 28)
+                    HStack(spacing: 6) {
+                        AvatarView(url: avatarURL, size: 24)
 
                         if !primaryLine.isEmpty || !secondaryLine.isEmpty {
                             VStack(alignment: .leading, spacing: 0) {
                                 if !primaryLine.isEmpty {
                                     Text(primaryLine)
-                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .font(.system(size: 11, weight: .semibold))
                                         .foregroundStyle(Color(uiColor: .label))
                                         .lineLimit(1)
                                 }
                                 if !secondaryLine.isEmpty {
                                     Text(secondaryLine)
-                                        .font(.system(size: 10, weight: .regular))
+                                        .font(.system(size: 9.5, weight: .regular))
                                         .foregroundStyle(Color(uiColor: .secondaryLabel))
                                         .lineLimit(1)
                                 }
                             }
-                            .frame(height: 28, alignment: .center)
+                            .frame(height: 24, alignment: .center)
                             .fixedSize(horizontal: true, vertical: false)
                         }
                     }
-                    .frame(height: 28)
+                    .frame(height: 24)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -149,10 +148,10 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
                 if showFollowButton {
                     Button(action: onTapFollow) {
                         Text(isFollowed ? "已关注" : "关注")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.system(size: 11.5, weight: .semibold))
                             .fixedSize(horizontal: true, vertical: false)
-                            .padding(.horizontal, 11)
-                            .frame(height: 28)
+                            .padding(.horizontal, 10)
+                            .frame(height: 24)
                             .foregroundStyle(isFollowed ? Color(uiColor: .label) : Color.white)
                             .background(
                                 isFollowed ? Color(uiColor: .tertiarySystemFill) : Color.accentColor,
@@ -173,9 +172,8 @@ public struct CollapsedNavEntityToolbar: ToolbarContent {
                     .accessibilityLabel(isFollowed ? "取消关注" : "关注")
                 }
             }
-            .frame(height: 28)
-            .padding(.leading, -8)
-            .padding(.trailing, showFollowButton ? -8 : -2)
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
         }
     }
 }
@@ -225,7 +223,7 @@ public struct PinnedEntityHeaderOverlay<Header: View, TabStrip: View>: View {
     }
 
     private var blurOpacity: Double {
-        guard scrollOffset > 1 else { return 0 }
+        guard scrollOffset > 1, stripHeight > 1 else { return 0 }
         return Double(min(1, max(0, (scrollOffset - 1) / 22)))
     }
 
@@ -234,9 +232,6 @@ public struct PinnedEntityHeaderOverlay<Header: View, TabStrip: View>: View {
         let blurCoverHeight = visibleHeaderHeight + stripHeight + 120
 
         ZStack(alignment: .top) {
-            // Render the progressive top scroll-edge blur BEHIND the header and FloatingTabStrip
-            // (and above the scrolling feed list), so the capsule strip is never blurred from above
-            // while resting at the exact same distance from the top navigation bar as HomeView.
             if blurOpacity > 0.001 {
                 Rectangle()
                     .fill(.ultraThinMaterial)
@@ -277,8 +272,9 @@ public struct PinnedEntityHeaderOverlay<Header: View, TabStrip: View>: View {
                     .onGeometryChange(for: CGFloat.self) { geo in
                         geo.size.height
                     } action: { _, h in
-                        if h > 1, abs(h - stripHeight) > 0.5 {
-                            stripHeight = h
+                        let clamped = max(0, h)
+                        if abs(clamped - stripHeight) > 0.5 {
+                            stripHeight = clamped
                         }
                     }
             }

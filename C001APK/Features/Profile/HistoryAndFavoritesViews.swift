@@ -708,7 +708,7 @@ public struct FavoritesListView: View {
                     selectedFolderKey = isSelected ? nil : folder.key
                 }
                 if let col = folder.cloudCollection {
-                    Task { await loadCloudCollectionItems(col, force: false) }
+                    if !isSelected { Task { await loadCloudCollectionItems(col, force: true) } }
                 }
             } label: {
                 HStack(spacing: 12) {
@@ -1049,32 +1049,24 @@ public struct FavoritesListView: View {
               appState.accounts.isLoggedIn else {
             return
         }
-        if !force && !appState.historyAndFav.cachedCloudCollections.isEmpty && !appState.historyAndFav.cachedCloudEntries.isEmpty {
-            return
-        }
+        if isSyncingCloud { return }
         isSyncingCloud = true
         defer { isSyncingCloud = false }
 
         let uid = appState.accounts.activeUID ?? ""
         do {
             let cols = try await API.collectionList(uid: uid, page: 1)
-            let collected = await withTaskGroup(of: [CachedCloudFavoriteEntry].self) { group in
-                for col in cols.prefix(12) {
-                    group.addTask {
-                        let rows = (try? await API.collectionItems(id: col.id, page: 1)) ?? []
-                        return rows.compactMap { row -> CachedCloudFavoriteEntry? in
-                            if case let .feed(feed) = row {
-                                return CachedCloudFavoriteEntry(collectionID: col.id, collectionTitle: col.title, feed: feed)
-                            }
-                            return nil
+            var collected: [CachedCloudFavoriteEntry] = []
+            for col in cols {
+                if let rows = try? await API.collectionItems(id: col.id, page: 1) {
+                    let entries = rows.compactMap { row -> CachedCloudFavoriteEntry? in
+                        if case let .feed(feed) = row {
+                            return CachedCloudFavoriteEntry(collectionID: col.id, collectionTitle: col.title, feed: feed)
                         }
+                        return nil
                     }
+                    collected.append(contentsOf: entries)
                 }
-                var merged: [CachedCloudFavoriteEntry] = []
-                for await batch in group {
-                    merged.append(contentsOf: batch)
-                }
-                return merged
             }
             if !cols.isEmpty || force {
                 appState.historyAndFav.updateCloudCache(collections: cols, entries: collected)
@@ -1089,15 +1081,19 @@ public struct FavoritesListView: View {
     private func loadCloudCollectionItems(_ col: CollectionItem, force: Bool) async {
         let alreadyLoaded = appState.historyAndFav.cachedCloudEntries.contains { $0.collectionID == col.id }
         if !force && alreadyLoaded { return }
-        guard let rows = try? await API.collectionItems(id: col.id, page: 1) else { return }
-        let entries = rows.compactMap { row -> CachedCloudFavoriteEntry? in
-            if case let .feed(feed) = row {
-                return CachedCloudFavoriteEntry(collectionID: col.id, collectionTitle: col.title, feed: feed)
+        isSyncingCloud = true
+        defer { isSyncingCloud = false }
+        do {
+            let rows = try await API.collectionItems(id: col.id, page: 1)
+            let entries = rows.compactMap { row -> CachedCloudFavoriteEntry? in
+                if case let .feed(feed) = row {
+                    return CachedCloudFavoriteEntry(collectionID: col.id, collectionTitle: col.title, feed: feed)
+                }
+                return nil
             }
-            return nil
-        }
-        if !entries.isEmpty {
-            appState.historyAndFav.appendCloudCachedEntries(entries)
+            appState.historyAndFav.replaceCloudCachedEntries(forCollectionID: col.id, entries: entries)
+        } catch {
+            _ = await appState.handleAPIError(error)
         }
     }
 

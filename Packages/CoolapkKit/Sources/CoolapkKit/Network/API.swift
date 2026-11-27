@@ -1147,6 +1147,7 @@ public enum API: Sendable {
     public static func collectionList(uid: String?, feedID: String? = nil, page: Int = 1) async throws -> [CollectionItem] {
         let sessionUID = await client.sessionSnapshot().uid
         let trimmedUID = (uid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let isCurrentUser = trimmedUID.isEmpty || (!sessionUID.isEmpty && trimmedUID == sessionUID)
         let resolvedUID = trimmedUID.isEmpty ? sessionUID : trimmedUID
 
         func parseCollections(from rawItems: [JSON]) -> [CollectionItem] {
@@ -1173,44 +1174,101 @@ public enum API: Sendable {
             return []
         }
 
-        var params: [String: String] = [
-            "page": String(page),
-            "showDefault": "1"
-        ]
-        if !resolvedUID.isEmpty {
-            params["uid"] = resolvedUID
-        }
+        // Case 1: Picker mode for adding a specific feed (feedID is provided)
         if let feedID, !feedID.isEmpty {
-            params["id"] = feedID
-            params["type"] = "feed"
+            var pickerParams: [String: String] = [
+                "page": String(page),
+                "showDefault": "1",
+                "id": feedID,
+                "type": "feed"
+            ]
+            if !resolvedUID.isEmpty {
+                pickerParams["uid"] = resolvedUID
+            }
+            let json = try await client.get("/v6/collection/list", pickerParams)
+            return parseCollections(from: extractDataArray(from: json))
         }
 
-        let firstJSON = try await client.get("/v6/collection/list", params)
-        let firstList = parseCollections(from: extractDataArray(from: firstJSON))
-        if !firstList.isEmpty || page > 1 {
-            return firstList
+        // Case 2: Viewing another user's public collections in UserDetailView
+        if !isCurrentUser && !resolvedUID.isEmpty {
+            let json = try await client.get("/v6/collection/list", [
+                "uid": resolvedUID,
+                "page": String(page),
+                "showDefault": "0"
+            ])
+            return parseCollections(from: extractDataArray(from: json))
         }
 
-        // Fallback 1: query with showDefault=0
-        var secondParams = params
-        secondParams["showDefault"] = "0"
-        if let secondJSON = try? await client.get("/v6/collection/list", secondParams) {
-            let secondList = parseCollections(from: extractDataArray(from: secondJSON))
-            if !secondList.isEmpty { return secondList }
+        // Case 3: Viewing the logged-in user's own collections (FavoritesListView / FollowView / UserDetailView self)
+        // Per TG-Twilight/c001apk (ffflist_page.dart line 117 & ffflist_content.dart line 41),
+        // FFFListType.COLLECTION calls `/v6/collection/list` with `uid: null` and `showDefault: 0`,
+        // while `showDefault: 1` (or with `uid` + `showDefault: 1`) guarantees the default collection is also included
+        // even when the user has created multiple custom collections.
+        var merged: [CollectionItem] = []
+        var seenIDs = Set<String>()
+        func appendUnique(_ list: [CollectionItem]) {
+            for col in list where seenIDs.insert(col.id).inserted {
+                merged.append(col)
+            }
         }
 
-        // Fallback 2: query via dataList #/collection/list
-        if !resolvedUID.isEmpty,
-           let thirdItems = try? await client.dataList(
-               url: "#/collection/list?uid=\(resolvedUID)",
-               page: page,
-               extra: ["title": "收藏夹"]
-           ) {
-            let thirdList = parseCollections(from: thirdItems)
-            if !thirdList.isEmpty { return thirdList }
+        // Primary request matching TG-Twilight/c001apk (`uid` omitted, `showDefault: 0`)
+        var primaryError: Error?
+        do {
+            let json0 = try await client.get("/v6/collection/list", [
+                "page": String(page),
+                "showDefault": "0"
+            ])
+            appendUnique(parseCollections(from: extractDataArray(from: json0)))
+        } catch {
+            primaryError = error
         }
 
-        return firstList
+        if page == 1 {
+            // Also fetch with showDefault=1 (without uid, and with uid) so the cloud default collection ("默认收藏夹")
+            // is always included even when the user has multiple custom collections!
+            if let json1 = try? await client.get("/v6/collection/list", [
+                "page": "1",
+                "showDefault": "1"
+            ]) {
+                appendUnique(parseCollections(from: extractDataArray(from: json1)))
+            }
+
+            if !resolvedUID.isEmpty,
+               let jsonUID1 = try? await client.get("/v6/collection/list", [
+                   "uid": resolvedUID,
+                   "page": "1",
+                   "showDefault": "1"
+               ]) {
+                appendUnique(parseCollections(from: extractDataArray(from: jsonUID1)))
+            }
+
+            let hasDefaultCol = merged.contains { $0.title.contains("默认") }
+            if !hasDefaultCol && !resolvedUID.isEmpty {
+                // Coolapk's add-to-collection query with type=feed & showDefault=1 always exposes the user's default collection
+                if let jsonPicker = try? await client.get("/v6/collection/list", [
+                    "uid": resolvedUID,
+                    "page": "1",
+                    "showDefault": "1",
+                    "type": "feed"
+                ]) {
+                    appendUnique(parseCollections(from: extractDataArray(from: jsonPicker)))
+                }
+            }
+
+            // Sort so "默认收藏夹" appears first among cloud collections, preserving relative order of others
+            merged.sort { lhs, rhs in
+                let lDefault = lhs.title.contains("默认")
+                let rDefault = rhs.title.contains("默认")
+                if lDefault != rDefault { return lDefault }
+                return false
+            }
+        }
+
+        if merged.isEmpty, let primaryError {
+            throw primaryError
+        }
+        return merged
     }
 
     public static func collectFeedToCollection(
@@ -1255,72 +1313,41 @@ public enum API: Sendable {
     }
 
     public static func collectionItems(id: String, page: Int = 1) async throws -> [HomeFeedRow] {
-        let json = try await client.get("/v6/collection/itemList", ["id": id, "page": String(page)])
-        let rawArray: [JSON]
+        // Exactly matches TG-Twilight/c001apk FFFListType.COLLECTION_ITEM -> `/v6/collection/itemList`
+        let json = try await client.get("/v6/collection/itemList", [
+            "id": id,
+            "page": String(page)
+        ])
+        let rawItems: [JSON]
         if !json.data.array.isEmpty {
-            rawArray = expandListEntities(from: json.data.array)
+            rawItems = expandListEntities(from: json.data.array)
         } else if !json.data.entities.array.isEmpty {
-            rawArray = expandListEntities(from: json.data.entities.array)
+            rawItems = expandListEntities(from: json.data.entities.array)
         } else if !json.data.list.array.isEmpty {
-            rawArray = expandListEntities(from: json.data.list.array)
+            rawItems = expandListEntities(from: json.data.list.array)
         } else {
-            rawArray = []
+            rawItems = []
         }
 
-        var parsedRows: [HomeFeedRow] = []
-        var seenIDs = Set<String>()
-        for rawItem in rawArray {
-            if rawItem.entityType.string == "card" && rawItem.message.string.isEmpty && !rawItem.targetRow.isObject && !rawItem.feedInfo.isObject {
-                continue
-            }
-            let payload: JSON
-            if rawItem.feedInfo.isObject && (!rawItem.feedInfo.id.identifier.isEmpty || !rawItem.feedInfo.message.string.isEmpty) {
-                payload = rawItem.feedInfo
-            } else if rawItem.targetRow.isObject && (!rawItem.targetRow.id.identifier.isEmpty || !rawItem.targetRow.message.string.isEmpty || !rawItem.targetRow.title.string.isEmpty) {
-                payload = rawItem.targetRow
-            } else if rawItem.sourceFeed.isObject && (!rawItem.sourceFeed.id.identifier.isEmpty || !rawItem.sourceFeed.message.string.isEmpty) {
-                payload = rawItem.sourceFeed
-            } else {
-                payload = rawItem
-            }
+        let standardRows = rows(from: rawItems)
+        if !standardRows.isEmpty {
+            return standardRows
+        }
 
-            var feed = FeedItem(json: payload)
-            if feed.message.isEmpty && !rawItem.message.string.isEmpty {
-                feed.message = rawItem.message.string
-            }
-            if feed.title.isEmpty {
-                let fallbackTitle = !rawItem.message_title.string.isEmpty ? rawItem.message_title.string : rawItem.title.string
-                if !fallbackTitle.isEmpty {
-                    feed.title = fallbackTitle
-                }
-            }
-            if feed.username.isEmpty {
-                let outerName = !rawItem.userInfo.username.string.isEmpty ? rawItem.userInfo.username.string : rawItem.username.string
-                if !outerName.isEmpty {
-                    feed.username = outerName
-                }
-            }
-            if feed.avatar.isEmpty {
-                let outerAvatar = !rawItem.userInfo.userAvatar.string.isEmpty ? rawItem.userInfo.userAvatar.string : rawItem.userAvatar.string
-                if !outerAvatar.isEmpty {
-                    feed.avatar = coolapkNormalizedURL(outerAvatar)
-                }
-            }
-
-            if !feed.id.isEmpty && (!feed.message.isEmpty || !feed.title.isEmpty || !feed.pics.isEmpty || !feed.mediaItems.isEmpty) {
-                if seenIDs.insert(feed.id).inserted {
-                    parsedRows.append(.feed(feed))
-                }
-                continue
-            }
-
-            for fallbackRow in rows(from: [rawItem]) {
-                if seenIDs.insert(fallbackRow.id).inserted {
-                    parsedRows.append(fallbackRow)
+        // Fallback if any item in `/v6/collection/itemList` has a non-standard entityType
+        var fallbackRows: [HomeFeedRow] = []
+        var seen = Set<String>()
+        for raw in rawItems {
+            let eType = raw.entityType.string
+            if eType == "card" && raw.message.string.isEmpty { continue }
+            let feed = FeedItem(json: raw)
+            if !feed.id.isEmpty && (!feed.message.isEmpty || !feed.title.isEmpty || !feed.messageTitle.isEmpty || !feed.pics.isEmpty) {
+                if seen.insert(feed.id).inserted {
+                    fallbackRows.append(.feed(feed))
                 }
             }
         }
-        return parsedRows
+        return fallbackRows
     }
 
     public static func followedProducts(page: Int = 1) async throws -> [ProductItem] {

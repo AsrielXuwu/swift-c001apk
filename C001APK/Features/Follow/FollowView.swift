@@ -27,14 +27,7 @@ public struct FollowView: View {
             .ignoresSafeArea(.container, edges: .bottom)
             .c001PageBackground()
             .safeAreaBar(edge: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    floatingSegmentStrip
-                    if viewModel.segment == .topics && !viewModel.followedTopics.isEmpty {
-                        topicChipsStrip
-                    } else if viewModel.segment == .products && !viewModel.followedProducts.isEmpty {
-                        productChipsStrip
-                    }
-                }
+                floatingSegmentStrip
             }
             .navigationTitle("关注")
             .navigationBarTitleDisplayMode(.inline)
@@ -85,57 +78,6 @@ public struct FollowView: View {
         )
     }
 
-    private struct FollowSubChip: Identifiable, Hashable {
-        let id: String
-        let title: String
-    }
-
-    private var topicChipsStrip: some View {
-        var items: [FollowSubChip] = [
-            FollowSubChip(id: FollowViewModel.allTopicsChipID, title: "全部话题")
-        ]
-        items.append(contentsOf: viewModel.followedTopics.map {
-            FollowSubChip(id: $0.title, title: TopicItem.cleanTitle($0.title))
-        })
-        let selected = items.first { $0.id == viewModel.selectedTopicTag } ?? items.first
-        return FloatingTabStrip(
-            items: items,
-            selection: selected,
-            titleProvider: \.title,
-            onSelect: { chip in
-                viewModel.selectedTopicTag = chip.id
-                Task { await viewModel.loadInitial(segment: .topics, appState: appState, force: true) }
-            },
-            onReselect: { chip in
-                viewModel.selectedTopicTag = chip.id
-                Task { await viewModel.loadInitial(segment: .topics, appState: appState, force: true) }
-            }
-        )
-    }
-
-    private var productChipsStrip: some View {
-        var items: [FollowSubChip] = [
-            FollowSubChip(id: FollowViewModel.allProductsChipID, title: "全部数码")
-        ]
-        items.append(contentsOf: viewModel.followedProducts.map {
-            FollowSubChip(id: $0.id, title: $0.title)
-        })
-        let selected = items.first { $0.id == viewModel.selectedProductID } ?? items.first
-        return FloatingTabStrip(
-            items: items,
-            selection: selected,
-            titleProvider: \.title,
-            onSelect: { chip in
-                viewModel.selectedProductID = chip.id
-                Task { await viewModel.loadInitial(segment: .products, appState: appState, force: true) }
-            },
-            onReselect: { chip in
-                viewModel.selectedProductID = chip.id
-                Task { await viewModel.loadInitial(segment: .products, appState: appState, force: true) }
-            }
-        )
-    }
-
     @ViewBuilder
     private func segmentContent(for seg: FollowSegment) -> some View {
         let segRows = viewModel.rowsBySegment[seg] ?? []
@@ -148,7 +90,7 @@ public struct FollowView: View {
             ContentUnavailableView {
                 Label("需要登录酷安账号", systemImage: "person.crop.circle.badge.exclamationmark")
             } description: {
-                Text("登录后可查看已关注的\(seg.rawValue)；游客模式可切换到“全部”“用户”或“本机关注”浏览本地关注动态。")
+                Text("登录后可查看已关注的\(seg.rawValue)；游客模式可切换到“全部”“关注用户”或“本机关注”浏览本地关注动态。")
             } actions: {
                 Button("立即登录") { appState.showLoginSheet = true }
                     .buttonStyle(.borderedProminent)
@@ -157,7 +99,7 @@ public struct FollowView: View {
             ContentUnavailableView {
                 Label("已关闭云端关注读取", systemImage: "eye.slash")
             } description: {
-                Text("当前已在防风控设置中关闭“读取云端关注列表与关注流”，开启后即可加载已关注的\(seg.rawValue)。")
+                Text("当前已在防风控设置中关闭“加载云端关注列表与动态”，开启后即可加载已关注的\(seg.rawValue)。")
             } actions: {
                 Button("开启云端关注读取") {
                     appState.settings.enableCloudFollowLoad = true

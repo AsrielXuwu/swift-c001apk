@@ -121,7 +121,7 @@ public final class HistoryAndFavStore {
     private static let historyKey = "c001apk.localHistory.v1"
     private static let favoritesKey = "c001apk.localFavorites.v1"
     private static let foldersKey = "c001apk.localCollectionFolders.v1"
-    private static let cloudCacheKey = "c001apk.cloudFavoritesCache.v1"
+    private static let cloudCacheKey = "c001apk.cloudFavoritesCache.v2"
 
     public private(set) var history: [LocalHistoryEntry] = []
     public private(set) var favorites: [LocalFavoriteEntry] = []
@@ -209,6 +209,12 @@ public final class HistoryAndFavStore {
         let unique = newEntries.filter { !existingIDs.contains($0.id) }
         guard !unique.isEmpty else { return }
         cachedCloudEntries.append(contentsOf: unique)
+        persistCloudCache()
+    }
+
+    public func replaceCloudCachedEntries(forCollectionID collectionID: String, entries: [CachedCloudFavoriteEntry]) {
+        cachedCloudEntries.removeAll { $0.collectionID == collectionID }
+        cachedCloudEntries.append(contentsOf: entries)
         persistCloudCache()
     }
 

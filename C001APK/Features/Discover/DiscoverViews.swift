@@ -58,7 +58,7 @@ public struct TopicDetailView: View {
     @State private var hasMoreByTab: [String: Bool] = [:]
     @State private var isTogglingFollow = false
     @State private var headerHeight: CGFloat = 100
-    @State private var stripHeight: CGFloat = 52
+    @State private var stripHeight: CGFloat = 0
     @State private var scrollOffset: CGFloat = 0
     @State private var scrollOffsetByTab: [String: CGFloat] = [:]
     @State private var hasInitialized = false
@@ -372,10 +372,13 @@ public struct TopicDetailView: View {
         let isLoadingTab = loadingTabs.contains(tabItem.id)
         let hasLoaded = loadedTabs.contains(tabItem.id)
 
+        let hasStrip = activeTabs.count > 1
+        let topInsetHeight = headerHeight + (hasStrip ? max(stripHeight, 52) : 10)
+
         return ScrollView {
             VStack(spacing: 0) {
                 Color.clear
-                    .frame(height: max(0, headerHeight + stripHeight))
+                    .frame(height: max(0, topInsetHeight))
                     .id("topic-top-\(tabItem.id)")
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if (!hasLoaded || isLoadingTab) && rows.isEmpty {
@@ -573,7 +576,7 @@ public struct ProductDetailView: View {
     @State private var isLoadingHeader = true
     @State private var isTogglingFollow = false
     @State private var headerHeight: CGFloat = 112
-    @State private var stripHeight: CGFloat = 52
+    @State private var stripHeight: CGFloat = 0
     @State private var scrollOffset: CGFloat = 0
     @State private var scrollOffsetByTab: [String: CGFloat] = [:]
     @State private var hasInitialized = false
@@ -839,10 +842,14 @@ public struct ProductDetailView: View {
         let hasLoaded = loadedTabs.contains(chip.id)
         let isSpecsTab = isConfigTab(id: chip.id, title: chip.title)
 
+        let hasStrip = activeChips.count > 1
+        let baseHeader = (product != nil || appState.cachedProductDetail(id: productID) != nil || (initialTitle?.isEmpty == false)) ? headerHeight : 0
+        let topInsetHeight = baseHeader + (hasStrip ? max(stripHeight, 52) : 10)
+
         return ScrollView {
             VStack(spacing: 0) {
                 Color.clear
-                    .frame(height: max(0, (product != nil ? headerHeight : 0) + stripHeight))
+                    .frame(height: max(0, topInsetHeight))
                     .id("product-top-\(chip.id)")
                 LazyVStack(alignment: .leading, spacing: 10) {
                     if isSpecsTab {
