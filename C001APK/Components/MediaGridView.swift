@@ -485,8 +485,12 @@ public struct PhotoStackCardView<MenuContent: View>: View {
                         shouldLetterboxWide: shouldLetterboxActive,
                         disableHDR: disableHDR,
                         appState: appState,
-                        onPreviewLiftedChanged: { lifted in
-                            isPreviewLifted = lifted
+                        onPreviewLiftedChanged: { _ in
+                            // Keep the front card in OrbitalDeckStage visible at its original position
+                            // so it never vanishes or flickers before/during the context menu preview transition.
+                            if isPreviewLifted {
+                                isPreviewLifted = false
+                            }
                         },
                         onShareFile: onShareFile
                     ),
@@ -901,23 +905,67 @@ public struct AnimatedGIFView: UIViewRepresentable {
     }
 }
 
+@MainActor
+@Observable
+final class ContextMenuPreviewBridge {
+    var isDismissing: Bool = false
+}
+
 public struct MediaContextMenuPreview: View {
     public let item: FeedMedia
     public let disableHDR: Bool
     public var cornerRadius: CGFloat? = nil
+    public var initialImage: UIImage? = nil
+    public var hasBackingImageView: Bool = false
+    var bridge: ContextMenuPreviewBridge? = nil
+    public var onImageUpgraded: ((UIImage) -> Void)? = nil
 
     @State private var displayResult: LoadedImageResult?
+    @State private var lockedPreviewSize: CGSize
+    @State private var isUpgradeSettled: Bool = false
     @State private var liveVideoURL: URL?
     @State private var showLiveVideo = false
     @State private var videoReady = false
     @State private var playTrigger = 0
     @State private var gifData: Data?
 
-    public init(item: FeedMedia, disableHDR: Bool, cornerRadius: CGFloat? = nil) {
+    public init(
+        item: FeedMedia,
+        disableHDR: Bool,
+        cornerRadius: CGFloat? = nil,
+        initialImage: UIImage? = nil,
+        hasBackingImageView: Bool = false,
+        onImageUpgraded: ((UIImage) -> Void)? = nil
+    ) {
+        self.init(
+            item: item,
+            disableHDR: disableHDR,
+            cornerRadius: cornerRadius,
+            initialImage: initialImage,
+            hasBackingImageView: hasBackingImageView,
+            bridge: nil,
+            onImageUpgraded: onImageUpgraded
+        )
+    }
+
+    init(
+        item: FeedMedia,
+        disableHDR: Bool,
+        cornerRadius: CGFloat? = nil,
+        initialImage: UIImage? = nil,
+        hasBackingImageView: Bool = false,
+        bridge: ContextMenuPreviewBridge? = nil,
+        onImageUpgraded: ((UIImage) -> Void)? = nil
+    ) {
         self.item = item
         self.disableHDR = disableHDR
         self.cornerRadius = cornerRadius
-        let initial = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
+        self.initialImage = initialImage
+        self.hasBackingImageView = hasBackingImageView
+        self.bridge = bridge
+        self.onImageUpgraded = onImageUpgraded
+
+        let cached = ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: nil, preferHDR: !disableHDR)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1200, preferHDR: !disableHDR)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 1080, preferHDR: false)
             ?? ImagePipeline.cachedImageSync(urlString: item.sourceUrl, maxPixelSize: 960, preferHDR: false)
@@ -925,7 +973,17 @@ public struct MediaContextMenuPreview: View {
             ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 960, preferHDR: false)
             ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 420, preferHDR: false)
             ?? ImagePipeline.cachedImageSync(urlString: item.thumbnailUrl, maxPixelSize: 320, preferHDR: false)
-        self._displayResult = State(initialValue: initial)
+        let resolvedInitial: LoadedImageResult? = cached ?? initialImage.map {
+            LoadedImageResult(
+                image: $0,
+                hasHDRGainMap: $0.isHighDynamicRange || ImagePipeline.cachedHDRFlagSync(urlString: item.sourceUrl),
+                pixelSize: $0.size
+            )
+        }
+        self._displayResult = State(initialValue: resolvedInitial)
+        self._lockedPreviewSize = State(
+            initialValue: Self.preferredSize(for: item, imageSize: resolvedInitial?.image.size ?? initialImage?.size)
+        )
     }
 
     public static func preferredSize(for item: FeedMedia, imageSize: CGSize? = nil) -> CGSize {
@@ -953,92 +1011,138 @@ public struct MediaContextMenuPreview: View {
     }
 
     public var body: some View {
-        let previewSize = Self.preferredSize(for: item, imageSize: displayResult?.image.size)
-        let width = previewSize.width
-        let height = previewSize.height
+        let width = lockedPreviewSize.width
+        let height = lockedPreviewSize.height
         let isHDR = item.isHdr || (displayResult?.hasHDRGainMap ?? false)
         let showHDR = !disableHDR && isHDR
         let isLive = (liveVideoURL != nil) || item.isLivePhoto || ImagePipeline.cachedLiveFlagSync(urlString: item.sourceUrl)
+        let isDismissing = bridge?.isDismissing ?? false
 
-        ZStack(alignment: .topTrailing) {
-            ZStack {
-                Color(.secondarySystemGroupedBackground)
+        GeometryReader { proxy in
+            let liveWidth = proxy.size.width > 1 ? proxy.size.width : width
+            let liveHeight = proxy.size.height > 1 ? proxy.size.height : height
 
-                if let gifData, item.isGif {
-                    AnimatedGIFView(data: gifData, contentMode: .scaleAspectFill)
-                } else if let displayResult {
-                    Image(uiImage: displayResult.image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: width, height: height)
-                        .clipped()
-                        .allowedDynamicRange(showHDR ? .high : .standard)
+            ZStack(alignment: .topTrailing) {
+                ZStack {
+                    if hasBackingImageView {
+                        Color.clear
+                    } else {
+                        Color(.secondarySystemGroupedBackground)
+                    }
 
-                    if let liveVideoURL, showLiveVideo {
-                        LiveVideoPlayerView(
-                            videoURL: liveVideoURL,
-                            playTrigger: playTrigger,
-                            isLooping: false,
-                            isMuted: true,
-                            videoGravity: .resizeAspectFill,
-                            onReadyToDisplay: {
-                                withAnimation(.easeIn(duration: 0.16)) {
-                                    videoReady = true
-                                }
-                            },
-                            onPlaybackEnded: {
-                                withAnimation(.easeOut(duration: 0.25)) {
-                                    videoReady = false
-                                    showLiveVideo = false
-                                }
+                    if !isDismissing {
+                        if let gifData, item.isGif {
+                            AnimatedGIFView(data: gifData, contentMode: .scaleAspectFill)
+                                .frame(width: liveWidth, height: liveHeight)
+                                .clipped()
+                        } else if let displayResult {
+                            // When backed by UIKit's immediateImageView, let UIKit handle the image layer
+                            // during the initial expansion morph and for SDR images; only overlay the SwiftUI
+                            // image once the morph has settled and HDR headroom (.high) is needed.
+                            if !hasBackingImageView || (isUpgradeSettled && showHDR) {
+                                Image(uiImage: displayResult.image)
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: liveWidth, height: liveHeight)
+                                    .clipped()
+                                    .allowedDynamicRange(showHDR ? .high : .standard)
                             }
-                        )
-                        .frame(width: width, height: height)
-                        .clipped()
-                        .opacity(videoReady ? 1 : 0)
-                        .allowsHitTesting(false)
-                    }
-                } else {
-                    ProgressView()
-                }
-            }
 
-            if isLive || isHDR {
-                HStack(spacing: 8) {
-                    if isLive {
-                        HStack(spacing: 2) {
-                            Image(systemName: "livephoto")
-                            Text("Live")
+                            if let liveVideoURL, showLiveVideo {
+                                LiveVideoPlayerView(
+                                    videoURL: liveVideoURL,
+                                    playTrigger: playTrigger,
+                                    isLooping: false,
+                                    isMuted: true,
+                                    videoGravity: .resizeAspectFill,
+                                    onReadyToDisplay: {
+                                        withAnimation(.easeIn(duration: 0.16)) {
+                                            videoReady = true
+                                        }
+                                    },
+                                    onPlaybackEnded: {
+                                        withAnimation(.easeOut(duration: 0.25)) {
+                                            videoReady = false
+                                            showLiveVideo = false
+                                        }
+                                    }
+                                )
+                                .frame(width: liveWidth, height: liveHeight)
+                                .clipped()
+                                .opacity(videoReady ? 1 : 0)
+                                .allowsHitTesting(false)
+                            }
+                        } else if !hasBackingImageView {
+                            ProgressView()
                         }
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .glassEffect(.regular, in: .capsule)
                     }
-                    if isHDR {
-                        Text("HDR")
+                }
+                .frame(width: liveWidth, height: liveHeight)
+
+                if isLive || isHDR {
+                    HStack(spacing: 8) {
+                        if isLive {
+                            HStack(spacing: 2) {
+                                Image(systemName: "livephoto")
+                                Text("Live")
+                            }
                             .font(.caption2.weight(.semibold))
                             .padding(.horizontal, 6)
                             .padding(.vertical, 3)
                             .glassEffect(.regular, in: .capsule)
+                        }
+                        if isHDR {
+                            Text("HDR")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .glassEffect(.regular, in: .capsule)
+                        }
                     }
+                    .padding(8)
+                    .allowsHitTesting(false)
                 }
-                .padding(8)
-                .allowsHitTesting(false)
             }
+            .frame(width: liveWidth, height: liveHeight)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius ?? 0, style: .continuous))
         }
-        .frame(width: width, height: height)
-        .clipShape(RoundedRectangle(cornerRadius: cornerRadius ?? 0, style: .continuous))
+        .frame(
+            idealWidth: width,
+            maxWidth: hasBackingImageView ? .infinity : width,
+            idealHeight: height,
+            maxHeight: hasBackingImageView ? .infinity : height
+        )
+        .frame(width: hasBackingImageView ? nil : width, height: hasBackingImageView ? nil : height)
+        .ignoresSafeArea()
         .task(id: item.id) {
             showLiveVideo = false
             videoReady = false
             liveVideoURL = nil
+            isUpgradeSettled = false
 
-            displayResult = await ImagePipeline.shared.loadImage(
+            let hadInitialImage = (displayResult != nil || initialImage != nil)
+            if hadInitialImage {
+                // Allow the context menu lift & spring expansion (~260ms) to finish
+                // before swapping image textures or activating EDR/HDR dynamic range.
+                try? await Task.sleep(nanoseconds: 280_000_000)
+                guard !Task.isCancelled else { return }
+            }
+
+            if let loaded = await ImagePipeline.shared.loadImage(
                 urlString: item.sourceUrl,
                 maxPixelSize: nil,
                 preferHDR: !disableHDR
-            )
+            ) {
+                guard !Task.isCancelled else { return }
+                if !hadInitialImage {
+                    lockedPreviewSize = Self.preferredSize(for: item, imageSize: loaded.image.size)
+                }
+                onImageUpgraded?(loaded.image)
+                displayResult = loaded
+            }
+            guard !Task.isCancelled else { return }
+            isUpgradeSettled = true
+
             if item.isGif {
                 gifData = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl)
                 return
@@ -1051,9 +1155,9 @@ public struct MediaContextMenuPreview: View {
             liveVideoURL = vidFile
 
             let activeHDR = !disableHDR && (item.isHdr || (displayResult?.hasHDRGainMap ?? false))
-            let delayNs: UInt64 = activeHDR ? 1_000_000_000 : 350_000_000
+            let delayNs: UInt64 = activeHDR ? 720_000_000 : 120_000_000
             try? await Task.sleep(nanoseconds: delayNs)
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, !(bridge?.isDismissing ?? false) else { return }
 
             videoReady = false
             showLiveVideo = true
@@ -1137,6 +1241,12 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
 
         context.coordinator.panRecognizer = pan
         context.coordinator.overlayView = view
+        view.onTouchDown = { [weak coordinator = context.coordinator] in
+            coordinator?.handleTouchDown()
+        }
+        view.onTouchFinished = { [weak coordinator = context.coordinator] in
+            coordinator?.handleTouchFinished()
+        }
         view.addGestureRecognizer(pan)
         view.addGestureRecognizer(tap)
         if previewConfig != nil {
@@ -1149,6 +1259,12 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
     func updateUIView(_ uiView: OverlayView, context: Context) {
         uiView.activeCardSize = activeCardSize
         uiView.isUserInteractionEnabled = isEnabled
+        uiView.onTouchDown = { [weak coordinator = context.coordinator] in
+            coordinator?.handleTouchDown()
+        }
+        uiView.onTouchFinished = { [weak coordinator = context.coordinator] in
+            coordinator?.handleTouchFinished()
+        }
         if !context.coordinator.isPreviewMenuActive {
             uiView.configureBackingGeometry(
                 size: activeCardSize,
@@ -1175,6 +1291,8 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
 
     final class OverlayView: UIView {
         var activeCardSize: CGSize = .zero
+        var onTouchDown: (() -> Void)?
+        var onTouchFinished: (() -> Void)?
         let cardBackingView = CardBackingSurfaceView()
 
         override init(frame: CGRect) {
@@ -1194,6 +1312,21 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                 : CGRect(origin: .zero, size: size)
             cardBackingView.frame = targetBounds
             cardBackingView.applyCornerRadius(cornerRadius)
+        }
+
+        override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesBegan(touches, with: event)
+            onTouchDown?()
+        }
+
+        override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesEnded(touches, with: event)
+            onTouchFinished?()
+        }
+
+        override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+            super.touchesCancelled(touches, with: event)
+            onTouchFinished?()
         }
 
         override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -1261,6 +1394,8 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         func applyCornerRadius(_ cornerRadius: CGFloat) {
             layer.cornerRadius = cornerRadius
             layer.cornerCurve = .continuous
+            mainImageView.layer.cornerRadius = cornerRadius
+            mainImageView.layer.cornerCurve = .continuous
         }
 
         func configure(image: UIImage?, letterbox: Bool, cornerRadius: CGFloat) {
@@ -1283,6 +1418,9 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         private let cornerRadius: CGFloat
         private let appState: AppState
         private let targetSize: CGSize
+        private let containerView = UIView()
+        private let immediateImageView = UIImageView()
+        private let bridge = ContextMenuPreviewBridge()
 
         init(
             item: FeedMedia,
@@ -1308,7 +1446,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
 
         override func loadView() {
             let root = UIView(frame: CGRect(origin: .zero, size: targetSize))
-            root.backgroundColor = .secondarySystemGroupedBackground
+            root.backgroundColor = .clear
             root.clipsToBounds = true
             root.layer.cornerRadius = cornerRadius
             root.layer.cornerCurve = .continuous
@@ -1318,32 +1456,63 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         override func viewDidLoad() {
             super.viewDidLoad()
 
-            let immediateImageView = UIImageView(frame: view.bounds)
+            containerView.frame = view.bounds
+            containerView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+            containerView.backgroundColor = .secondarySystemGroupedBackground
+            containerView.clipsToBounds = true
+            containerView.layer.cornerRadius = cornerRadius
+            containerView.layer.cornerCurve = .continuous
+            view.addSubview(containerView)
+
+            immediateImageView.frame = containerView.bounds
             immediateImageView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             immediateImageView.contentMode = .scaleAspectFill
             immediateImageView.clipsToBounds = true
+            immediateImageView.layer.cornerRadius = cornerRadius
+            immediateImageView.layer.cornerCurve = .continuous
             immediateImageView.image = initialImage
-            view.addSubview(immediateImageView)
+            containerView.addSubview(immediateImageView)
 
             let host = UIHostingController(
                 rootView: MediaContextMenuPreview(
                     item: item,
                     disableHDR: disableHDR,
-                    cornerRadius: cornerRadius
+                    cornerRadius: cornerRadius,
+                    initialImage: initialImage,
+                    hasBackingImageView: initialImage != nil,
+                    bridge: bridge,
+                    onImageUpgraded: { [weak self] upgradedImage in
+                        self?.immediateImageView.image = upgradedImage
+                    }
                 )
                 .environment(appState)
             )
             addChild(host)
             host.view.backgroundColor = .clear
-            host.view.frame = view.bounds
+            host.view.isOpaque = false
+            host.view.frame = containerView.bounds
             host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
             host.view.clipsToBounds = true
             host.view.layer.cornerRadius = cornerRadius
             host.view.layer.cornerCurve = .continuous
-            view.addSubview(host.view)
+            containerView.addSubview(host.view)
             host.didMove(toParent: self)
             host.view.setNeedsLayout()
             host.view.layoutIfNeeded()
+        }
+
+        override func viewDidLayoutSubviews() {
+            super.viewDidLayoutSubviews()
+            view.layer.cornerRadius = cornerRadius
+            view.layer.cornerCurve = .continuous
+            containerView.layer.cornerRadius = cornerRadius
+            containerView.layer.cornerCurve = .continuous
+            immediateImageView.layer.cornerRadius = cornerRadius
+            immediateImageView.layer.cornerCurve = .continuous
+        }
+
+        func prepareForDismissal() {
+            bridge.isDismissing = true
         }
     }
 
@@ -1358,6 +1527,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
         var isPreviewMenuActive = false
         weak var panRecognizer: UIPanGestureRecognizer?
         weak var overlayView: OverlayView?
+        weak var activePreviewController: MediaContextMenuPreviewController?
 
         init(
             isEnabled: Bool,
@@ -1375,8 +1545,27 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             self.onDragEnded = onDragEnded
         }
 
+        func handleTouchDown() {
+            guard isEnabled, !isPreviewMenuActive, let cfg = previewConfig else { return }
+            // Pre-commit cardBackingView into CoreAnimation on touch-down (~150ms before
+            // UIContextMenuInteraction snapshots it) so the first highlight frame is already rendered.
+            _ = prepareCardBackingView(cfg: cfg)
+        }
+
+        func handleTouchFinished() {
+            guard !isPreviewMenuActive else { return }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 160_000_000)
+                guard let self, !self.isPreviewMenuActive else { return }
+                self.overlayView?.cardBackingView.isHidden = true
+            }
+        }
+
         @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
             guard recognizer.state == .ended else { return }
+            if !isPreviewMenuActive {
+                overlayView?.cardBackingView.isHidden = true
+            }
             onTap()
         }
 
@@ -1471,11 +1660,15 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             overlay.cardBackingView.applyCornerRadius(cornerRadius)
             let params = UIPreviewParameters()
             params.backgroundColor = .clear
-            params.visiblePath = UIBezierPath(
-                cgPath: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .path(in: overlay.cardBackingView.bounds)
-                    .cgPath
+            // Use UIBezierPath(roundedRect:cornerRadius:) rather than UIBezierPath(cgPath:)
+            // so UIKit preserves its internal _isRoundedRect/_cornerRadius metadata on the platter
+            // and never snaps the preview corners to 90-degree right angles during lift/morph.
+            let roundedPath = UIBezierPath(
+                roundedRect: overlay.cardBackingView.bounds,
+                cornerRadius: cornerRadius
             )
+            params.visiblePath = roundedPath
+            params.shadowPath = roundedPath
             return UITargetedPreview(view: overlay.cardBackingView, parameters: params)
         }
 
@@ -1496,11 +1689,10 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             let appState = cfg.appState
             let hasShareHandler = (cfg.onShareFile != nil)
 
-            // Pre-commit opaque backing view in window hierarchy before lift begins.
             _ = prepareCardBackingView(cfg: cfg)
 
-            return UIContextMenuConfiguration(identifier: nil) {
-                MediaContextMenuPreviewController(
+            return UIContextMenuConfiguration(identifier: nil) { [weak self] in
+                let controller = MediaContextMenuPreviewController(
                     item: item,
                     initialImage: cachedImg,
                     disableHDR: disableHDR,
@@ -1508,6 +1700,8 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                     appState: appState,
                     targetSize: previewSize
                 )
+                self?.activePreviewController = controller
+                return controller
             } actionProvider: { [weak self] _ in
                 var actions: [UIAction] = [
                     UIAction(
@@ -1515,6 +1709,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                         image: UIImage(systemName: "arrow.up.left.and.arrow.down.right")
                     ) { [weak self] _ in
                         Task { @MainActor [weak self] in
+                            self?.overlayView?.cardBackingView.isHidden = true
                             self?.onTap()
                         }
                     },
@@ -1572,7 +1767,6 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             guard let cfg = previewConfig,
                   let overlay = prepareCardBackingView(cfg: cfg) else { return nil }
             isPreviewMenuActive = true
-            cfg.onPreviewLiftedChanged(true)
             return targetedCardPreview(for: overlay, cornerRadius: cfg.cornerRadius)
         }
 
@@ -1600,6 +1794,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
             animator: (any UIContextMenuInteractionAnimating)?
         ) {
             isPreviewMenuActive = false
+            activePreviewController?.prepareForDismissal()
             if let animator {
                 animator.addCompletion { [weak self] in
                     MainActor.assumeIsolated {
