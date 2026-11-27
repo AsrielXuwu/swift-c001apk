@@ -323,19 +323,14 @@ private struct UnifiedFavoriteFeedItem: Identifiable {
     let localEntry: LocalFavoriteEntry?
     let cloudEntry: CachedCloudFavoriteEntry?
     let allCloudEntriesForFeed: [CachedCloudFavoriteEntry]
+    let existsInAnyLocalFolder: Bool
 
     var id: String {
-        if let localEntry, !localEntry.resolvedIsCloudSynced {
-            return "local:\(feedID)"
-        }
-        if let cloudEntry {
-            return "cloud:\(cloudEntry.collectionID):\(feedID)"
-        }
-        return "fav:\(feedID)"
+        "fav:\(feedID):L\(isLocal ? 1 : 0):C\(isCloud ? 1 : 0)"
     }
 
     var isCloud: Bool {
-        if cloudEntry != nil { return true }
+        if cloudEntry != nil || !allCloudEntriesForFeed.isEmpty { return true }
         return localEntry?.resolvedIsCloudSynced ?? false
     }
 
@@ -343,7 +338,7 @@ private struct UnifiedFavoriteFeedItem: Identifiable {
         if let localEntry, !localEntry.resolvedIsCloudSynced {
             return true
         }
-        return false
+        return existsInAnyLocalFolder
     }
 }
 
@@ -518,14 +513,25 @@ public struct FavoritesListView: View {
             }
         }
 
+        let allPureLocalByFeedID: [String: LocalFavoriteEntry] = {
+            var map: [String: LocalFavoriteEntry] = [:]
+            for entry in appState.historyAndFav.favorites where !entry.resolvedIsCloudSynced {
+                if map[entry.id] == nil {
+                    map[entry.id] = entry
+                }
+            }
+            return map
+        }()
+
         return orderedFeedIDs.map { fid in
-            let lEntry = localByFeedID[fid]
+            let lEntry = localByFeedID[fid] ?? allPureLocalByFeedID[fid]
             let cEntries = cloudByFeedID[fid] ?? []
             return UnifiedFavoriteFeedItem(
                 feedID: fid,
                 localEntry: lEntry,
                 cloudEntry: cEntries.first,
-                allCloudEntriesForFeed: cEntries
+                allCloudEntriesForFeed: cEntries,
+                existsInAnyLocalFolder: allPureLocalByFeedID[fid] != nil
             )
         }
     }
@@ -778,7 +784,7 @@ public struct FavoritesListView: View {
     }
 
     private var itemsSectionHeaderRow: some View {
-        HStack {
+        HStack(spacing: 8) {
             if let folder = selectedMergedFolder {
                 sectionHeader("「\(folder.title)」收藏内容")
             } else {
@@ -789,18 +795,18 @@ public struct FavoritesListView: View {
                 Button {
                     withAnimation(.snappy) { selectedFolderKey = nil }
                 } label: {
-                    Text("查看全部")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 5)
+                    Label("查看全部", systemImage: "square.grid.2x2")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
                         .contentShape(Capsule())
                         .glassEffect(.regular.interactive(), in: .capsule)
                         .foregroundStyle(Color.accentColor)
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 14)
             }
         }
+        .padding(.trailing, 14)
     }
 
     private func openFolderDetail(_ folder: MergedFavoriteFolderItem, transitionID: String) {
@@ -1223,8 +1229,8 @@ public struct FavoritesListView: View {
 
     private func sectionHeader(_ text: String) -> some View {
         Text(text)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.secondary)
+            .font(.headline)
+            .foregroundStyle(.primary)
             .padding(.horizontal, 16)
             .padding(.top, 4)
     }
@@ -1271,6 +1277,15 @@ public struct LocalFollowListView: View {
                         }
 
                         if !appState.localFollow.users.isEmpty {
+                            let cloudMap: [String: UserBrief] = {
+                                guard appState.settings.enableCloudFollowLoad && appState.accounts.isLoggedIn else { return [:] }
+                                var map: [String: UserBrief] = [:]
+                                for u in cloudUsers where !u.id.isEmpty {
+                                    map[u.id] = u
+                                }
+                                return map
+                            }()
+
                             Text("本机关注（\(appState.localFollow.users.count)）")
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
@@ -1279,6 +1294,14 @@ public struct LocalFollowListView: View {
 
                             ForEach(appState.localFollow.users) { user in
                                 let key = "local:\(user.uid)"
+                                let cloudMatch = cloudMap[user.uid]
+                                let displayUser = cloudMatch ?? UserBrief(
+                                    id: user.uid,
+                                    username: user.username,
+                                    avatar: user.avatar,
+                                    isFollowed: true,
+                                    bio: "UID: \(user.uid)"
+                                )
                                 SelectableCardWrapper(
                                     isSelecting: isSelecting,
                                     isSelected: selectedKeys.contains(key)
@@ -1290,14 +1313,9 @@ public struct LocalFollowListView: View {
                                     }
                                 } content: {
                                     UserRowView(
-                                        user: UserBrief(
-                                            id: user.uid,
-                                            username: user.username,
-                                            avatar: user.avatar,
-                                            isFollowed: true,
-                                            bio: "UID: \(user.uid)"
-                                        ),
+                                        user: displayUser,
                                         originBadgeIsCloud: false,
+                                        showBothOriginBadges: cloudMatch != nil,
                                         contextDeleteTitle: "取消本机关注",
                                         onContextDelete: {
                                             appState.localFollow.unfollow(uid: user.uid)

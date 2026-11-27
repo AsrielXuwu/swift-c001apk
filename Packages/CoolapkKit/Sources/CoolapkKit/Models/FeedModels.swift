@@ -319,6 +319,31 @@ public struct FeedRelationEntity: Identifiable, Hashable, Sendable, Codable {
     }
 }
 
+public struct FeedExtraLink: Identifiable, Hashable, Sendable, Codable {
+    public let id: String
+    public var title: String
+    public var url: String
+    public var pic: String
+    public var subtitle: String
+    public var isTradeLink: Bool
+
+    public init(
+        id: String,
+        title: String,
+        url: String,
+        pic: String = "",
+        subtitle: String = "",
+        isTradeLink: Bool = false
+    ) {
+        self.id = id
+        self.title = title
+        self.url = url
+        self.pic = pic
+        self.subtitle = subtitle
+        self.isTradeLink = isTradeLink
+    }
+}
+
 public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public enum Kind: String, Sendable, Codable {
         case feed
@@ -376,6 +401,7 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public var cityText: String
     public var dealStatusText: String
     public var xianyuURL: String
+    public var extraLinks: [FeedExtraLink]
     public var forwardSourceName: String
     public var replyRows: [ReplyItem]
     public var topReplyRows: [ReplyItem]
@@ -409,14 +435,31 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
     public var isSecondHand: Bool {
         kind == .ershou
             || feedType == "ershou"
-            || feedTypeName.contains("二手")
-            || feedTypeName.contains("闲置")
+            || Self.containsTradeKeyword(feedTypeName)
+            || Self.containsTradeKeyword(targetTitle)
             || !xianyuURL.isEmpty
-            || topicTags.contains { $0.contains("二手") || $0.contains("闲置") }
+            || topicTags.contains { Self.containsTradeKeyword($0) }
+            || relationEntities.contains { Self.containsTradeKeyword($0.title) }
     }
 
     public var hasPriceDisplay: Bool {
         isSecondHand || !priceText.isEmpty
+    }
+
+    public var resolvedExtraLinks: [FeedExtraLink] {
+        if !extraLinks.isEmpty {
+            return extraLinks
+        }
+        return Self.buildExtraLinks(
+            primaryTitle: extraTitle,
+            primaryURL: extraURL,
+            primaryPic: extraPic,
+            primaryInfo: extraInfo,
+            xianyuURL: xianyuURL,
+            extraObjects: [],
+            messageHTML: message,
+            isSecondHand: isSecondHand
+        )
     }
 
     public static func == (lhs: FeedItem, rhs: FeedItem) -> Bool {
@@ -439,6 +482,7 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             && lhs.dealStatusText == rhs.dealStatusText
             && lhs.extraURL == rhs.extraURL
             && lhs.xianyuURL == rhs.xianyuURL
+            && lhs.extraLinks == rhs.extraLinks
     }
 
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -617,6 +661,14 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         let parsedPriceNum = ([
             json.ershou_price.double,
             json.product_price.double,
+            json.buy_price.double,
+            json.buyPrice.double,
+            json.final_price.double,
+            json.hand_price.double,
+            json.real_price.double,
+            json.pay_price.double,
+            json.order_price.double,
+            json.discount_price.double,
             json.price.double,
             json.sell_price.double,
             json.goods_price.double,
@@ -627,6 +679,14 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
                 obj.product_price.double,
                 obj.productPrice.double,
                 obj.ershou_price.double,
+                obj.buy_price.double,
+                obj.buyPrice.double,
+                obj.final_price.double,
+                obj.hand_price.double,
+                obj.real_price.double,
+                obj.pay_price.double,
+                obj.order_price.double,
+                obj.discount_price.double,
                 obj.price.double,
                 obj.show_price.double,
                 obj.item_price.double,
@@ -639,6 +699,14 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         let rawPriceString = ([
             json.ershou_price.string,
             json.product_price.string,
+            json.buy_price.string,
+            json.buyPrice.string,
+            json.final_price.string,
+            json.hand_price.string,
+            json.real_price.string,
+            json.pay_price.string,
+            json.order_price.string,
+            json.discount_price.string,
             json.price.string,
             json.price_text.string,
             json.price_str.string,
@@ -648,6 +716,14 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
                 obj.product_price.string,
                 obj.productPrice.string,
                 obj.ershou_price.string,
+                obj.buy_price.string,
+                obj.buyPrice.string,
+                obj.final_price.string,
+                obj.hand_price.string,
+                obj.real_price.string,
+                obj.pay_price.string,
+                obj.order_price.string,
+                obj.discount_price.string,
                 obj.price.string,
                 obj.show_price.string,
                 obj.item_price.string,
@@ -683,30 +759,57 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         .map(Self.unwrapCoolapkRedirectURL)
         .filter { !$0.isEmpty }
 
+        let plainBody = FeedHTMLParser.plainText(json.message.string)
         let matchedCandidate = linkCandidates.first { Self.isXianyuOrTradeURL($0) }
         if let matchedCandidate {
             xianyuURL = matchedCandidate
         } else {
-            let plainMsg = FeedHTMLParser.plainText(json.message.string)
-            xianyuURL = Self.extractFirstXianyuURL(in: json.message.string + " " + plainMsg + " " + effectiveExtraURL + " " + resolvedExtraInfo) ?? ""
+            xianyuURL = Self.extractFirstXianyuURL(in: json.message.string + " " + plainBody + " " + effectiveExtraURL + " " + resolvedExtraInfo) ?? ""
         }
 
-        let combinedTagString = (json.tags.array.map(\.string) + [json.tags.string, json.ttitle.string, json.targetRow.title.string])
-            .joined(separator: " ")
+        let relationTitles = json.relationRows.array.map(\.title.string)
+        let combinedTagString = (
+            json.tags.array.map(\.string)
+            + relationTitles
+            + [
+                json.tags.string,
+                json.ttitle.string,
+                json.targetRow.title.string,
+                json.topic_title.string,
+                json.message_title.string,
+                json.title.string,
+                effectiveExtraTitle
+            ]
+        ).joined(separator: " ")
+
         let hasExplicitErshouPrice = json.ershou_price.double > 0
             || (!json.ershou_price.string.isEmpty && json.ershou_price.string != "0" && json.ershou_price.string != "0.0" && json.ershou_price.string != "0.00")
+        let hasBodyTradePhrase = Self.hasExplicitTradeBodyPhrase(in: plainBody)
         let isSecondHandPost = parsedType == "ershou"
             || parsedType.lowercased().contains("second")
-            || json.feedTypeName.string.contains("二手")
-            || json.feedTypeName.string.contains("闲置")
-            || combinedTagString.contains("二手")
-            || combinedTagString.contains("闲置")
+            || Self.containsTradeKeyword(json.feedTypeName.string)
+            || Self.containsTradeKeyword(combinedTagString)
             || hasExplicitErshouPrice
             || !json.ershou_info.isNull
             || !json.ershou_data.isNull
             || !json.second_hand.isNull
             || !json.second_hand_info.isNull
             || !xianyuURL.isEmpty
+            || hasBodyTradePhrase
+
+        let isPriceRelatedContext = isSecondHandPost
+            || !effectiveExtraURL.isEmpty
+            || combinedTagString.contains("到手价")
+            || combinedTagString.contains("好价")
+            || combinedTagString.contains("价格")
+            || json.feedTypeName.string.contains("到手价")
+            || json.info.string.contains("到手价")
+            || json.infoHtml.string.contains("到手价")
+            || plainBody.contains("到手")
+            || plainBody.contains("实付")
+            || plainBody.contains("入手价")
+            || plainBody.contains("购入价")
+            || plainBody.contains("成交价")
 
         if parsedPriceNum > 0 {
             let formatted = parsedPriceNum.truncatingRemainder(dividingBy: 1) == 0
@@ -715,19 +818,32 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
             priceText = "¥\(formatted)"
         } else if !rawPriceString.isEmpty {
             priceText = Self.formatRawPrice(rawPriceString)
-        } else if isSecondHandPost || !effectiveExtraURL.isEmpty {
-            let plainBody = FeedHTMLParser.plainText(json.message.string)
-            priceText = Self.extractInferredPrice(from: [
+        } else {
+            let combinedPriceSearchText = [
                 json.message_title.string,
+                json.title.string,
                 effectiveExtraTitle,
                 resolvedExtraInfo,
                 extraInfoFromObj,
                 json.info.string,
                 plainBody
-            ].joined(separator: " "))
-        } else {
-            priceText = ""
+            ].joined(separator: " ")
+            priceText = Self.extractInferredPrice(
+                from: combinedPriceSearchText,
+                allowLooseUnitMatch: isPriceRelatedContext
+            )
         }
+
+        extraLinks = Self.buildExtraLinks(
+            primaryTitle: effectiveExtraTitle,
+            primaryURL: effectiveExtraURL,
+            primaryPic: resolvedExtraPic.isEmpty ? extraPicFromObj : resolvedExtraPic,
+            primaryInfo: resolvedExtraInfo.isEmpty ? extraInfoFromObj : resolvedExtraInfo,
+            xianyuURL: xianyuURL,
+            extraObjects: extraObjects,
+            messageHTML: json.message.string,
+            isSecondHand: isSecondHandPost
+        )
 
         let rawOrigPrice = ([
             json.orig_price.double,
@@ -996,6 +1112,7 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         cityText = try c.decodeIfPresent(String.self, forKey: .cityText) ?? ""
         dealStatusText = try c.decodeIfPresent(String.self, forKey: .dealStatusText) ?? ""
         xianyuURL = try c.decodeIfPresent(String.self, forKey: .xianyuURL) ?? ""
+        extraLinks = try c.decodeIfPresent([FeedExtraLink].self, forKey: .extraLinks) ?? []
         forwardSourceName = try c.decodeIfPresent(String.self, forKey: .forwardSourceName) ?? ""
         replyRows = try c.decodeIfPresent([ReplyItem].self, forKey: .replyRows) ?? []
         topReplyRows = try c.decodeIfPresent([ReplyItem].self, forKey: .topReplyRows) ?? []
@@ -1111,21 +1228,248 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
         return nil
     }
 
-    private static func extractInferredPrice(from text: String) -> String {
-        let patterns = [
-            #"[¥￥]\s*(\d+(?:\.\d{1,2})?)"#,
-            #"(?:价格|售价|出价|明盘|一口价|实价|现价)\s*[：:=]?\s*(\d+(?:\.\d{1,2})?)"#,
-            #"(\d{1,6}(?:\.\d{1,2})?)\s*(?:元|块|出|包邮|自提|不刀|r|R)(?:\b|[^\w])"#
+    public static func containsTradeKeyword(_ text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        return text.contains("二手")
+            || text.contains("闲置")
+            || text.contains("交易")
+    }
+
+    private static func hasExplicitTradeBodyPhrase(in text: String) -> Bool {
+        guard !text.isEmpty else { return false }
+        let pattern = #"(?:(?<![0-9a-zA-Z.])\d{1,6}(?:\.\d{1,2})?\s*(?:元|块|rmb|RMB)?\s*(?:包邮|包顺丰|到付|自提|不刀|可小刀|明盘))|(?:走闲鱼|闲鱼交易|出闲置)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive) else { return false }
+        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.firstMatch(in: text, range: nsRange) != nil
+    }
+
+    private static func extractInferredPrice(from text: String, allowLooseUnitMatch: Bool = true) -> String {
+        guard !text.isEmpty else { return "" }
+        let strictPatterns = [
+            #"(?:到手价|到手|实付|入手价|购入价|成交价|价格|售价|出价|明盘|一口价|实价|现价|好价|特价)\s*(?:为|是|仅)?\s*[：:=]?\s*[¥￥]?\s*(\d{1,6}(?:\.\d{1,2})?)(?![0-9.])"#,
+            #"[¥￥]\s*(\d{1,6}(?:\.\d{1,2})?)(?![0-9.])"#,
+            #"(?<![0-9a-zA-Z.])(\d{1,6}(?:\.\d{1,2})?)\s*(?:元|块|块钱|r|R|rmb|RMB)?\s*(?:包邮|包顺丰|包普快|到付|自提|不刀|可小刀|明盘)"#,
+            #"(?:出|转让|只要)\s*[：:=]?\s*[¥￥]?\s*(\d{1,6}(?:\.\d{1,2})?)\s*(?:元|块|包邮|包顺丰|到付|自提|不刀|r|R)"#
         ]
-        for pattern in patterns {
+        let loosePatterns = [
+            #"(?<![0-9a-zA-Z./\-])(\d{1,6}(?:\.\d{1,2})?)\s*(?:元|块|块钱|r|R|rmb|RMB)(?![0-9a-zA-Z.])"#,
+            #"(?<![0-9a-zA-Z./\-])(\d{1,6}(?:\.\d{1,2})?)\s*出(?![0-9a-zA-Z.])"#
+        ]
+        let allPatterns = allowLooseUnitMatch ? (strictPatterns + loosePatterns) : strictPatterns
+        for pattern in allPatterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
             let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
-            if let match = regex.firstMatch(in: text, range: nsRange),
-               let range = Range(match.range(at: 1), in: text) {
+            for match in regex.matches(in: text, range: nsRange) {
+                guard let range = Range(match.range(at: 1), in: text) else { continue }
                 let num = String(text[range])
-                if !num.isEmpty { return "¥\(num)" }
+                if let val = Double(num), val > 0 {
+                    return "¥\(num)"
+                }
             }
         }
         return ""
+    }
+
+    private static func shouldDisplayExtractedLink(_ rawURL: String, anchorTitle: String = "") -> Bool {
+        let trimmed = unwrapCoolapkRedirectURL(rawURL).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let lower = trimmed.lowercased()
+        let cleanAnchor = anchorTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleanAnchor == "查看更多" || cleanAnchor == "全文" || cleanAnchor.hasPrefix("#") || cleanAnchor.hasPrefix("@") {
+            return false
+        }
+        if lower.hasPrefix("/u/") || lower.hasPrefix("/t/") || lower.hasPrefix("/topic/")
+            || lower.hasPrefix("/product/") || lower.hasPrefix("/dyh/")
+            || lower.hasPrefix("/apk/") || lower.hasPrefix("/game/") || lower.hasPrefix("/collection/")
+            || lower.hasPrefix("coolmarket://") {
+            return false
+        }
+        if lower.hasPrefix("/feed/") && (cleanAnchor.isEmpty || cleanAnchor == "查看更多" || cleanAnchor == "全文") {
+            return false
+        }
+        if lower.contains("image.coolapk.com") || lower.contains("avatar.coolapk.com") {
+            return false
+        }
+        if let url = URL(string: trimmed), let host = url.host?.lowercased(),
+           host == "www.coolapk.com" || host == "coolapk.com" || host == "m.coolapk.com" {
+            let path = url.path.lowercased()
+            if path.hasPrefix("/u/") || path.hasPrefix("/t/") || path.hasPrefix("/topic/") {
+                return false
+            }
+            if path.hasPrefix("/feed/") && (cleanAnchor == "查看更多" || cleanAnchor == "全文") {
+                return false
+            }
+        }
+        return lower.hasPrefix("http://")
+            || lower.hasPrefix("https://")
+            || lower.hasPrefix("fleamarket://")
+            || lower.hasPrefix("tbopen://")
+            || lower.hasPrefix("zzopen://")
+            || lower.hasPrefix("bilibili://")
+            || lower.hasPrefix("orpheus://")
+    }
+
+    private static func normalizedLinkDedupeKey(_ rawURL: String) -> String {
+        var key = unwrapCoolapkRedirectURL(rawURL)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        while key.hasSuffix("/") {
+            key.removeLast()
+        }
+        return key
+    }
+
+    private static func buildExtraLinks(
+        primaryTitle: String,
+        primaryURL: String,
+        primaryPic: String,
+        primaryInfo: String,
+        xianyuURL: String,
+        extraObjects: [JSON],
+        messageHTML: String,
+        isSecondHand: Bool
+    ) -> [FeedExtraLink] {
+        var results: [FeedExtraLink] = []
+        var seenKeys = Set<String>()
+
+        func appendCandidate(url raw: String, title: String, pic: String = "", info: String = "") {
+            let unwrapped = unwrapCoolapkRedirectURL(raw)
+                .trimmingCharacters(in: CharacterSet(charactersIn: " \t\n\r.,;)]}>\"'"))
+            guard shouldDisplayExtractedLink(unwrapped, anchorTitle: title) else { return }
+            let key = normalizedLinkDedupeKey(unwrapped)
+            guard !key.isEmpty, seenKeys.insert(key).inserted else { return }
+
+            let isTrade = isSecondHand || isXianyuOrTradeURL(unwrapped)
+            let isSpecificXianyu = isSpecificXianyuURL(unwrapped)
+            let platformLabel: String = {
+                if isSpecificXianyu { return "闲鱼" }
+                let trimmedInfo = info.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedInfo.isEmpty, trimmedInfo.count <= 12, !trimmedInfo.contains("完成") {
+                    return trimmedInfo
+                }
+                let lower = unwrapped.lowercased()
+                if lower.contains("zhuanzhuan") || lower.contains("zzopen://") { return "转转" }
+                if lower.contains("jd.com") || lower.contains("3.cn") { return "京东" }
+                if lower.contains("taobao.com") || lower.contains("tmall.com") { return "淘宝" }
+                if lower.contains("pinduoduo.com") || lower.contains("yangkeduo.com") { return "拼多多" }
+                if lower.contains("bilibili.com") || lower.contains("b23.tv") { return "哔哩哔哩" }
+                return "平台"
+            }()
+
+            let cleanedTitle = FeedHTMLParser.plainText(title).trimmingCharacters(in: .whitespacesAndNewlines)
+            let finalTitle: String = {
+                if !cleanedTitle.isEmpty, cleanedTitle != "查看链接", cleanedTitle != "网页链接" {
+                    return cleanedTitle
+                }
+                if !primaryTitle.isEmpty, results.isEmpty {
+                    return primaryTitle
+                }
+                if isTrade {
+                    return "前往\(platformLabel)查看详情"
+                }
+                return unwrapped
+            }()
+
+            let finalSubtitle: String = {
+                if isTrade {
+                    return "点击跳转\(platformLabel) · \(unwrapped)"
+                }
+                let trimmedInfo = info.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmedInfo.isEmpty && trimmedInfo != finalTitle {
+                    return "\(trimmedInfo) · \(unwrapped)"
+                }
+                return unwrapped
+            }()
+
+            results.append(FeedExtraLink(
+                id: "link-\(results.count)-\(key)",
+                title: finalTitle,
+                url: unwrapped,
+                pic: coolapkNormalizedURL(pic),
+                subtitle: finalSubtitle,
+                isTradeLink: isTrade
+            ))
+        }
+
+        if !xianyuURL.isEmpty {
+            appendCandidate(url: xianyuURL, title: primaryTitle, pic: primaryPic, info: primaryInfo)
+        }
+        if !primaryURL.isEmpty {
+            appendCandidate(url: primaryURL, title: primaryTitle, pic: primaryPic, info: primaryInfo)
+        }
+
+        for obj in extraObjects {
+            let candidateURL = [
+                obj.link_url.string,
+                obj.linkUrl.string,
+                obj.xianyu_url.string,
+                obj.goofish_url.string,
+                obj.ershou_url.string,
+                obj.trade_url.string,
+                obj.jump_url.string,
+                obj.buy_url.string,
+                obj.sell_url.string,
+                obj.item_url.string,
+                obj.extra_url.string,
+                obj.url.string,
+                obj.link.string,
+                obj.target_url.string
+            ].first { !$0.isEmpty } ?? ""
+            guard !candidateURL.isEmpty else { continue }
+            let candidateTitle = [
+                obj.product_title.string,
+                obj.productTitle.string,
+                obj.title.string,
+                obj.extra_title.string,
+                obj.goods_title.string,
+                obj.name.string
+            ].first { !$0.isEmpty } ?? ""
+            let candidatePic = [
+                obj.pic.string,
+                obj.extra_pic.string,
+                obj.cover.string,
+                obj.logo.string
+            ].first { !$0.isEmpty } ?? ""
+            let candidateInfo = [
+                obj.link_source.string,
+                obj.linkSource.string,
+                obj.platform.string,
+                obj.info.string,
+                obj.extra_info.string,
+                obj.sub_title.string
+            ].first { !$0.isEmpty } ?? ""
+            appendCandidate(url: candidateURL, title: candidateTitle, pic: candidatePic, info: candidateInfo)
+        }
+
+        if !messageHTML.isEmpty {
+            let anchorPattern = #"<a\s+[^>]*href\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>"#
+            if let regex = try? NSRegularExpression(pattern: anchorPattern, options: [.caseInsensitive, .dotMatchesLineSeparators]) {
+                let nsRange = NSRange(messageHTML.startIndex..<messageHTML.endIndex, in: messageHTML)
+                for match in regex.matches(in: messageHTML, range: nsRange) {
+                    guard let hrefRange = Range(match.range(at: 1), in: messageHTML) else { continue }
+                    let rawHref = String(messageHTML[hrefRange])
+                        .replacingOccurrences(of: "&amp;", with: "&")
+                    let anchorText: String = {
+                        guard let textRange = Range(match.range(at: 2), in: messageHTML) else { return "" }
+                        return FeedHTMLParser.plainText(String(messageHTML[textRange]))
+                    }()
+                    appendCandidate(url: rawHref, title: anchorText)
+                }
+            }
+
+            let plainText = FeedHTMLParser.plainText(messageHTML)
+            let urlPattern = #"(?:https?://|fleamarket://|tbopen://|zzopen://)[^\s"'<>\[\]()，。；！？、]+"#
+            if let regex = try? NSRegularExpression(pattern: urlPattern, options: .caseInsensitive) {
+                let nsRange = NSRange(plainText.startIndex..<plainText.endIndex, in: plainText)
+                for match in regex.matches(in: plainText, range: nsRange) {
+                    if let range = Range(match.range, in: plainText) {
+                        let rawURL = String(plainText[range])
+                        appendCandidate(url: rawURL, title: "")
+                    }
+                }
+            }
+        }
+
+        return results
     }
 }

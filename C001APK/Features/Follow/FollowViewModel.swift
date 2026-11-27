@@ -155,13 +155,23 @@ public final class FollowViewModel {
                     return
                 }
                 if followedTopics.isEmpty || page == 1 {
-                    let topics = (try? await API.followedTopics(page: 1)) ?? []
+                    let topics = ((try? await API.followedTopics(page: 1)) ?? []).map { item -> TopicItem in
+                        var copy = item
+                        copy.isFollowed = true
+                        appState.cacheTopicDetail(copy)
+                        return copy
+                    }
                     if !topics.isEmpty { followedTopics = topics }
                 }
                 if selectedTopicTag == Self.allTopicsChipID || selectedTopicTag.isEmpty {
                     let list = (page == 1 && !followedTopics.isEmpty)
                         ? followedTopics
-                        : ((try? await API.followedTopics(page: page)) ?? [])
+                        : (((try? await API.followedTopics(page: page)) ?? []).map { item -> TopicItem in
+                            var copy = item
+                            copy.isFollowed = true
+                            appState.cacheTopicDetail(copy)
+                            return copy
+                        })
                     loaded = list.map { .topic($0) }
                 } else {
                     loaded = try await API.topicFeeds(tag: selectedTopicTag, page: page)
@@ -174,7 +184,12 @@ public final class FollowViewModel {
                     return
                 }
                 if followedProducts.isEmpty || page == 1 {
-                    let products = (try? await API.followedProducts(page: 1)) ?? []
+                    let products = ((try? await API.followedProducts(page: 1)) ?? []).map { item -> ProductItem in
+                        var copy = item
+                        copy.isFollowed = true
+                        appState.cacheProductDetail(copy)
+                        return copy
+                    }
                     if !products.isEmpty { followedProducts = products }
                 }
                 if selectedProductID != Self.allProductsChipID,
@@ -183,7 +198,12 @@ public final class FollowViewModel {
                 } else {
                     let list = (page == 1 && !followedProducts.isEmpty)
                         ? followedProducts
-                        : ((try? await API.followedProducts(page: page)) ?? [])
+                        : (((try? await API.followedProducts(page: page)) ?? []).map { item -> ProductItem in
+                            var copy = item
+                            copy.isFollowed = true
+                            appState.cacheProductDetail(copy)
+                            return copy
+                        })
                     loaded = list.map { .product($0) }
                 }
 
@@ -193,7 +213,12 @@ public final class FollowViewModel {
                     hasMoreBySegment[targetSegment] = false
                     return
                 }
-                let apps = try await API.followedApps(uid: appState.accounts.activeUID, page: page)
+                let apps = try await API.followedApps(uid: appState.accounts.activeUID, page: page).map { item -> AppItem in
+                    var copy = item
+                    copy.isFollowed = true
+                    appState.cacheAppDetail(copy)
+                    return copy
+                }
                 loaded = apps.map { .app($0) }
 
             case .dyh:
@@ -202,7 +227,12 @@ public final class FollowViewModel {
                     hasMoreBySegment[targetSegment] = false
                     return
                 }
-                let dyhs = try await API.followedDyhs(page: page)
+                let dyhs = try await API.followedDyhs(page: page).map { item -> DyhItem in
+                    var copy = item
+                    copy.isFollowed = true
+                    appState.cacheDyhDetail(copy)
+                    return copy
+                }
                 loaded = dyhs.map { .dyh($0) }
 
             case .collections:
@@ -211,7 +241,12 @@ public final class FollowViewModel {
                     hasMoreBySegment[targetSegment] = false
                     return
                 }
-                let cols = try await API.collectionList(uid: appState.accounts.activeUID, page: page)
+                let cols = try await API.followedCollections(uid: appState.accounts.activeUID, page: page).map { item -> CollectionItem in
+                    var copy = item
+                    copy.isFollowed = true
+                    appState.cacheCollectionDetail(copy)
+                    return copy
+                }
                 loaded = cols.map { .collection($0) }
 
             case .all:

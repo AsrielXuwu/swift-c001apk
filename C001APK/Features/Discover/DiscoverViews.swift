@@ -264,11 +264,15 @@ public struct TopicDetailView: View {
                     topic = cached
                 }
                 guard !hasInitialized || topic == nil else { return }
-                let loadedTopic = try? await API.topicDetail(tag: tag)
-                hasInitialized = (loadedTopic != nil)
-                if let loadedTopic {
-                    appState.cacheTopicDetail(loadedTopic, forTag: tag)
+                var loadedTopic = try? await API.topicDetail(tag: tag)
+                if var fetched = loadedTopic {
+                    if !fetched.isFollowed && (topic?.isFollowed == true || appState.isEntityKnownFollowed(kind: "topic", keys: [fetched.id, tag, fetched.title])) {
+                        fetched.isFollowed = true
+                    }
+                    appState.cacheTopicDetail(fetched, forTag: tag)
+                    loadedTopic = appState.cachedTopicDetail(tag: tag) ?? fetched
                 }
+                hasInitialized = (loadedTopic != nil)
                 let effectiveTopic = loadedTopic ?? topic
                 let resolvedTabs = (effectiveTopic?.tabs.isEmpty == false) ? effectiveTopic!.tabs : [singleDefaultTopicTab]
                 let saved = appState.pageTabSelections["topic-\(tag)"]
@@ -411,7 +415,13 @@ public struct TopicDetailView: View {
             }
         }
         .refreshable {
-            topic = try? await API.topicDetail(tag: tag)
+            if var fetched = try? await API.topicDetail(tag: tag) {
+                if !fetched.isFollowed && (topic?.isFollowed == true || appState.isEntityKnownFollowed(kind: "topic", keys: [fetched.id, tag, fetched.title])) {
+                    fetched.isFollowed = true
+                }
+                appState.cacheTopicDetail(fetched, forTag: tag)
+                topic = appState.cachedTopicDetail(tag: tag) ?? fetched
+            }
             await reloadFeeds(for: tabItem, force: true)
         }
     }
@@ -543,13 +553,39 @@ public struct TopicDetailView: View {
         isTogglingFollow = true
         defer { isTogglingFollow = false }
         let next = !current.isFollowed
+        let prevCount = current.followNum
         topic?.isFollowed = next
+        if next {
+            topic?.followNum += 1
+        } else if (topic?.followNum ?? 0) > 0 {
+            topic?.followNum -= 1
+        }
         do {
             try await API.followTopic(tag: targetTag, follow: next)
+            if let updated = topic {
+                appState.cacheTopicDetail(updated, forTag: tag, explicitFollowChange: true)
+            }
             appState.showToast(next ? "已关注话题" : "已取消关注")
         } catch {
-            topic?.isFollowed = !next
-            _ = await appState.handleAPIError(error)
+            let msg = error.localizedDescription
+            if next && (msg.contains("已经关注") || msg.contains("不能重复") || msg.contains("已关注")) {
+                topic?.isFollowed = true
+                topic?.followNum = prevCount
+                if let updated = topic {
+                    appState.cacheTopicDetail(updated, forTag: tag, explicitFollowChange: true)
+                }
+                appState.showToast("已关注话题")
+            } else if !next && (msg.contains("未关注") || msg.contains("还没有关注")) {
+                topic?.isFollowed = false
+                topic?.followNum = prevCount
+                if let updated = topic {
+                    appState.cacheTopicDetail(updated, forTag: tag, explicitFollowChange: true)
+                }
+            } else {
+                topic?.isFollowed = !next
+                topic?.followNum = prevCount
+                _ = await appState.handleAPIError(error)
+            }
         }
     }
 }
@@ -1099,9 +1135,13 @@ public struct ProductDetailView: View {
 
     private func reloadAll() async {
         isLoadingHeader = true
-        let detail = try? await API.productDetail(id: productID)
-        if let detail {
-            appState.cacheProductDetail(detail)
+        var detail = try? await API.productDetail(id: productID)
+        if var fetched = detail {
+            if !fetched.isFollowed && (product?.isFollowed == true || appState.isEntityKnownFollowed(kind: "product", keys: [productID, fetched.id, fetched.title])) {
+                fetched.isFollowed = true
+            }
+            appState.cacheProductDetail(fetched)
+            detail = appState.cachedProductDetail(id: fetched.id) ?? fetched
         }
         withAnimation(.smooth(duration: 0.24)) {
             if let detail {
@@ -1272,13 +1312,39 @@ public struct ProductDetailView: View {
         isTogglingFollow = true
         defer { isTogglingFollow = false }
         let next = !current.isFollowed
+        let prevCount = current.followNum
         product?.isFollowed = next
+        if next {
+            product?.followNum += 1
+        } else if (product?.followNum ?? 0) > 0 {
+            product?.followNum -= 1
+        }
         do {
             try await API.followProduct(id: current.id, follow: next)
+            if let updated = product {
+                appState.cacheProductDetail(updated, explicitFollowChange: true)
+            }
             appState.showToast(next ? "已关注机型" : "已取消关注")
         } catch {
-            product?.isFollowed = !next
-            _ = await appState.handleAPIError(error)
+            let msg = error.localizedDescription
+            if next && (msg.contains("已经关注") || msg.contains("不能重复") || msg.contains("已关注")) {
+                product?.isFollowed = true
+                product?.followNum = prevCount
+                if let updated = product {
+                    appState.cacheProductDetail(updated, explicitFollowChange: true)
+                }
+                appState.showToast("已关注机型")
+            } else if !next && (msg.contains("未关注") || msg.contains("还没有关注")) {
+                product?.isFollowed = false
+                product?.followNum = prevCount
+                if let updated = product {
+                    appState.cacheProductDetail(updated, explicitFollowChange: true)
+                }
+            } else {
+                product?.isFollowed = !next
+                product?.followNum = prevCount
+                _ = await appState.handleAPIError(error)
+            }
         }
     }
 }
@@ -1466,20 +1532,32 @@ public struct AppDetailView: View {
                     )
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    let sortOptions: [(id: String, title: String)] = [
+                        ("lastupdate_desc", "最近回复"),
+                        ("dateline_desc", "最新发布"),
+                        ("popular", "热度排序")
+                    ]
                     Menu {
-                        Picker("排序方式", selection: $sortMode) {
-                            Text("默认排序").tag("lastupdate_desc")
-                            Text("最新发布").tag("dateline_desc")
-                            Text("热门评价").tag("popular")
+                        ForEach(sortOptions, id: \.id) { opt in
+                            Button {
+                                if sortMode != opt.id {
+                                    sortMode = opt.id
+                                    Task { await reloadComments() }
+                                }
+                            } label: {
+                                HStack {
+                                    Text(opt.title)
+                                    if sortMode == opt.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
                         }
                     } label: {
                         Image(systemName: "arrow.up.arrow.down")
                     }
                     .accessibilityLabel("排序方式")
                 }
-            }
-            .onChange(of: sortMode) { _, _ in
-                Task { await reloadComments() }
             }
             .onAppear {
                 if app == nil, let cached = appState.cachedAppDetail(id: appID) {
@@ -1495,6 +1573,13 @@ public struct AppDetailView: View {
         }
     }
 
+    private var effectiveCommentAppID: String {
+        if let id = app?.id, !id.isEmpty, id != "0" {
+            return id
+        }
+        return appID
+    }
+
     private func reload() async {
         isLoading = true
         defer {
@@ -1502,11 +1587,16 @@ public struct AppDetailView: View {
             hasLoaded = true
         }
         page = 1
-        async let detailTask = try? API.appDetail(id: appID)
-        async let commentsTask = (try? API.appComments(id: appID, page: 1, listType: sortMode)) ?? []
-        let loadedApp = await detailTask
-        let loadedComments = await commentsTask
-        if let loadedApp { appState.cacheAppDetail(loadedApp) }
+        var loadedApp = try? await API.appDetail(id: appID)
+        if var fetched = loadedApp {
+            if !fetched.isFollowed && (app?.isFollowed == true || appState.isEntityKnownFollowed(kind: "app", keys: [appID, fetched.id, fetched.packageName, fetched.title])) {
+                fetched.isFollowed = true
+            }
+            appState.cacheAppDetail(fetched)
+            loadedApp = appState.cachedAppDetail(id: fetched.id) ?? fetched
+        }
+        let targetCommentID = (loadedApp?.id.isEmpty == false && loadedApp?.id != "0") ? loadedApp!.id : effectiveCommentAppID
+        let loadedComments = (try? await API.appComments(id: targetCommentID, page: 1, listType: sortMode)) ?? []
         withAnimation(.smooth(duration: 0.24)) {
             if let loadedApp { app = loadedApp }
             comments = loadedComments
@@ -1521,8 +1611,17 @@ public struct AppDetailView: View {
             hasLoaded = true
         }
         page = 1
-        comments = (try? await API.appComments(id: appID, page: 1, listType: sortMode)) ?? []
-        hasMore = !comments.isEmpty
+        hasMore = true
+        let targetID = effectiveCommentAppID
+        do {
+            let fetched = try await API.appComments(id: targetID, page: 1, listType: sortMode)
+            withAnimation(.snappy(duration: 0.22)) {
+                comments = fetched
+            }
+            hasMore = !fetched.isEmpty
+        } catch {
+            _ = await appState.handleAPIError(error)
+        }
     }
 
     private func loadMore() async {
@@ -1530,7 +1629,8 @@ public struct AppDetailView: View {
         isLoadingMore = true
         defer { isLoadingMore = false }
         let next = page + 1
-        if let fetched = try? await API.appComments(id: appID, page: next, listType: sortMode) {
+        let targetID = effectiveCommentAppID
+        if let fetched = try? await API.appComments(id: targetID, page: next, listType: sortMode) {
             var seen = Set(comments.map(\.id))
             let unique = fetched.filter { seen.insert($0.id).inserted }
             comments.append(contentsOf: unique)
@@ -1545,6 +1645,7 @@ public struct AppDetailView: View {
         isTogglingFollow = true
         defer { isTogglingFollow = false }
         let next = !current.isFollowed
+        let prevCount = current.followNum
         let targetID = (!current.id.isEmpty && current.id != "0") ? current.id : appID
         withAnimation(.snappy(duration: 0.2)) {
             app?.isFollowed = next
@@ -1557,19 +1658,35 @@ public struct AppDetailView: View {
         do {
             try await API.followApp(id: targetID, follow: next)
             if let updated = app {
-                appState.cacheAppDetail(updated)
+                appState.cacheAppDetail(updated, explicitFollowChange: true)
             }
             appState.showToast(next ? "已关注应用" : "已取消关注")
         } catch {
-            withAnimation(.snappy(duration: 0.2)) {
-                app?.isFollowed = !next
-                if next, (app?.followNum ?? 0) > 0 {
-                    app?.followNum -= 1
-                } else if !next {
-                    app?.followNum += 1
+            let msg = error.localizedDescription
+            if next && (msg.contains("已经关注") || msg.contains("不能重复") || msg.contains("已关注")) {
+                withAnimation(.snappy(duration: 0.2)) {
+                    app?.isFollowed = true
+                    app?.followNum = prevCount
                 }
+                if let updated = app {
+                    appState.cacheAppDetail(updated, explicitFollowChange: true)
+                }
+                appState.showToast("已关注应用")
+            } else if !next && (msg.contains("未关注") || msg.contains("还没有关注")) {
+                withAnimation(.snappy(duration: 0.2)) {
+                    app?.isFollowed = false
+                    app?.followNum = prevCount
+                }
+                if let updated = app {
+                    appState.cacheAppDetail(updated, explicitFollowChange: true)
+                }
+            } else {
+                withAnimation(.snappy(duration: 0.2)) {
+                    app?.isFollowed = !next
+                    app?.followNum = prevCount
+                }
+                _ = await appState.handleAPIError(error)
             }
-            _ = await appState.handleAPIError(error)
         }
     }
 }
@@ -1713,9 +1830,15 @@ public struct DyhDetailView: View {
         page = 1
         async let detailTask = try? API.dyhDetail(id: dyhID)
         async let rowsTask = (try? API.dyhArticles(id: dyhID, page: 1)) ?? []
-        let loadedDyh = await detailTask
+        var loadedDyh = await detailTask
         let loadedRows = await rowsTask
-        if let loadedDyh { appState.cacheDyhDetail(loadedDyh) }
+        if var fetched = loadedDyh {
+            if !fetched.isFollowed && (dyh?.isFollowed == true || appState.isEntityKnownFollowed(kind: "dyh", keys: [dyhID, fetched.id, fetched.title])) {
+                fetched.isFollowed = true
+            }
+            appState.cacheDyhDetail(fetched)
+            loadedDyh = appState.cachedDyhDetail(id: fetched.id) ?? fetched
+        }
         withAnimation(.smooth(duration: 0.24)) {
             if let loadedDyh { dyh = loadedDyh }
             rows = loadedRows
@@ -1755,19 +1878,37 @@ public struct DyhDetailView: View {
         do {
             try await API.followDyh(id: targetID, follow: next)
             if let updated = dyh {
-                appState.cacheDyhDetail(updated)
+                appState.cacheDyhDetail(updated, explicitFollowChange: true)
             }
             appState.showToast(next ? "已订阅" : "已取消订阅")
         } catch {
-            withAnimation(.snappy(duration: 0.2)) {
-                dyh?.isFollowed = !next
-                if next, (dyh?.followNum ?? 0) > 0 {
-                    dyh?.followNum -= 1
-                } else if !next {
-                    dyh?.followNum += 1
+            let msg = error.localizedDescription
+            if next && (msg.contains("已经关注") || msg.contains("不能重复") || msg.contains("已关注") || msg.contains("已订阅")) {
+                withAnimation(.snappy(duration: 0.2)) {
+                    dyh?.isFollowed = true
                 }
+                if let updated = dyh {
+                    appState.cacheDyhDetail(updated, explicitFollowChange: true)
+                }
+                appState.showToast("已订阅")
+            } else if !next && (msg.contains("未关注") || msg.contains("还没有关注") || msg.contains("未订阅")) {
+                withAnimation(.snappy(duration: 0.2)) {
+                    dyh?.isFollowed = false
+                }
+                if let updated = dyh {
+                    appState.cacheDyhDetail(updated, explicitFollowChange: true)
+                }
+            } else {
+                withAnimation(.snappy(duration: 0.2)) {
+                    dyh?.isFollowed = !next
+                    if next, (dyh?.followNum ?? 0) > 0 {
+                        dyh?.followNum -= 1
+                    } else if !next {
+                        dyh?.followNum += 1
+                    }
+                }
+                _ = await appState.handleAPIError(error)
             }
-            _ = await appState.handleAPIError(error)
         }
     }
 }
@@ -1989,7 +2130,7 @@ public struct CollectionDetailView: View {
                         ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
                             Group {
                                 if case let .feed(feed) = row {
-                                    let alsoInLocal = localMap[feed.id] != nil
+                                    let alsoInLocal = localMap[feed.id] != nil || appState.historyAndFav.isLocallyFavorited(id: feed.id)
                                     FeedRowView(
                                         feed: feed,
                                         originBadgeIsCloud: true,
@@ -2076,9 +2217,15 @@ public struct CollectionDetailView: View {
         page = 1
         async let detailTask = try? API.collectionDetail(id: collectionID)
         async let itemsTask = (try? API.collectionItems(id: collectionID, page: 1)) ?? []
-        let loadedCol = await detailTask
+        var loadedCol = await detailTask
         let loadedItems = await itemsTask
-        if let loadedCol { appState.cacheCollectionDetail(loadedCol) }
+        if var fetched = loadedCol {
+            if !fetched.isFollowed && (collection?.isFollowed == true || appState.isEntityKnownFollowed(kind: "collection", keys: [collectionID, fetched.id, fetched.title])) {
+                fetched.isFollowed = true
+            }
+            appState.cacheCollectionDetail(fetched)
+            loadedCol = appState.cachedCollectionDetail(id: fetched.id) ?? fetched
+        }
         withAnimation(.smooth(duration: 0.24)) {
             if let loadedCol { collection = loadedCol }
             rows = loadedItems
@@ -2106,13 +2253,39 @@ public struct CollectionDetailView: View {
         isTogglingFollow = true
         defer { isTogglingFollow = false }
         let next = !current.isFollowed
+        let prevCount = current.followNum
         collection?.isFollowed = next
+        if next {
+            collection?.followNum += 1
+        } else if (collection?.followNum ?? 0) > 0 {
+            collection?.followNum -= 1
+        }
         do {
             try await API.followCollection(id: collectionID, follow: next)
+            if let updated = collection {
+                appState.cacheCollectionDetail(updated, explicitFollowChange: true)
+            }
             appState.showToast(next ? "已关注收藏夹" : "已取消关注")
         } catch {
-            collection?.isFollowed = !next
-            _ = await appState.handleAPIError(error)
+            let msg = error.localizedDescription
+            if next && (msg.contains("已经关注") || msg.contains("不能重复") || msg.contains("已关注")) {
+                collection?.isFollowed = true
+                collection?.followNum = prevCount
+                if let updated = collection {
+                    appState.cacheCollectionDetail(updated, explicitFollowChange: true)
+                }
+                appState.showToast("已关注收藏夹")
+            } else if !next && (msg.contains("未关注") || msg.contains("还没有关注")) {
+                collection?.isFollowed = false
+                collection?.followNum = prevCount
+                if let updated = collection {
+                    appState.cacheCollectionDetail(updated, explicitFollowChange: true)
+                }
+            } else {
+                collection?.isFollowed = !next
+                collection?.followNum = prevCount
+                _ = await appState.handleAPIError(error)
+            }
         }
     }
 }

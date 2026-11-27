@@ -49,12 +49,13 @@ public struct CollectionPickerSheet: View {
 
                 Section("本机收藏夹") {
                     ForEach(appState.historyAndFav.folders.filter { !$0.isCloudLinked }) { folder in
+                        let selected = appState.historyAndFav.isLocallyFavorited(feedID: feed.id, inLocalFolderID: folder.id)
                         folderRow(
                             id: folder.id,
                             title: folder.title,
                             subtitle: "\(appState.historyAndFav.count(inFolder: folder.id)) 条动态",
                             isCloud: false,
-                            isSelected: appState.historyAndFav.isFavorited(feedID: feed.id, inFolder: folder.id)
+                            isSelected: selected
                         ) {
                             saveToFolder(id: folder.id, title: folder.title, isCloudFolder: false)
                         }
@@ -76,8 +77,19 @@ public struct CollectionPickerSheet: View {
                                 .foregroundStyle(.secondary)
                         } else {
                             ForEach(cloudCollections) { col in
-                                let selectedLocally = appState.historyAndFav.isFavorited(feedID: feed.id, inFolder: col.id)
-                                let selected = col.isBeCollected || selectedLocally
+                                let selected: Bool = {
+                                    if isCloudWriteEnabled {
+                                        return appState.historyAndFav.isCloudFavorited(feedID: feed.id, inCloudCollection: col)
+                                    } else {
+                                        let norm = HistoryAndFavStore.normalizedFolderTitle(col.title)
+                                        if let matchingLocal = appState.historyAndFav.folders.first(where: {
+                                            !$0.isCloudLinked && HistoryAndFavStore.normalizedFolderTitle($0.title) == norm
+                                        }) {
+                                            return appState.historyAndFav.isLocallyFavorited(feedID: feed.id, inLocalFolderID: matchingLocal.id)
+                                        }
+                                        return false
+                                    }
+                                }()
                                 folderRow(
                                     id: col.id,
                                     title: col.title,
@@ -175,7 +187,14 @@ public struct CollectionPickerSheet: View {
     }
 
     private func saveToFolder(id: String, title: String, isCloudFolder: Bool) {
-        if isCloudWriteEnabled && isCloudFolder {
+        if !isCloudFolder {
+            appState.historyAndFav.saveFavorite(feed, folderID: id, folderTitle: title, isCloudSynced: false)
+            appState.showToast("已保存到本机「\(title)」")
+            dismiss()
+            return
+        }
+
+        if isCloudWriteEnabled {
             isSaving = true
             Task {
                 defer { isSaving = false }
@@ -189,8 +208,9 @@ public struct CollectionPickerSheet: View {
                 }
             }
         } else {
-            appState.historyAndFav.saveFavorite(feed, folderID: id, folderTitle: title, isCloudSynced: false)
-            appState.showToast("已保存到本机「\(title)」")
+            let localFolder = appState.historyAndFav.createFolder(title: title, linkedCloudID: nil)
+            appState.historyAndFav.saveFavorite(feed, folderID: localFolder.id, folderTitle: localFolder.title, isCloudSynced: false)
+            appState.showToast("已保存到本机「\(localFolder.title)」")
             dismiss()
         }
     }

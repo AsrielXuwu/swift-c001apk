@@ -484,11 +484,46 @@ public enum API: Sendable {
             if !eventEntities.isEmpty && eventEntities.count == entities.count {
                 return titled(eventEntities.map { HomeFeedRow.event(EventItem(json: $0)) })
             }
-            let products = entities
-                .filter { !$0.logo.string.isEmpty || $0.price_min.exists }
-                .map { ProductItem(json: $0) }
-            if let only = products.first, products.count == 1 { return titled([.product(only)]) }
-            if !products.isEmpty { return titled(products.prefix(8).map { HomeFeedRow.product($0) }) }
+            let topicEntities = entities.filter {
+                $0.entityType.string == "topic" || $0.entityTemplate.string == "topicCard" || $0.url.string.hasPrefix("/t/")
+            }
+            if !topicEntities.isEmpty && topicEntities.count == entities.count {
+                return titled(topicEntities.map { HomeFeedRow.topic(TopicItem(json: $0)) })
+            }
+            let apkEntities = entities.filter {
+                $0.entityType.string == "apk" || $0.url.string.hasPrefix("/apk/") || $0.url.string.hasPrefix("/game/")
+            }
+            if !apkEntities.isEmpty && apkEntities.count == entities.count {
+                return titled(apkEntities.map { HomeFeedRow.app(AppItem(json: $0)) })
+            }
+            let dyhEntities = entities.filter {
+                $0.entityType.string == "dyh" || $0.url.string.hasPrefix("/dyh/")
+            }
+            if !dyhEntities.isEmpty && dyhEntities.count == entities.count {
+                return titled(dyhEntities.map { HomeFeedRow.dyh(DyhItem(json: $0)) })
+            }
+            let colEntities = entities.filter {
+                $0.entityType.string == "collection" || $0.url.string.hasPrefix("/collection/")
+            }
+            if !colEntities.isEmpty && colEntities.count == entities.count {
+                return titled(colEntities.map { HomeFeedRow.collection(CollectionItem(json: $0)) })
+            }
+            let productEntities = entities.filter {
+                $0.entityType.string == "product" || $0.url.string.hasPrefix("/product/") || $0.price_min.exists
+            }
+            if !productEntities.isEmpty {
+                let products = productEntities.map { ProductItem(json: $0) }
+                if let only = products.first, products.count == 1 { return titled([.product(only)]) }
+                return titled(products.prefix(8).map { HomeFeedRow.product($0) })
+            }
+            if entities.count == 1, let only = entities.first {
+                if !only.logo.string.isEmpty && (only.follow_num.int > 0 || only.follownum.int > 0 || only.commentnum.int > 0 || only.feed_num.int > 0) {
+                    if only.url.string.contains("/product/") || only.entityType.string == "product" {
+                        return titled([.product(ProductItem(json: only))])
+                    }
+                    return titled([.topic(TopicItem(json: only))])
+                }
+            }
         }
 
         if template == "iconButtonGridCard" {
@@ -512,9 +547,42 @@ public enum API: Sendable {
         }
 
         if iconCardTemplates.contains(template) {
-            let links = entities.enumerated().map { offset, entity in
+            if entities.count == 1, let only = entities.first {
+                let eType = only.entityType.string.lowercased()
+                let eUrl = only.url.string
+                if eType == "topic" || only.entityTemplate.string == "topicCard" || eUrl.hasPrefix("/t/") {
+                    let topic = TopicItem(json: only)
+                    if !topic.title.isEmpty && (!topic.logo.isEmpty || topic.followNum > 0 || topic.feedNum > 0) {
+                        return titled([.topic(topic)])
+                    }
+                } else if eType == "product" || eUrl.hasPrefix("/product/") {
+                    let prod = ProductItem(json: only)
+                    if !prod.title.isEmpty && !prod.logo.isEmpty {
+                        return titled([.product(prod)])
+                    }
+                } else if eType == "apk" || eUrl.hasPrefix("/apk/") || eUrl.hasPrefix("/game/") {
+                    let app = AppItem(json: only)
+                    if !app.title.isEmpty && !app.logo.isEmpty {
+                        return titled([.app(app)])
+                    }
+                } else if eType == "dyh" || eUrl.hasPrefix("/dyh/") {
+                    let dyh = DyhItem(json: only)
+                    if !dyh.title.isEmpty && !dyh.logo.isEmpty {
+                        return titled([.dyh(dyh)])
+                    }
+                } else if eType == "collection" || eUrl.hasPrefix("/collection/") {
+                    let col = CollectionItem(json: only)
+                    if !col.title.isEmpty {
+                        return titled([.collection(col)])
+                    }
+                }
+            }
+            var links = entities.enumerated().map { offset, entity in
                 iconLink(from: entity, parentCard: item, keyPrefix: "icon-\(index)-\(offset)")
             }.filter { !$0.image.isEmpty || !$0.title.isEmpty }
+            if links.isEmpty && (!item.pic.string.isEmpty || !item.logo.string.isEmpty) {
+                links = [iconLink(from: item, parentCard: .null, keyPrefix: "icon-self-\(index)")]
+            }
             if links.isEmpty { return [] }
             if links.allSatisfy({ $0.image.isEmpty }) {
                 let sections = links.map { HomeSection(id: $0.id, title: $0.title, subtitle: $0.subtitle, url: $0.url, style: "") }
@@ -610,10 +678,66 @@ public enum API: Sendable {
             }
             return title.isEmpty ? [] : [.sectionTitle(key: "\(index)", title: title, url: moreURL, subtitle: "")]
 
+        case "imageCard", "imageScaleCard", "singleImageCard", "imageSquareScrollCard", "imageTextGridCard":
+            var sections = entities.enumerated().map { offset, entity in
+                HomeSection(
+                    id: "imgsec-\(index)-\(offset)-\(entity.entityId.identifier)",
+                    title: entity.title.string,
+                    subtitle: entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string,
+                    url: resolveSectionURL(for: entity, parentCard: item, isLinkBar: false),
+                    style: !entity.pic.string.isEmpty ? entity.pic.string : entity.logo.string
+                )
+            }.filter { !$0.style.isEmpty || !$0.title.isEmpty }
+            if sections.isEmpty && (!item.pic.string.isEmpty || !item.logo.string.isEmpty) {
+                sections = [
+                    HomeSection(
+                        id: "imgsec-self-\(index)",
+                        title: item.title.string,
+                        subtitle: item.sub_title.string.isEmpty ? item.description.string : item.sub_title.string,
+                        url: resolveSectionURL(for: item, parentCard: .null, isLinkBar: false),
+                        style: !item.pic.string.isEmpty ? item.pic.string : item.logo.string
+                    )
+                ]
+            }
+            return sections.isEmpty ? [] : [.sections("sections-\(index)", sections)]
+
         default:
-            let links = entities.enumerated().map { offset, entity in
+            if entities.count == 1, let only = entities.first {
+                let eType = only.entityType.string.lowercased()
+                let eUrl = only.url.string
+                if eType == "topic" || only.entityTemplate.string == "topicCard" || eUrl.hasPrefix("/t/") {
+                    let topic = TopicItem(json: only)
+                    if !topic.title.isEmpty && (!topic.logo.isEmpty || topic.followNum > 0 || topic.feedNum > 0) {
+                        return titled([.topic(topic)])
+                    }
+                } else if eType == "product" || eUrl.hasPrefix("/product/") {
+                    let prod = ProductItem(json: only)
+                    if !prod.title.isEmpty && !prod.logo.isEmpty {
+                        return titled([.product(prod)])
+                    }
+                } else if eType == "apk" || eUrl.hasPrefix("/apk/") || eUrl.hasPrefix("/game/") {
+                    let app = AppItem(json: only)
+                    if !app.title.isEmpty && !app.logo.isEmpty {
+                        return titled([.app(app)])
+                    }
+                } else if eType == "dyh" || eUrl.hasPrefix("/dyh/") {
+                    let dyh = DyhItem(json: only)
+                    if !dyh.title.isEmpty && !dyh.logo.isEmpty {
+                        return titled([.dyh(dyh)])
+                    }
+                } else if eType == "collection" || eUrl.hasPrefix("/collection/") {
+                    let col = CollectionItem(json: only)
+                    if !col.title.isEmpty {
+                        return titled([.collection(col)])
+                    }
+                }
+            }
+            var links = entities.enumerated().map { offset, entity in
                 iconLink(from: entity, parentCard: item, keyPrefix: "def-\(index)-\(offset)")
             }.filter { !$0.image.isEmpty || !$0.title.isEmpty }
+            if links.isEmpty && (!item.pic.string.isEmpty || !item.logo.string.isEmpty) {
+                links = [iconLink(from: item, parentCard: .null, keyPrefix: "def-self-\(index)")]
+            }
             if !links.isEmpty {
                 if links.allSatisfy({ $0.image.isEmpty }) {
                     let sections = links.map { HomeSection(id: $0.id, title: $0.title, subtitle: $0.subtitle, url: $0.url, style: "") }
@@ -1202,17 +1326,38 @@ public enum API: Sendable {
     }
 
     public static func appDetail(id: String) async throws -> AppItem {
-        let json = try await client.get("/v6/apk/detail", ["id": id, "installed": "0"])
+        let json = try await client.get("/v6/apk/detail", ["id": id, "installed": "1"])
         return AppItem(json: json.data)
     }
 
     public static func appComments(id: String, page: Int, listType: String = "") async throws -> [HomeFeedRow] {
-        var extra: [String: String] = [:]
-        if !listType.isEmpty {
-            extra["listType"] = listType
+        let sortQuery: String
+        let titleText: String
+        switch listType {
+        case "dateline_desc":
+            sortQuery = "&sort=dateline_desc"
+            titleText = "最新发布"
+        case "popular", "hot":
+            sortQuery = "&sort=popular"
+            titleText = "热度排序"
+        default:
+            sortQuery = ""
+            titleText = "最近回复"
         }
-        let items = try await client.dataList(url: "#/feed/apkCommentList?isIncludeTop=1&id=\(id)&subTitle=", page: page, extra: extra)
-        return rows(from: items)
+        let items = try await client.dataList(
+            url: "/feed/apkCommentList?isIncludeTop=1&id=\(id)&subTitle=\(sortQuery)",
+            page: page,
+            extra: ["title": titleText]
+        )
+        let parsedRows = rows(from: items)
+        return parsedRows.filter { row in
+            switch row {
+            case .linkBar, .linkList, .columnTabs, .sectionTitle:
+                return false
+            default:
+                return true
+            }
+        }
     }
 
     private static func expandListEntities(from items: [JSON]) -> [JSON] {
@@ -1493,6 +1638,66 @@ public enum API: Sendable {
                 }
             }
         }
+        return items
+    }
+
+    public static func followedCollections(uid: String? = nil, page: Int = 1) async throws -> [CollectionItem] {
+        let sessionUID = await client.sessionSnapshot().uid
+        let trimmedUID = (uid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedUID = trimmedUID.isEmpty ? sessionUID : trimmedUID
+
+        func parseFollowedCollections(from rawArray: [JSON]) -> [CollectionItem] {
+            let expanded = expandListEntities(from: rawArray)
+            var seen = Set<String>()
+            var result: [CollectionItem] = []
+            for raw in expanded {
+                let eType = raw.entityType.string.lowercased()
+                if eType == "card" || raw.entityTemplate.string == "iconMiniLinkGridCard" {
+                    continue
+                }
+                var col = CollectionItem(json: raw)
+                if !col.id.isEmpty && !col.title.isEmpty && seen.insert(col.id).inserted {
+                    col.isFollowed = true
+                    result.append(col)
+                }
+            }
+            return result
+        }
+
+        var items: [CollectionItem] = []
+
+        if let dataListItems = try? await client.dataList(
+            url: "#/collection/followList",
+            page: page,
+            extra: ["title": "我关注的收藏夹"]
+        ) {
+            items = parseFollowedCollections(from: dataListItems)
+        }
+
+        if items.isEmpty,
+           let directJSON = try? await client.get("/v6/collection/followList", ["page": String(page)]) {
+            let arr = !directJSON.data.array.isEmpty ? directJSON.data.array : directJSON.data.entities.array
+            items = parseFollowedCollections(from: arr)
+        }
+
+        if items.isEmpty,
+           !resolvedUID.isEmpty,
+           let userFollowItems = try? await client.dataList(
+               url: "#/user/followCollectionList?uid=\(resolvedUID)",
+               page: page,
+               extra: ["title": "关注的收藏夹"]
+           ) {
+            items = parseFollowedCollections(from: userFollowItems)
+        }
+
+        if items.isEmpty,
+           let fallbackJSON = try? await client.get("/v6/user/followCollectionList", [
+               "uid": resolvedUID,
+               "page": String(page)
+           ]) {
+            items = parseFollowedCollections(from: fallbackJSON.data.array)
+        }
+
         return items
     }
 

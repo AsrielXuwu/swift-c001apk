@@ -343,35 +343,140 @@ struct BannerCarouselView: View {
     }
 }
 
+struct SingleImageLinkCardView: View {
+    let imageURL: String
+    let title: String
+    let subtitle: String
+    let targetURL: String
+
+    @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var detectedRatio: CGFloat?
+    @State private var transitionSeed = UUID().uuidString
+
+    private var effectiveAspectRatio: CGFloat {
+        let raw = detectedRatio ?? MediaGridView.inferredAspectRatio(from: imageURL) ?? 2.2
+        return max(0.5, min(raw, 5.0))
+    }
+
+    var body: some View {
+        let tid = "singleimg-\(transitionSeed)"
+        Button {
+            if !targetURL.isEmpty {
+                appState.openRawLink(targetURL, title: title, transitionID: tid)
+            }
+        } label: {
+            Color(.secondarySystemGroupedBackground)
+                .aspectRatio(effectiveAspectRatio, contentMode: .fit)
+                .frame(maxWidth: .infinity)
+                .overlay {
+                    RemoteImageView(url: imageURL, maxPixelSize: 1200, contentMode: .fit) { size in
+                        guard size.width > 0, size.height > 0 else { return }
+                        let ratio = size.width / size.height
+                        if let existing = detectedRatio, abs(existing - ratio) < 0.01 { return }
+                        detectedRatio = ratio
+                    }
+                }
+                .clipped()
+                .overlay(alignment: .bottomLeading) {
+                    if !title.isEmpty || !subtitle.isEmpty {
+                        ZStack(alignment: .bottomLeading) {
+                            LinearGradient(
+                                colors: [.clear, .black.opacity(0.72)],
+                                startPoint: .center,
+                                endPoint: .bottom
+                            )
+                            VStack(alignment: .leading, spacing: 2) {
+                                if !title.isEmpty {
+                                    Text(title)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(.white)
+                                        .lineLimit(2)
+                                }
+                                if !subtitle.isEmpty {
+                                    Text(subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.white.opacity(0.86))
+                                        .lineLimit(1)
+                                }
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                        }
+                        .allowsHitTesting(false)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.4)
+                }
+                .applyZoomSource(id: tid, in: zoomNamespace, cornerRadius: 20)
+                .padding(.horizontal, 12)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 struct IconLinksScrollView: View {
     let links: [HomeIconLink]
     @Environment(AppState.self) private var appState
+    @State private var detectedRatios: [String: CGFloat] = [:]
+
+    private func aspectRatio(for link: HomeIconLink) -> CGFloat {
+        let raw = detectedRatios[link.id]
+            ?? MediaGridView.inferredAspectRatio(from: link.image)
+            ?? 1.0
+        return max(1.0, min(raw, 2.8))
+    }
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 16) {
-                ForEach(links) { link in
-                    Button {
-                        if !link.url.isEmpty { appState.openRawLink(link.url, title: link.title) }
-                    } label: {
-                        VStack(spacing: 6) {
-                            RemoteImageView(url: link.image, maxPixelSize: 132)
-                                .frame(width: 44, height: 44)
+        if links.count == 1, let single = links.first, !single.image.isEmpty {
+            SingleImageLinkCardView(
+                imageURL: single.image,
+                title: single.title,
+                subtitle: single.subtitle,
+                targetURL: single.url
+            )
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 14) {
+                    ForEach(links) { link in
+                        let ratio = aspectRatio(for: link)
+                        let iconHeight: CGFloat = 44
+                        let iconWidth: CGFloat = round(iconHeight * ratio)
+                        let labelWidth: CGFloat = max(58, iconWidth)
+                        Button {
+                            if !link.url.isEmpty { appState.openRawLink(link.url, title: link.title) }
+                        } label: {
+                            VStack(spacing: 6) {
+                                RemoteImageView(url: link.image, maxPixelSize: 260, contentMode: .fit) { size in
+                                    guard size.width > 0, size.height > 0 else { return }
+                                    let r = size.width / size.height
+                                    if let existing = detectedRatios[link.id], abs(existing - r) < 0.02 { return }
+                                    detectedRatios[link.id] = r
+                                }
+                                .frame(width: iconWidth, height: iconHeight)
                                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            Text(link.title)
-                                .font(.caption)
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                                .frame(width: 58)
+
+                                if !link.title.isEmpty {
+                                    Text(link.title)
+                                        .font(.caption)
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                        .frame(width: labelWidth)
+                                }
+                            }
                         }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .scrollClipDisabled()
         }
-        .scrollClipDisabled()
     }
 }
 
@@ -416,6 +521,13 @@ struct ImageTextSectionsView: View {
     var body: some View {
         if sections.isEmpty {
             EmptyView()
+        } else if sections.count == 1, let single = sections.first, !single.style.isEmpty {
+            SingleImageLinkCardView(
+                imageURL: single.style,
+                title: single.title,
+                subtitle: single.subtitle,
+                targetURL: single.url
+            )
         } else {
             let count = sections.count
             let visibleLayers = min(count, 3)
@@ -869,6 +981,7 @@ public struct TopicRowView: View {
 public struct UserRowView: View {
     public let user: UserBrief
     public var originBadgeIsCloud: Bool? = nil
+    public var showBothOriginBadges: Bool = false
     public var contextDeleteTitle: String? = nil
     public var onContextDelete: (() -> Void)? = nil
     @Environment(AppState.self) private var appState
@@ -878,11 +991,13 @@ public struct UserRowView: View {
     public init(
         user: UserBrief,
         originBadgeIsCloud: Bool? = nil,
+        showBothOriginBadges: Bool = false,
         contextDeleteTitle: String? = nil,
         onContextDelete: (() -> Void)? = nil
     ) {
         self.user = user
         self.originBadgeIsCloud = originBadgeIsCloud
+        self.showBothOriginBadges = showBothOriginBadges
         self.contextDeleteTitle = contextDeleteTitle
         self.onContextDelete = onContextDelete
     }
@@ -921,7 +1036,12 @@ public struct UserRowView: View {
                         .lineLimit(1)
                 }
                 Spacer()
-                if let originBadgeIsCloud {
+                if showBothOriginBadges {
+                    HStack(spacing: 4) {
+                        SourceOriginBadge(isCloud: false)
+                        SourceOriginBadge(isCloud: true)
+                    }
+                } else if let originBadgeIsCloud {
                     SourceOriginBadge(isCloud: originBadgeIsCloud)
                 }
                 Image(systemName: "chevron.right")

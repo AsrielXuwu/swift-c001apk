@@ -203,6 +203,12 @@ public struct ChatThreadView: View {
     private var activeBottomSlotHeight: CGFloat {
         let kbOverlap = currentKeyboardOverlap
         if showEmojiPanel || isHoldingSlotForKeyboard {
+            if showEmojiPanel && kbOverlap > 40 {
+                return 202 + kbOverlap
+            }
+            if showEmojiPanel && currentSystemLift > 40 {
+                return 202
+            }
             let targetLift = max(256, lastKnownKeyboardLift)
             let needed = max(0, targetLift - currentSystemLift)
             return max(kbOverlap, needed)
@@ -713,9 +719,12 @@ public struct ChatThreadView: View {
             .padding(.bottom, 8)
 
             if slotHeight > 0 {
-                ZStack(alignment: .top) {
+                let kbOverlap = currentKeyboardOverlap
+                let isEmojiKeyboardActive = showEmojiPanel && (kbOverlap > 40 || currentSystemLift > 40)
+                let pickerHeight: CGFloat = isEmojiKeyboardActive ? 196 : max(252, slotHeight - 6)
+                VStack(spacing: 0) {
                     if showEmojiPanel || isHoldingSlotForKeyboard {
-                        EmojiPickerView(height: max(252, slotHeight - 6)) { name in
+                        EmojiPickerView(height: pickerHeight) { name in
                             draftText += name
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
@@ -724,11 +733,17 @@ public struct ChatThreadView: View {
                                 .strokeBorder(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.06), lineWidth: 0.5)
                         }
                         .padding(.bottom, 6)
+
+                        if showEmojiPanel && kbOverlap > 40 {
+                            Color.clear
+                                .frame(height: kbOverlap)
+                        }
                     } else {
                         Color.clear
+                            .frame(height: slotHeight)
                     }
                 }
-                .frame(height: slotHeight)
+                .frame(height: slotHeight, alignment: .top)
                 .clipped()
             }
         }

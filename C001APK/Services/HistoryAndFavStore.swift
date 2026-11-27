@@ -111,10 +111,14 @@ public struct HistoryAndFavoritesBackup: Codable, Sendable {
 @Observable
 public final class HistoryAndFavStore {
     nonisolated public static let defaultFolderID = "local-default"
-    nonisolated public static let defaultFolderTitle = "默认本机收藏"
+    nonisolated public static let defaultFolderTitle = "默认收藏夹"
 
     nonisolated public static func normalizedFolderTitle(_ title: String) -> String {
-        title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if trimmed == "默认本机收藏" || trimmed == "默认本机收藏夹" || trimmed == "默认收藏夹" || trimmed == "默认收藏" {
+            return "默认收藏夹"
+        }
+        return trimmed
     }
 
     private let defaults = UserDefaults.standard
@@ -148,10 +152,16 @@ public final class HistoryAndFavStore {
             cachedCloudEntries = decoded.entries
         }
         ensureDefaultFolderExists()
+        deduplicateLocalFoldersIfNeeded()
     }
 
     private func ensureDefaultFolderExists() {
-        if !folders.contains(where: { $0.id == Self.defaultFolderID }) {
+        if let idx = folders.firstIndex(where: { $0.id == Self.defaultFolderID }) {
+            if folders[idx].title == "默认本机收藏" {
+                folders[idx].title = Self.defaultFolderTitle
+                persistFolders()
+            }
+        } else {
             folders.insert(
                 LocalCollectionFolder(
                     id: Self.defaultFolderID,
@@ -164,21 +174,107 @@ public final class HistoryAndFavStore {
         }
     }
 
+    public func deduplicateLocalFoldersIfNeeded() {
+        var canonicalByNorm: [String: LocalCollectionFolder] = [:]
+        var remapIDs: [String: String] = [:]
+        var keptFolders: [LocalCollectionFolder] = []
+        var didChangeFolders = false
+
+        let sortedCandidates = folders.sorted { lhs, rhs in
+            if lhs.id == Self.defaultFolderID { return true }
+            if rhs.id == Self.defaultFolderID { return false }
+            if !lhs.isCloudLinked && rhs.isCloudLinked { return true }
+            if lhs.isCloudLinked && !rhs.isCloudLinked { return false }
+            let lhsLocalPrefix = lhs.id.hasPrefix("local-")
+            let rhsLocalPrefix = rhs.id.hasPrefix("local-")
+            if lhsLocalPrefix && !rhsLocalPrefix { return true }
+            if !lhsLocalPrefix && rhsLocalPrefix { return false }
+            return lhs.createdAt < rhs.createdAt
+        }
+
+        for candidate in sortedCandidates {
+            let norm = Self.normalizedFolderTitle(candidate.title)
+            guard !norm.isEmpty else { continue }
+            if canonicalByNorm[norm] == nil {
+                var canonical = candidate
+                if canonical.isCloudLinked {
+                    canonical.isCloudLinked = false
+                    didChangeFolders = true
+                }
+                if !canonical.id.hasPrefix("local-") && canonical.id != Self.defaultFolderID {
+                    let oldID = canonical.id
+                    let newID = "local-\(UUID().uuidString)"
+                    canonical = LocalCollectionFolder(
+                        id: newID,
+                        title: canonical.title,
+                        isCloudLinked: false,
+                        createdAt: canonical.createdAt
+                    )
+                    remapIDs[oldID] = newID
+                    didChangeFolders = true
+                }
+                canonicalByNorm[norm] = canonical
+            } else if let canonical = canonicalByNorm[norm] {
+                remapIDs[candidate.id] = canonical.id
+                didChangeFolders = true
+            }
+        }
+
+        var seenCanonicalIDs = Set<String>()
+        for folder in folders {
+            let norm = Self.normalizedFolderTitle(folder.title)
+            if let canonical = canonicalByNorm[norm], seenCanonicalIDs.insert(canonical.id).inserted {
+                keptFolders.append(canonical)
+            } else {
+                didChangeFolders = true
+            }
+        }
+
+        if didChangeFolders {
+            folders = keptFolders
+            persistFolders()
+        }
+
+        var didChangeFavorites = false
+        for i in favorites.indices {
+            if !favorites[i].resolvedIsCloudSynced {
+                let currentFolderID = favorites[i].resolvedCollectionID
+                if let mappedID = remapIDs[currentFolderID] {
+                    favorites[i].collectionID = mappedID
+                    didChangeFavorites = true
+                }
+            }
+        }
+        if didChangeFavorites {
+            var seenFavKeys = Set<String>()
+            var uniqueFavs: [LocalFavoriteEntry] = []
+            for fav in favorites {
+                let key = "\(fav.id)|\(fav.resolvedCollectionID)|\(fav.resolvedIsCloudSynced)"
+                if seenFavKeys.insert(key).inserted {
+                    uniqueFavs.append(fav)
+                }
+            }
+            favorites = uniqueFavs
+            persistFavorites()
+        }
+    }
+
     @discardableResult
     public func createFolder(title: String, linkedCloudID: String? = nil) -> LocalCollectionFolder {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedTitle = trimmed.isEmpty ? "新建收藏夹" : trimmed
-        let folderID = linkedCloudID ?? "local-\(UUID().uuidString)"
-        if let existing = folders.first(where: { $0.id == folderID }) {
-            return existing
-        }
+        let norm = Self.normalizedFolderTitle(resolvedTitle)
         if linkedCloudID == nil,
-           let sameNameIdx = folders.firstIndex(where: { Self.normalizedFolderTitle($0.title) == Self.normalizedFolderTitle(resolvedTitle) }) {
+           let sameNameIdx = folders.firstIndex(where: { Self.normalizedFolderTitle($0.title) == norm }) {
             if folders[sameNameIdx].isCloudLinked {
                 folders[sameNameIdx].isCloudLinked = false
                 persistFolders()
             }
             return folders[sameNameIdx]
+        }
+        let folderID = linkedCloudID ?? "local-\(UUID().uuidString)"
+        if let existing = folders.first(where: { $0.id == folderID }) {
+            return existing
         }
         let created = LocalCollectionFolder(
             id: folderID,
@@ -274,8 +370,31 @@ public final class HistoryAndFavStore {
     }
 
     public func isFavorited(feedID: String, inFolder folderID: String) -> Bool {
-        favorites.contains { $0.id == feedID && $0.resolvedCollectionID == folderID }
-            || cachedCloudEntries.contains { $0.feed.id == feedID && $0.collectionID == folderID }
+        isLocallyFavorited(feedID: feedID, inLocalFolderID: folderID)
+    }
+
+    public func isLocallyFavorited(feedID: String, inLocalFolderID folderID: String) -> Bool {
+        let targetNorm: String? = folders.first(where: { $0.id == folderID }).map { Self.normalizedFolderTitle($0.title) }
+        return favorites.contains { entry in
+            guard entry.id == feedID && !entry.resolvedIsCloudSynced else { return false }
+            if entry.resolvedCollectionID == folderID { return true }
+            if let targetNorm,
+               let entryFolder = folders.first(where: { $0.id == entry.resolvedCollectionID }),
+               Self.normalizedFolderTitle(entryFolder.title) == targetNorm {
+                return true
+            }
+            return false
+        }
+    }
+
+    public func isCloudFavorited(feedID: String, inCloudCollection col: CollectionItem) -> Bool {
+        if col.isBeCollected { return true }
+        if cachedCloudEntries.contains(where: { $0.feed.id == feedID && $0.collectionID == col.id }) {
+            return true
+        }
+        return favorites.contains {
+            $0.id == feedID && $0.resolvedCollectionID == col.id && $0.resolvedIsCloudSynced
+        }
     }
 
     public func favorites(inFolder folderID: String?) -> [LocalFavoriteEntry] {
@@ -284,7 +403,17 @@ public final class HistoryAndFavStore {
     }
 
     public func count(inFolder folderID: String) -> Int {
-        favorites.filter { $0.resolvedCollectionID == folderID && !$0.resolvedIsCloudSynced }.count
+        let targetNorm: String? = folders.first(where: { $0.id == folderID }).map { Self.normalizedFolderTitle($0.title) }
+        return favorites.filter { entry in
+            guard !entry.resolvedIsCloudSynced else { return false }
+            if entry.resolvedCollectionID == folderID { return true }
+            if let targetNorm,
+               let entryFolder = folders.first(where: { $0.id == entry.resolvedCollectionID }),
+               Self.normalizedFolderTitle(entryFolder.title) == targetNorm {
+                return true
+            }
+            return false
+        }.count
     }
 
     public func toggleLocalFavorite(_ feed: FeedItem) {
@@ -308,16 +437,23 @@ public final class HistoryAndFavStore {
             return
         }
         ensureDefaultFolderExists()
-        if !folders.contains(where: { $0.id == folderID }) {
-            folders.append(LocalCollectionFolder(id: folderID, title: folderTitle, isCloudLinked: false))
-            persistFolders()
-        }
+        let resolvedLocalFolder: LocalCollectionFolder = {
+            if let byID = folders.first(where: { $0.id == folderID && ($0.id == Self.defaultFolderID || $0.id.hasPrefix("local-")) && !$0.isCloudLinked }) {
+                return byID
+            }
+            let trimmedTitle = folderTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmedTitle.isEmpty {
+                return createFolder(title: trimmedTitle, linkedCloudID: nil)
+            }
+            return folders.first(where: { $0.id == Self.defaultFolderID })
+                ?? createFolder(title: Self.defaultFolderTitle, linkedCloudID: nil)
+        }()
         favorites.removeAll { $0.id == feed.id && !$0.resolvedIsCloudSynced }
         favorites.insert(
             LocalFavoriteEntry(
                 feed: feed,
-                collectionID: folderID,
-                collectionTitle: folderTitle,
+                collectionID: resolvedLocalFolder.id,
+                collectionTitle: resolvedLocalFolder.title,
                 isCloudSynced: false
             ),
             at: 0

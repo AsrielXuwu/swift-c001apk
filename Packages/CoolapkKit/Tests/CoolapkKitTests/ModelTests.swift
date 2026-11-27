@@ -302,4 +302,68 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(completedFeed.dealStatusText, "交易完成")
         XCTAssertEqual(completedFeed.xianyuURL, "https://m.zhuanzhuan.com/detail/123")
     }
+
+    func testTradeTopicDetectionAndChineseAdjacentPriceAndMultipleURLsAndFollowState() throws {
+        // Item 1.1: Post 75026859 with topic containing "交易" and "6元" followed by Chinese characters
+        let tradeTopicRaw = Data("""
+        {
+          "entityType": "feed",
+          "id": 75026859,
+          "uid": 2001,
+          "username": "交易卖家",
+          "message": "出个小配件，6元一个直接拿走，感兴趣私聊 <a href=\"https://www.bilibili.com/video/BV1xx411c7mD\">演示视频</a> 以及 https://example.com/detail",
+          "relationRows": [
+            {"id": "10", "title": "酷安交易区", "url": "/t/酷安交易区", "entityType": "topic"}
+          ]
+        }
+        """.utf8)
+        let tradeTopicFeed = FeedItem(json: try JSON(data: tradeTopicRaw))
+        XCTAssertTrue(tradeTopicFeed.isSecondHand)
+        XCTAssertEqual(tradeTopicFeed.priceText, "¥6")
+        XCTAssertEqual(tradeTopicFeed.resolvedExtraLinks.count, 2)
+        XCTAssertEqual(tradeTopicFeed.resolvedExtraLinks[0].url, "https://www.bilibili.com/video/BV1xx411c7mD")
+        XCTAssertEqual(tradeTopicFeed.resolvedExtraLinks[1].url, "https://example.com/detail")
+
+        // Item 1.2: Post 75016216 with "50包邮" followed by Chinese characters without spaces
+        let baoyouRaw = Data("""
+        {
+          "entityType": "feed",
+          "id": 75016216,
+          "uid": 2002,
+          "username": "闲置酷友",
+          "message": "整理房间出一根原装线，50包邮非偏远地区，成色几乎全新"
+        }
+        """.utf8)
+        let baoyouFeed = FeedItem(json: try JSON(data: baoyouRaw))
+        XCTAssertTrue(baoyouFeed.isSecondHand)
+        XCTAssertEqual(baoyouFeed.priceText, "¥50")
+
+        // Item 2: Post 75277352 in "到手价" category with price
+        let daoshouRaw = Data("""
+        {
+          "entityType": "feed",
+          "id": 75277352,
+          "uid": 2003,
+          "username": "买机达人",
+          "message": "国补叠加教育优惠，到手价3899元拿下！",
+          "tags": "#到手价#"
+        }
+        """.utf8)
+        let daoshouFeed = FeedItem(json: try JSON(data: daoshouRaw))
+        XCTAssertFalse(daoshouFeed.isSecondHand)
+        XCTAssertTrue(daoshouFeed.hasPriceDisplay)
+        XCTAssertEqual(daoshouFeed.priceText, "¥3899")
+
+        // Item 3: Detail response with userAction.follow == 1 and isFollowed == 0
+        let topicDetailRaw = Data("""
+        {
+          "id": 9001,
+          "title": "SwiftUI",
+          "isFollowed": 0,
+          "userAction": {"follow": 1}
+        }
+        """.utf8)
+        let topicDetail = TopicItem(json: try JSON(data: topicDetailRaw))
+        XCTAssertTrue(topicDetail.isFollowed)
+    }
 }

@@ -470,11 +470,36 @@ public struct UserDetailView: View {
                         }
                 }
             case .following:
-                ForEach(Array(following.enumerated()), id: \.element.id) { idx, user in
-                    UserRowView(user: user)
-                        .onAppear {
-                            if idx >= following.count - 4 { Task { await loadMore(for: .following) } }
+                let isSelf = appState.accounts.isLoggedIn && (appState.accounts.activeUID == uid || appState.currentUserProfile?.id == uid)
+                let cloudUIDs = Set(following.map(\.id))
+                let localOnlyUsers = isSelf ? appState.localFollow.users.filter { !cloudUIDs.contains($0.uid) } : []
+                ForEach(localOnlyUsers) { local in
+                    UserRowView(
+                        user: UserBrief(
+                            id: local.uid,
+                            username: local.username,
+                            avatar: local.avatar,
+                            isFollowed: true,
+                            bio: "UID: \(local.uid)"
+                        ),
+                        originBadgeIsCloud: false,
+                        showBothOriginBadges: false,
+                        contextDeleteTitle: "取消本机关注",
+                        onContextDelete: {
+                            appState.localFollow.unfollow(uid: local.uid)
                         }
+                    )
+                }
+                ForEach(Array(following.enumerated()), id: \.element.id) { idx, user in
+                    let alsoLocal = isSelf && appState.localFollow.isFollowed(uid: user.id)
+                    UserRowView(
+                        user: user,
+                        originBadgeIsCloud: isSelf ? true : nil,
+                        showBothOriginBadges: alsoLocal
+                    )
+                    .onAppear {
+                        if idx >= following.count - 4 { Task { await loadMore(for: .following) } }
+                    }
                 }
             case .fans:
                 ForEach(Array(followers.enumerated()), id: \.element.id) { idx, user in

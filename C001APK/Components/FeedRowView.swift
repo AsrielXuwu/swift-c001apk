@@ -51,7 +51,7 @@ public struct FeedRowView: View {
             if let source = feed.sourceFeed {
                 forwardedQuoteCard(source)
             }
-            if feed.hasPriceDisplay || !feed.extraURL.isEmpty || !feed.xianyuURL.isEmpty {
+            if feed.hasPriceDisplay || !feed.resolvedExtraLinks.isEmpty {
                 SecondHandOrExtraCard(feed: feed)
             }
             if !feed.relationEntities.isEmpty {
@@ -438,7 +438,7 @@ public struct SecondHandOrExtraCard: View {
         VStack(alignment: .leading, spacing: 8) {
             if feed.hasPriceDisplay {
                 HStack(spacing: 8) {
-                    Text(feed.isSecondHand ? "二手交易" : "价格")
+                    Text(feed.isSecondHand ? "交易" : "价格")
                         .font(.caption2.weight(.semibold))
                         .padding(.horizontal, 7)
                         .padding(.vertical, 3)
@@ -480,73 +480,59 @@ public struct SecondHandOrExtraCard: View {
                 }
             }
 
-            let actionURL = !feed.xianyuURL.isEmpty ? feed.xianyuURL : feed.extraURL
-            if !actionURL.isEmpty {
-                let isSpecificXianyu = FeedItem.isSpecificXianyuURL(actionURL)
-                let isTrade = feed.isSecondHand || FeedItem.isXianyuOrTradeURL(actionURL)
-                let platformLabel: String = {
-                    if isSpecificXianyu { return "闲鱼" }
-                    let info = feed.extraInfo.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !info.isEmpty, info.count <= 12, !info.contains("完成") {
-                        return info
-                    }
-                    return "平台"
-                }()
-                Button {
-                    openLink(actionURL, preferSystemApp: isTrade)
-                } label: {
-                    HStack(spacing: 10) {
-                        if !feed.extraPic.isEmpty {
-                            RemoteImageView(url: feed.extraPic, maxPixelSize: 120)
-                                .frame(width: 40, height: 40)
-                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        } else {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill((isTrade ? Color.yellow : Color.accentColor).opacity(0.18))
-                                .frame(width: 40, height: 40)
-                                .overlay {
-                                    Image(systemName: isTrade ? "bag.fill" : "link")
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(isTrade ? Color.orange : Color.accentColor)
+            let links = feed.resolvedExtraLinks
+            if !links.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(links) { link in
+                        let isTrade = link.isTradeLink || feed.isSecondHand || FeedItem.isXianyuOrTradeURL(link.url)
+                        Button {
+                            openLink(link.url, preferSystemApp: isTrade)
+                        } label: {
+                            HStack(spacing: 10) {
+                                if !link.pic.isEmpty {
+                                    RemoteImageView(url: link.pic, maxPixelSize: 120)
+                                        .frame(width: 40, height: 40)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                } else {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill((isTrade ? Color.yellow : Color.accentColor).opacity(0.18))
+                                        .frame(width: 40, height: 40)
+                                        .overlay {
+                                            Image(systemName: isTrade ? "bag.fill" : "link")
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(isTrade ? Color.orange : Color.accentColor)
+                                        }
                                 }
+
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(link.title.isEmpty ? link.url : link.title)
+                                        .font(.subheadline.weight(.medium))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+
+                                    Text(link.subtitle.isEmpty ? link.url : link.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer(minLength: 4)
+
+                                Text("打开")
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 9)
+                                    .padding(.vertical, 5)
+                                    .background((isTrade ? Color.orange : Color.accentColor).opacity(0.14), in: Capsule())
+                                    .foregroundStyle(isTrade ? Color.orange : Color.accentColor)
+                            }
+                            .padding(10)
+                            .c001NestedSurface(cornerRadius: 16)
                         }
-
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(
-                                !feed.extraTitle.isEmpty
-                                    ? feed.extraTitle
-                                    : (isTrade ? "前往\(platformLabel)查看详情" : actionURL)
-                            )
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-
-                            Text(isTrade ? "点击跳转\(platformLabel) · \(actionURL)" : actionURL)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-
-                        Spacer(minLength: 4)
-
-                        Text(isTrade ? "跳转平台" : "打开")
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background((isTrade ? Color.orange : Color.accentColor).opacity(0.14), in: Capsule())
-                            .foregroundStyle(isTrade ? Color.orange : Color.accentColor)
+                        .buttonStyle(.plain)
                     }
-                    .padding(10)
-                    .c001NestedSurface(cornerRadius: 16)
                 }
-                .buttonStyle(.plain)
             }
         }
-        .padding(feed.hasPriceDisplay && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty ? 10 : 0)
-        .modifier(ConditionalNestedSurfaceModifier(
-            enabled: feed.hasPriceDisplay && feed.xianyuURL.isEmpty && feed.extraURL.isEmpty,
-            cornerRadius: 16
-        ))
     }
 
     private func openLink(_ raw: String, preferSystemApp: Bool) {

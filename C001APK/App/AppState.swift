@@ -79,6 +79,7 @@ public final class AppState {
     @ObservationIgnored private var cachedApps: [String: AppItem] = [:]
     @ObservationIgnored private var cachedCollections: [String: CollectionItem] = [:]
     @ObservationIgnored private var cachedDyhs: [String: DyhItem] = [:]
+    @ObservationIgnored private var knownFollowedEntityKeys: Set<String> = []
     @ObservationIgnored private var modalPushStack: [(id: UUID, handler: (AppRoute) -> Void)] = []
 
     private static let readNotificationsDefaultsKey = "c001apk.readNotifications.v1"
@@ -138,55 +139,170 @@ public final class AppState {
         }
     }
 
-    public func cachedTopicDetail(tag: String) -> TopicItem? {
-        let clean = TopicItem.cleanTitle(tag)
-        return cachedTopics[clean] ?? cachedTopics[tag]
+    public func markEntityFollowed(kind: String, keys: [String], isFollowed: Bool) {
+        for raw in keys {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let k = "\(kind):\(trimmed.lowercased())"
+            if isFollowed {
+                knownFollowedEntityKeys.insert(k)
+            } else {
+                knownFollowedEntityKeys.remove(k)
+            }
+        }
     }
 
-    public func cacheTopicDetail(_ topic: TopicItem, forTag tag: String? = nil) {
-        let clean = TopicItem.cleanTitle(topic.title)
-        if !clean.isEmpty {
-            cachedTopics[clean] = topic
+    public func isEntityKnownFollowed(kind: String, keys: [String]) -> Bool {
+        for raw in keys {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            if knownFollowedEntityKeys.contains("\(kind):\(trimmed.lowercased())") {
+                return true
+            }
         }
-        if let tag {
-            cachedTopics[TopicItem.cleanTitle(tag)] = topic
+        return false
+    }
+
+    public func cachedTopicDetail(tag: String) -> TopicItem? {
+        let clean = TopicItem.cleanTitle(tag)
+        if var found = cachedTopics[clean] ?? cachedTopics[tag] {
+            if !found.isFollowed && isEntityKnownFollowed(kind: "topic", keys: [found.id, clean, found.title, tag]) {
+                found.isFollowed = true
+            }
+            return found
+        }
+        return nil
+    }
+
+    public func cacheTopicDetail(_ topic: TopicItem, forTag tag: String? = nil, explicitFollowChange: Bool = false) {
+        let clean = TopicItem.cleanTitle(topic.title)
+        let tagClean = tag.map(TopicItem.cleanTitle) ?? ""
+        let keys = [topic.id, clean, topic.title, tagClean].filter { !$0.isEmpty }
+        var resolved = topic
+        if topic.isFollowed {
+            markEntityFollowed(kind: "topic", keys: keys, isFollowed: true)
+        } else if explicitFollowChange {
+            markEntityFollowed(kind: "topic", keys: keys, isFollowed: false)
+        } else if isEntityKnownFollowed(kind: "topic", keys: keys)
+            || cachedTopics[clean]?.isFollowed == true
+            || (!tagClean.isEmpty && cachedTopics[tagClean]?.isFollowed == true) {
+            resolved.isFollowed = true
+        }
+        if !clean.isEmpty {
+            cachedTopics[clean] = resolved
+        }
+        if !tagClean.isEmpty {
+            cachedTopics[tagClean] = resolved
+        }
+        if !resolved.id.isEmpty {
+            cachedTopics[resolved.id] = resolved
         }
     }
 
     public func cachedProductDetail(id: String) -> ProductItem? {
-        cachedProducts[id]
+        if var found = cachedProducts[id] {
+            if !found.isFollowed && isEntityKnownFollowed(kind: "product", keys: [id, found.id, found.title]) {
+                found.isFollowed = true
+            }
+            return found
+        }
+        return nil
     }
 
-    public func cacheProductDetail(_ product: ProductItem) {
+    public func cacheProductDetail(_ product: ProductItem, explicitFollowChange: Bool = false) {
         guard !product.id.isEmpty else { return }
-        cachedProducts[product.id] = product
+        let keys = [product.id, product.title].filter { !$0.isEmpty }
+        var resolved = product
+        if product.isFollowed {
+            markEntityFollowed(kind: "product", keys: keys, isFollowed: true)
+        } else if explicitFollowChange {
+            markEntityFollowed(kind: "product", keys: keys, isFollowed: false)
+        } else if isEntityKnownFollowed(kind: "product", keys: keys)
+            || cachedProducts[product.id]?.isFollowed == true {
+            resolved.isFollowed = true
+        }
+        cachedProducts[resolved.id] = resolved
     }
 
     public func cachedAppDetail(id: String) -> AppItem? {
-        cachedApps[id]
+        if var found = cachedApps[id] {
+            if !found.isFollowed && isEntityKnownFollowed(kind: "app", keys: [id, found.id, found.packageName, found.title]) {
+                found.isFollowed = true
+            }
+            return found
+        }
+        return nil
     }
 
-    public func cacheAppDetail(_ app: AppItem) {
-        guard !app.id.isEmpty else { return }
-        cachedApps[app.id] = app
+    public func cacheAppDetail(_ app: AppItem, explicitFollowChange: Bool = false) {
+        let keys = [app.id, app.packageName, app.title].filter { !$0.isEmpty }
+        guard !keys.isEmpty else { return }
+        var resolved = app
+        if app.isFollowed {
+            markEntityFollowed(kind: "app", keys: keys, isFollowed: true)
+        } else if explicitFollowChange {
+            markEntityFollowed(kind: "app", keys: keys, isFollowed: false)
+        } else if isEntityKnownFollowed(kind: "app", keys: keys)
+            || (!app.id.isEmpty && cachedApps[app.id]?.isFollowed == true)
+            || (!app.packageName.isEmpty && cachedApps[app.packageName]?.isFollowed == true) {
+            resolved.isFollowed = true
+        }
+        if !resolved.id.isEmpty {
+            cachedApps[resolved.id] = resolved
+        }
+        if !resolved.packageName.isEmpty {
+            cachedApps[resolved.packageName] = resolved
+        }
     }
 
     public func cachedCollectionDetail(id: String) -> CollectionItem? {
-        cachedCollections[id]
+        if var found = cachedCollections[id] {
+            if !found.isFollowed && isEntityKnownFollowed(kind: "collection", keys: [id, found.id, found.title]) {
+                found.isFollowed = true
+            }
+            return found
+        }
+        return nil
     }
 
-    public func cacheCollectionDetail(_ collection: CollectionItem) {
+    public func cacheCollectionDetail(_ collection: CollectionItem, explicitFollowChange: Bool = false) {
         guard !collection.id.isEmpty else { return }
-        cachedCollections[collection.id] = collection
+        let keys = [collection.id, collection.title].filter { !$0.isEmpty }
+        var resolved = collection
+        if collection.isFollowed {
+            markEntityFollowed(kind: "collection", keys: keys, isFollowed: true)
+        } else if explicitFollowChange {
+            markEntityFollowed(kind: "collection", keys: keys, isFollowed: false)
+        } else if isEntityKnownFollowed(kind: "collection", keys: keys)
+            || cachedCollections[collection.id]?.isFollowed == true {
+            resolved.isFollowed = true
+        }
+        cachedCollections[resolved.id] = resolved
     }
 
     public func cachedDyhDetail(id: String) -> DyhItem? {
-        cachedDyhs[id]
+        if var found = cachedDyhs[id] {
+            if !found.isFollowed && isEntityKnownFollowed(kind: "dyh", keys: [id, found.id, found.title]) {
+                found.isFollowed = true
+            }
+            return found
+        }
+        return nil
     }
 
-    public func cacheDyhDetail(_ dyh: DyhItem) {
+    public func cacheDyhDetail(_ dyh: DyhItem, explicitFollowChange: Bool = false) {
         guard !dyh.id.isEmpty else { return }
-        cachedDyhs[dyh.id] = dyh
+        let keys = [dyh.id, dyh.title].filter { !$0.isEmpty }
+        var resolved = dyh
+        if dyh.isFollowed {
+            markEntityFollowed(kind: "dyh", keys: keys, isFollowed: true)
+        } else if explicitFollowChange {
+            markEntityFollowed(kind: "dyh", keys: keys, isFollowed: false)
+        } else if isEntityKnownFollowed(kind: "dyh", keys: keys)
+            || cachedDyhs[dyh.id]?.isFollowed == true {
+            resolved.isFollowed = true
+        }
+        cachedDyhs[resolved.id] = resolved
     }
 
     // MARK: - Message & Notification Read / Unread State

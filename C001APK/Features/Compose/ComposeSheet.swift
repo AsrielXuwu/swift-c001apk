@@ -77,6 +77,9 @@ public struct ComposeSheet: View {
     }
 
     private var activeBottomSlotHeight: CGFloat {
+        if showEmojiPanel && keyboardHeight > 40 {
+            return 202 + keyboardHeight
+        }
         let emojiHeight = (showEmojiPanel || isHoldingSlotForKeyboard) ? max(260, lastKnownKeyboardHeight) : 0
         return max(keyboardHeight, emojiHeight)
     }
@@ -198,9 +201,10 @@ public struct ComposeSheet: View {
     @ViewBuilder
     private func composeBottomEmojiSlot(slotHeight: CGFloat) -> some View {
         let strokeColor = Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.06)
-        ZStack(alignment: .top) {
+        let pickerHeight: CGFloat = (showEmojiPanel && keyboardHeight > 40) ? 196 : max(252, slotHeight - 8)
+        VStack(spacing: 0) {
             if showEmojiPanel || isHoldingSlotForKeyboard {
-                EmojiPickerView(height: max(252, slotHeight - 8)) { name in
+                EmojiPickerView(height: pickerHeight) { name in
                     viewModel.text += name
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
@@ -210,11 +214,17 @@ public struct ComposeSheet: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 6)
+
+                if showEmojiPanel && keyboardHeight > 40 {
+                    Color.clear
+                        .frame(height: keyboardHeight)
+                }
             } else {
                 Color.clear
+                    .frame(height: slotHeight)
             }
         }
-        .frame(height: slotHeight)
+        .frame(height: slotHeight, alignment: .top)
         .clipped()
     }
 

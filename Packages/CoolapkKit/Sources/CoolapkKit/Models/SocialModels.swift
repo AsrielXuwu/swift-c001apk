@@ -192,10 +192,7 @@ public struct AppItem: Identifiable, Hashable, Sendable {
             json.followNum.int,
             Int(json.followCount.string) ?? 0
         ].first { $0 > 0 } ?? 0
-        let followFlag = json.userAction.follow.exists
-            ? json.userAction.follow
-            : (json.isFollowed.exists ? json.isFollowed : (json.is_follow.exists ? json.is_follow : json.follow))
-        isFollowed = followFlag.bool || followFlag.int > 0
+        isFollowed = parseEntityFollowedState(json)
         packageName = json.packageName.string.isEmpty ? json.apkname.string : json.packageName.string
         url = json.url.string
         updateFlag = json.updateFlag.string
@@ -545,10 +542,7 @@ public struct ProductItem: Identifiable, Hashable, Sendable {
         commentNum = json.feed_comment_num.int > 0 ? json.feed_comment_num.int : json.comment_num.int
         feedNum = json.feed_num.int
         hotNum = json.hot_num.int
-        let followFlag = json.isFollowed.exists
-            ? json.isFollowed
-            : (json.is_follow.exists ? json.is_follow : (json.userAction.follow.exists ? json.userAction.follow : json.follow))
-        isFollowed = followFlag.bool || followFlag.int > 0
+        isFollowed = parseEntityFollowedState(json)
         url = json.url.string
         let rawTabs = json.tabList.array
         tabs = rawTabs.enumerated().compactMap { idx, entry in
@@ -626,8 +620,7 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
         hotNum = [json.hot_num.int, Self.parseCompactCount(rawHotTxt)].first { $0 > 0 } ?? 0
         feedNumText = rawFeedTxt
         hotNumText = rawHotTxt
-        isFollowed = json.isFollowed.int > 0 || json.follow.int > 0
-            || json.extraData.parsed.showCancelFollowMenu.int > 0
+        isFollowed = parseEntityFollowedState(json)
         selectedTab = json.selectedTab.string.isEmpty ? json.selected_tab.string : json.selectedTab.string
         var parsedTabs: [HomeSection] = []
         var seenTabIDs = Set<String>()
@@ -703,8 +696,8 @@ public struct CollectionItem: Codable, Identifiable, Hashable, Sendable {
             ? json.follow_num.int
             : (json.followNum.int > 0 ? json.followNum.int : json.follownum.int)
         likeNum = json.like_num.int
-        isFollowed = json.isFollowed.int > 0 || json.follow.int > 0
-        isBeCollected = json.isBeCollected.int > 0 || json.isBeCollected.bool || json.userAction.collect.int > 0
+        isFollowed = parseEntityFollowedState(json)
+        isBeCollected = json.isBeCollected.int > 0 || json.isBeCollected.bool
     }
 }
 
@@ -754,10 +747,7 @@ public struct DyhItem: Identifiable, Hashable, Sendable {
         uid = json.uid.identifier
         followNum = [json.follownum.int, json.follow_num.int, json.followNum.int].first { $0 > 0 } ?? 0
         likeNum = [json.likenum.int, json.like_num.int, json.likeNum.int].first { $0 > 0 } ?? 0
-        let followFlag = json.userAction.follow.exists
-            ? json.userAction.follow
-            : (json.isFollowed.exists ? json.isFollowed : (json.is_follow.exists ? json.is_follow : json.follow))
-        isFollowed = followFlag.bool || followFlag.int > 0
+        isFollowed = parseEntityFollowedState(json)
     }
 }
 
@@ -895,4 +885,18 @@ public enum HomeFeedRow: Identifiable, Hashable, Sendable {
         if case let .feed(item) = self { return item.dateline }
         return nil
     }
+}
+
+public func parseEntityFollowedState(_ json: JSON) -> Bool {
+    if json.userAction.follow.bool || json.userAction.follow.int > 0 { return true }
+    if json.isFollowed.bool || json.isFollowed.int > 0 { return true }
+    if json.is_follow.bool || json.is_follow.int > 0 { return true }
+    if json.isFollow.bool || json.isFollow.int > 0 { return true }
+    if json.follow_status.bool || json.follow_status.int > 0 { return true }
+    if json.followStatus.bool || json.followStatus.int > 0 { return true }
+    if json.follow.bool || json.follow.int == 1 { return true }
+    if json.extraData.parsed.showCancelFollowMenu.bool || json.extraData.parsed.showCancelFollowMenu.int > 0 { return true }
+    if json.extraDataArr.showCancelFollowMenu.bool || json.extraDataArr.showCancelFollowMenu.int > 0 { return true }
+    if json.extraData.showCancelFollowMenu.bool || json.extraData.showCancelFollowMenu.int > 0 { return true }
+    return false
 }
