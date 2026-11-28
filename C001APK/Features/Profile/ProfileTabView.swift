@@ -81,12 +81,11 @@ public struct ProfileTabView: View {
             }
         }
         .refreshable {
-            await appState.refreshCurrentUserProfile()
-            await appState.refreshBadge()
+            await appState.refreshLoginAndBadge()
         }
         .task(id: appState.accounts.activeUID) {
             if appState.accounts.isLoggedIn && appState.currentUserProfile == nil {
-                await appState.refreshCurrentUserProfile()
+                await appState.refreshLoginAndBadge()
             }
         }
     }
