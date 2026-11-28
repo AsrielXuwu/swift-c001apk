@@ -377,7 +377,7 @@ public struct FeedRatingDimension: Identifiable, Hashable, Sendable, Codable {
                     .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 let rawScore = [
                     item.score.double,
-                    item.value.double,
+                    (item.dictionary["value"] ?? .null).double,
                     item.rating_score.double,
                     item.star_score.double
                 ].first { $0 > 0 } ?? 0
@@ -1238,7 +1238,7 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
                 obj.text.string,
                 obj.label.string,
                 obj.name.string,
-                obj.value.string,
+                (obj.dictionary["value"] ?? .null).string,
                 obj.extra_title.string,
                 obj.extra_info.string,
                 obj.config_name.string,
@@ -2003,7 +2003,7 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
                     obj.final_price,
                     obj.finalPrice,
                     obj.price,
-                    obj.value,
+                    obj.dictionary["value"] ?? .null,
                     obj.num,
                     obj.amount,
                     obj.money,
@@ -2037,7 +2037,7 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
                 return "亮屏续航 \(formatted) 小时"
             }
             for obj in extraObjects {
-                let hrs = [obj.hours.double, obj.battery_hours.double, obj.value.double].first { $0 > 0 } ?? 0
+                let hrs = [obj.hours.double, obj.battery_hours.double, (obj.dictionary["value"] ?? .null).double].first { $0 > 0 } ?? 0
                 if hrs > 0 {
                     let formatted = hrs.truncatingRemainder(dividingBy: 1) == 0 ? String(Int(hrs)) : String(format: "%.1f", hrs)
                     return "亮屏续航 \(formatted) 小时"
@@ -2072,7 +2072,7 @@ public struct FeedItem: Identifiable, Hashable, Sendable, Codable {
                 return "反馈等级：\(label)"
             }
             for obj in extraObjects {
-                let code = [obj.level.identifier, obj.severity.identifier, obj.value.identifier].first { !$0.isEmpty } ?? ""
+                let code = [obj.level.identifier, obj.severity.identifier, (obj.dictionary["value"] ?? .null).identifier].first { !$0.isEmpty } ?? ""
                 if let label = severityMap[code] {
                     return "反馈等级：\(label)"
                 }
