@@ -384,7 +384,7 @@ final class ModelTests: XCTestCase {
           "username": "数码首发用户",
           "message": "首发终于到了，质感确实无敌，屏幕通透度比上一代提升明显。",
           "tsubid": "6",
-          "tsubdata": "{\"final_price\":9599,\"config_id\":108,\"config_name\":\"16GB+512GB\"}",
+          "tsubdata": "{\\"final_price\\":9599,\\"config_id\\":108,\\"config_name\\":\\"16GB+512GB\\"}",
           "targetRow": {
             "id": 5136,
             "title": "旗舰新品 Pro",
