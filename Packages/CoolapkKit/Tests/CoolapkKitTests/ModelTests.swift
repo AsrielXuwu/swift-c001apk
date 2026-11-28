@@ -541,9 +541,9 @@ final class ModelTests: XCTestCase {
         """.utf8)
         let goodsCardJSON = try JSON(data: goodsCardRaw)
         let ranking = GoodsRankingItem(json: goodsCardJSON)
-        XCTAssertNotNil(ranking)
-        XCTAssertEqual(ranking?.title, "2026 年度酷安数码好物榜")
-        XCTAssertTrue(ranking?.products.isEmpty ?? false)
+        XCTAssertFalse(ranking.isEmpty)
+        XCTAssertEqual(ranking.title, "2026 年度酷安数码好物榜")
+        XCTAssertTrue(ranking.products.isEmpty)
 
         let rowsRaw = Data("""
         {
@@ -564,7 +564,7 @@ final class ModelTests: XCTestCase {
         }
         """.utf8)
         let rowsJSON = try JSON(data: rowsRaw)
-        let rows = API.rows(from: rowsJSON.data)
+        let rows = API.rows(from: rowsJSON.data.array)
         XCTAssertEqual(rows.count, 1)
         if case let .banners(_, items) = rows.first {
             XCTAssertEqual(items.count, 2)
