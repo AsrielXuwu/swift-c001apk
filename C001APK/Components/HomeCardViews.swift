@@ -94,6 +94,9 @@ public struct HomeRowRenderer: View {
 
         case let .dyh(item):
             DyhRowView(dyh: item)
+
+        case let .goodsRanking(item):
+            GoodsRankingCardView(item: item)
         }
     }
 
@@ -419,10 +422,14 @@ struct SingleImageLinkCardView: View {
     }
 }
 
-struct IconLinksScrollView: View {
-    let links: [HomeIconLink]
+public struct IconLinksScrollView: View {
+    public let links: [HomeIconLink]
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
     @State private var detectedRatios: [String: CGFloat] = [:]
+
+    public init(links: [HomeIconLink]) { self.links = links }
 
     private func aspectRatio(for link: HomeIconLink) -> CGFloat {
         let raw = detectedRatios[link.id]
@@ -431,7 +438,25 @@ struct IconLinksScrollView: View {
         return max(1.0, min(raw, 2.8))
     }
 
-    var body: some View {
+    public static func isWideIconURL(_ url: String) -> Bool {
+        if let ratio = MediaGridView.inferredAspectRatio(from: url), ratio >= 1.45 {
+            return true
+        }
+        return false
+    }
+
+    private var isRankedGrid: Bool {
+        links.contains(where: { $0.rank > 0 || !$0.hotText.isEmpty }) && links.count >= 3
+    }
+
+    private var isMultiRowCategoryGrid: Bool {
+        !isRankedGrid
+            && links.count >= 5
+            && links.count <= 15
+            && links.allSatisfy { $0.subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !Self.isWideIconURL($0.image) }
+    }
+
+    public var body: some View {
         if links.count == 1, let single = links.first, !single.image.isEmpty {
             SingleImageLinkCardView(
                 imageURL: single.image,
@@ -439,6 +464,14 @@ struct IconLinksScrollView: View {
                 subtitle: single.subtitle,
                 targetURL: single.url
             )
+        } else if isRankedGrid {
+            rankedGridBody
+                .c001CardStyle(cornerRadius: 20)
+                .padding(.horizontal, 12)
+        } else if isMultiRowCategoryGrid {
+            categoryGridBody
+                .c001CardStyle(cornerRadius: 20)
+                .padding(.horizontal, 12)
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 14) {
@@ -447,8 +480,11 @@ struct IconLinksScrollView: View {
                         let iconHeight: CGFloat = 44
                         let iconWidth: CGFloat = round(iconHeight * ratio)
                         let labelWidth: CGFloat = max(58, iconWidth)
+                        let sourceID = "iconlink-\(transitionSeed)-\(link.id)"
                         Button {
-                            if !link.url.isEmpty { appState.openRawLink(link.url, title: link.title) }
+                            if !link.url.isEmpty {
+                                appState.openRawLink(link.url, title: link.title, transitionID: sourceID)
+                            }
                         } label: {
                             VStack(spacing: 6) {
                                 RemoteImageView(url: link.image, maxPixelSize: 260, contentMode: .fit) { size in
@@ -468,6 +504,7 @@ struct IconLinksScrollView: View {
                                         .frame(width: labelWidth)
                                 }
                             }
+                            .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 10)
                         }
                         .buttonStyle(.plain)
                     }
@@ -476,6 +513,103 @@ struct IconLinksScrollView: View {
                 .padding(.vertical, 10)
             }
             .scrollClipDisabled()
+        }
+    }
+
+    private var rankedGridBody: some View {
+        let cols = Array(repeating: GridItem(.flexible(), spacing: 10), count: min(4, max(2, links.count)))
+        return LazyVGrid(columns: cols, spacing: 12) {
+            ForEach(Array(links.enumerated()), id: \.element.id) { idx, item in
+                let rank = item.rank > 0 ? item.rank : (idx + 1)
+                let sourceID = "iconrank-\(transitionSeed)-\(item.id)"
+                Button {
+                    if !item.url.isEmpty {
+                        appState.openRawLink(item.url, title: item.title, transitionID: sourceID)
+                    }
+                } label: {
+                    VStack(spacing: 6) {
+                        ZStack(alignment: .topLeading) {
+                            RemoteImageView(url: item.image, maxPixelSize: 220, contentMode: .fit)
+                                .frame(height: 58)
+                                .frame(maxWidth: .infinity)
+                                .padding(6)
+                                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+
+                            if rank <= 4 {
+                                Text("TOP \(rank)")
+                                    .font(.system(size: 9, weight: .heavy, design: .rounded))
+                                    .foregroundStyle(.white)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(rankBadgeColor(rank), in: Capsule())
+                                    .padding(4)
+                            }
+                        }
+
+                        Text(item.title)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+
+                        if !item.hotText.isEmpty {
+                            HStack(spacing: 2) {
+                                Image(systemName: "flame.fill")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(.orange)
+                                Text(item.hotText)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 13)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+    }
+
+    private var categoryGridBody: some View {
+        let colCount = links.count % 5 == 0 ? 5 : (links.count % 4 == 0 ? 4 : 5)
+        let cols = Array(repeating: GridItem(.flexible(), spacing: 8), count: colCount)
+        return LazyVGrid(columns: cols, spacing: 12) {
+            ForEach(links) { item in
+                let sourceID = "icongrid-\(transitionSeed)-\(item.id)"
+                Button {
+                    if !item.url.isEmpty {
+                        appState.openRawLink(item.url, title: item.title, transitionID: sourceID)
+                    }
+                } label: {
+                    VStack(spacing: 6) {
+                        RemoteImageView(url: item.image, maxPixelSize: 160)
+                            .frame(width: 44, height: 44)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        Text(item.title)
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 12)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 12)
+    }
+
+    private func rankBadgeColor(_ rank: Int) -> Color {
+        switch rank {
+        case 1: return .red
+        case 2: return .orange
+        case 3: return .yellow.opacity(0.9)
+        default: return .secondary
         }
     }
 }
@@ -1417,5 +1551,137 @@ public struct DyhRowView: View {
             .padding(.horizontal, 12)
         }
         .buttonStyle(.plain)
+    }
+}
+
+public struct GoodsRankingCardView: View {
+    public let item: GoodsRankingItem
+    @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
+
+    public init(item: GoodsRankingItem) {
+        self.item = item
+    }
+
+    public var body: some View {
+        let sourceID = "goodsranking-\(transitionSeed)-\(item.id)"
+        VStack(alignment: .leading, spacing: 12) {
+            Button {
+                openRanking(transitionID: sourceID)
+            } label: {
+                HStack(spacing: 12) {
+                    if !item.cover.isEmpty {
+                        RemoteImageView(url: item.cover, maxPixelSize: 160)
+                            .frame(width: 48, height: 48)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    } else {
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .fill(Color.orange.opacity(0.16))
+                            .frame(width: 48, height: 48)
+                            .overlay {
+                                Image(systemName: "crown.fill")
+                                    .font(.headline)
+                                    .foregroundStyle(.orange)
+                            }
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text("好物榜")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.16), in: Capsule())
+                                .foregroundStyle(.orange)
+                            Text(item.title)
+                                .font(.headline)
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                        }
+                        if !item.statsText.isEmpty {
+                            Text(item.statsText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    if !item.dateText.isEmpty {
+                        Text(item.dateText)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .buttonStyle(.plain)
+
+            let topProducts = Array(item.products.prefix(3))
+            if !topProducts.isEmpty {
+                let cols = Array(repeating: GridItem(.flexible(), spacing: 10), count: min(3, max(1, topProducts.count)))
+                LazyVGrid(columns: cols, spacing: 10) {
+                    ForEach(topProducts) { prod in
+                        let prodSourceID = "goodsprod-\(transitionSeed)-\(prod.id)"
+                        Button {
+                            if !prod.url.isEmpty {
+                                appState.openRawLink(prod.url, title: prod.title, transitionID: prodSourceID)
+                            } else {
+                                openRanking(transitionID: prodSourceID)
+                            }
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ZStack(alignment: .topLeading) {
+                                    RemoteImageView(url: prod.cover, maxPixelSize: 220, contentMode: .fit)
+                                        .frame(height: 76)
+                                        .frame(maxWidth: .infinity)
+                                        .padding(6)
+                                        .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                                    Text("TOP \(prod.rank)")
+                                        .font(.system(size: 9, weight: .heavy, design: .rounded))
+                                        .foregroundStyle(.white)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(prod.rank == 1 ? Color.red : (prod.rank == 2 ? Color.orange : Color.brown), in: Capsule())
+                                        .padding(5)
+                                }
+
+                                Text(prod.title)
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+
+                                if !prod.priceText.isEmpty {
+                                    Text(prod.priceText)
+                                        .font(.caption2.weight(.semibold))
+                                        .foregroundStyle(Color.accentColor)
+                                        .lineLimit(1)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .applyZoomSource(id: prodSourceID, in: zoomNamespace, cornerRadius: 12)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .c001CardStyle(cornerRadius: 20)
+        .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 20)
+        .padding(.horizontal, 12)
+    }
+
+    private func openRanking(transitionID: String) {
+        if !item.url.isEmpty {
+            appState.openRawLink(item.url, title: item.title, transitionID: transitionID)
+        } else if item.id.allSatisfy(\.isNumber) {
+            appState.push(.feed(id: item.id, transitionID: transitionID))
+        }
     }
 }

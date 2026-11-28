@@ -473,6 +473,13 @@ public enum API: Sendable {
             }
 
             flushAll()
+            if GoodsRankingItem.looksLikeGoodsRankingJSON(item) {
+                let ranking = GoodsRankingItem(json: item)
+                if !ranking.products.isEmpty {
+                    rows.append(.goodsRanking(ranking))
+                    continue
+                }
+            }
             switch item.entityType.string {
             case "feed", "feed_reply", "reply", "forwardFeed", "feedLike", "like",
                  "rating", "ratingFeed", "feed_rating", "nodeRating", "apkRating", "productRating":
@@ -576,6 +583,21 @@ public enum API: Sendable {
         func titled(_ rows: [HomeFeedRow]) -> [HomeFeedRow] {
             guard !title.isEmpty else { return rows }
             return [.sectionTitle(key: "\(index)", title: title, url: moreURL, subtitle: "")] + rows
+        }
+
+        if GoodsRankingItem.looksLikeGoodsRankingJSON(item) {
+            let ranking = GoodsRankingItem(json: item)
+            if !ranking.products.isEmpty {
+                return titled([.goodsRanking(ranking)])
+            }
+        }
+
+        let goodsRankingEntities = entities.filter { GoodsRankingItem.looksLikeGoodsRankingJSON($0) }
+        if !goodsRankingEntities.isEmpty && goodsRankingEntities.count == entities.count {
+            let mapped = goodsRankingEntities.map { GoodsRankingItem(json: $0) }.filter { !$0.products.isEmpty }
+            if !mapped.isEmpty {
+                return titled(mapped.map { .goodsRanking($0) })
+            }
         }
 
         if !entities.isEmpty, entities.allSatisfy({ $0.entityType.string == "pear_goods" }) {
@@ -702,7 +724,7 @@ public enum API: Sendable {
                 }
             }
             var links = entities.enumerated().map { offset, entity in
-                iconLink(from: entity, parentCard: item, keyPrefix: "icon-\(index)-\(offset)")
+                iconLink(from: entity, parentCard: item, keyPrefix: "icon-\(index)-\(offset)", offset: offset)
             }.filter { !$0.image.isEmpty || !$0.title.isEmpty }
             if links.isEmpty && (!item.pic.string.isEmpty || !item.logo.string.isEmpty) {
                 links = [iconLink(from: item, parentCard: .null, keyPrefix: "icon-self-\(index)")]
@@ -860,7 +882,7 @@ public enum API: Sendable {
                 }
             }
             var links = entities.enumerated().map { offset, entity in
-                iconLink(from: entity, parentCard: item, keyPrefix: "def-\(index)-\(offset)")
+                iconLink(from: entity, parentCard: item, keyPrefix: "def-\(index)-\(offset)", offset: offset)
             }.filter { !$0.image.isEmpty || !$0.title.isEmpty }
             if links.isEmpty && (!item.pic.string.isEmpty || !item.logo.string.isEmpty) {
                 links = [iconLink(from: item, parentCard: .null, keyPrefix: "def-self-\(index)")]
@@ -989,18 +1011,31 @@ public enum API: Sendable {
         return ""
     }
 
-    private static func iconLink(from entity: JSON, parentCard: JSON = .null, keyPrefix: String = "icon") -> HomeIconLink {
+    private static func iconLink(from entity: JSON, parentCard: JSON = .null, keyPrefix: String = "icon", offset: Int = -1) -> HomeIconLink {
         let title = entity.title.string.isEmpty ? entity.username.string : entity.title.string
         let image = !entity.logo.string.isEmpty
             ? entity.logo.string
             : (!entity.pic.string.isEmpty ? entity.pic.string : entity.userAvatar.string)
         let resolvedURL = resolveSectionURL(for: entity, parentCard: parentCard, isLinkBar: image.isEmpty)
+        let withRanking = parentCard.extraDataArr.withRanking.int == 1
+            || parentCard.extraData.parsed.withRanking.int == 1
+            || parentCard.extraDataArr.withRanking.bool
+            || parentCard.extraData.parsed.withRanking.bool
+        let hotText = [
+            entity.hot_num_txt.string,
+            entity.hotNumTxt.string,
+            withRanking ? entity.sub_title.string : ""
+        ].first { !$0.isEmpty } ?? ""
+        let subtitle = withRanking ? "" : (entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string)
+        let rank = (withRanking && offset >= 0) ? (offset + 1) : 0
         return HomeIconLink(
             id: "\(keyPrefix)-\(entity.entityId.identifier)-\(title)",
             title: title,
-            image: image,
+            image: coolapkNormalizedURL(image),
             url: resolvedURL,
-            subtitle: entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string
+            subtitle: subtitle,
+            hotText: hotText,
+            rank: rank
         )
     }
 
@@ -1325,8 +1360,18 @@ public enum API: Sendable {
         let cleanUID = (uid.removingPercentEncoding ?? uid).trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             let json = try await client.get("/v6/user/profile", ["uid": cleanUID])
-            let parsed = UserProfile(json: json.data)
+            var parsed = UserProfile(json: json.data)
             if !parsed.id.isEmpty || !parsed.username.isEmpty {
+                if parsed.homeTabCards.isEmpty,
+                   let spaceJSON = try? await client.get("/v6/user/space", ["uid": cleanUID], clearProofOnCaptcha: false) {
+                    let spaceProfile = UserProfile(json: spaceJSON.data)
+                    if !spaceProfile.homeTabCards.isEmpty {
+                        parsed.homeTabCards = spaceProfile.homeTabCards
+                    }
+                    if parsed.astro.isEmpty { parsed.astro = spaceProfile.astro }
+                    if parsed.ipLocation.isEmpty { parsed.ipLocation = spaceProfile.ipLocation }
+                    if parsed.productOwnerCount == 0 { parsed.productOwnerCount = spaceProfile.productOwnerCount }
+                }
                 return parsed
             }
         } catch let error as APIError {
@@ -2283,5 +2328,79 @@ public enum API: Sendable {
         let path = received ? "/v6/user/replyToMeList" : "/v6/user/replyList"
         let json = try await client.get(path, ["uid": uid, "page": String(page)])
         return rows(from: json.data.array)
+    }
+
+    public static func discoverChannels() async throws -> [HomeSection] {
+        let json = try await client.get("/v6/main/init", ["t": String(Int(Date().timeIntervalSince1970))])
+        var channels: [HomeSection] = []
+        for card in json.data.array {
+            for entity in card.entities.array {
+                let isDiscover = entity.id.identifier == "20131" || entity.entityId.identifier == "20131" || entity.title.string == "发现"
+                if isDiscover && !entity.entities.array.isEmpty {
+                    for (idx, sub) in entity.entities.array.enumerated() {
+                        let title = sub.title.string
+                        let pageName = sub.page_name.string
+                        let rawURL = sub.url.string
+                        let resolvedURL = !rawURL.isEmpty ? rawURL : (!pageName.isEmpty ? "#/page?url=\(pageName)&title=\(title)" : "")
+                        if !title.isEmpty && !resolvedURL.isEmpty {
+                            channels.append(HomeSection(
+                                id: "disc-\(idx)-\(sub.entityId.identifier)-\(title)",
+                                title: title,
+                                subtitle: sub.sub_title.string,
+                                url: resolvedURL,
+                                style: coolapkNormalizedURL(sub.logo.string.isEmpty ? sub.pic.string : sub.logo.string)
+                            ))
+                        }
+                    }
+                }
+            }
+        }
+        return channels
+    }
+
+    public static func myProfileCards() async throws -> [HomeFeedRow] {
+        let json = try await client.get("/v6/main/loadConfig", ["t": String(Int(Date().timeIntervalSince1970))])
+        return rows(from: json.data.array)
+    }
+
+    public static func productCategoryGroups() async throws -> [ProductCategoryGroup] {
+        let json = try await client.get("/v6/product/categoryList")
+        var groups: [ProductCategoryGroup] = []
+        for (idx, item) in json.data.array.enumerated() {
+            let groupTitle = item.title.string
+            guard !groupTitle.isEmpty else { continue }
+            let groupLogo = coolapkNormalizedURL(item.logo.string.isEmpty ? item.pic.string : item.logo.string)
+            var links: [HomeIconLink] = []
+
+            let secondRows = item.secondCategoryRows.array.isEmpty ? item.entities.array : item.secondCategoryRows.array
+            for (sIdx, sub) in secondRows.enumerated() {
+                if !sub.entities.array.isEmpty {
+                    for (eIdx, ent) in sub.entities.array.enumerated() {
+                        let link = iconLink(from: ent, parentCard: sub, keyPrefix: "pcat-\(idx)-\(sIdx)-\(eIdx)")
+                        if !link.title.isEmpty {
+                            links.append(link)
+                        }
+                    }
+                } else {
+                    let link = iconLink(from: sub, parentCard: item, keyPrefix: "pcat-\(idx)-\(sIdx)")
+                    if !link.title.isEmpty {
+                        links.append(link)
+                    }
+                }
+            }
+            if !links.isEmpty {
+                groups.append(ProductCategoryGroup(
+                    id: "pcatgrp-\(idx)-\(item.entityId.identifier)-\(groupTitle)",
+                    title: groupTitle,
+                    logo: groupLogo,
+                    items: links
+                ))
+            }
+        }
+        return groups
+    }
+
+    public static func userRatingFeeds(uid: String, targetType: String = "all", page: Int) async throws -> [HomeFeedRow] {
+        try await linkFeed(link: "/feed/nodeRatingList?uid=\(uid)&targetType=\(targetType)&parseRatingToFeed=1", page: page)
     }
 }

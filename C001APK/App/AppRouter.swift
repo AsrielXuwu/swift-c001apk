@@ -156,6 +156,8 @@ public enum AppRoute: Hashable, Sendable {
     case dyh(id: String, initialTitle: String? = nil, transitionID: String? = nil)
     case event(id: String, initial: EventItem? = nil, transitionID: String? = nil)
     case page(link: String, title: String, transitionID: String? = nil)
+    case partitionHub(transitionID: String? = nil)
+    case productCategoryBrowser(transitionID: String? = nil)
     case coolpic(tag: String)
     case messages
     case chat(ukey: String, uid: String, username: String, avatar: String, transitionID: String? = nil)
@@ -185,6 +187,8 @@ public enum AppRoute: Hashable, Sendable {
              let .dyh(_, _, id),
              let .event(_, _, id),
              let .page(_, _, id),
+             let .partitionHub(id),
+             let .productCategoryBrowser(id),
              let .chat(_, _, _, _, id):
             return id
         default:
@@ -207,6 +211,9 @@ public enum AppRoute: Hashable, Sendable {
         case let .question(id): return .feed(id: id, transitionID: transitionID)
         case let .vote(id): return .feed(id: id, transitionID: transitionID)
         case let .page(link):
+            if link.lowercased().contains("/product/categorylist") {
+                return .productCategoryBrowser(transitionID: transitionID)
+            }
             let resolvedTitle = titleArg
                 ?? FeedLink.inferredPageTitle(from: link)
                 ?? "列表"

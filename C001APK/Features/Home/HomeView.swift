@@ -91,6 +91,12 @@ public struct HomeView: View {
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
+                        appState.push(.partitionHub())
+                    } label: {
+                        Label("分区", systemImage: "square.grid.2x2")
+                    }
+
+                    Button {
                         appState.push(.page(link: "/main/headline", title: "头条"))
                     } label: {
                         Label("头条", systemImage: "newspaper")

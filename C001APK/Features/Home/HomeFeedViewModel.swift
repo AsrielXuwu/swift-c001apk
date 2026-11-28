@@ -131,6 +131,12 @@ public final class HomeFeedViewModel {
                 }
             case .dyh:
                 loaded = try await API.dyhSubscribe(page: page)
+            case .secondHand:
+                loaded = try await API.pageFeed(pageName: "V11_FIND_GOOD_GOODS_HOME", page: page)
+            case .review:
+                loaded = try await API.linkFeed(link: "#/board/数码测评", page: page)
+            case .game:
+                loaded = try await API.appIndex(type: 2, page: page)
             case .coolpic:
                 loaded = try await API.pageFeed(pageName: "V11_FIND_COOLPIC", page: page)
             case .app:

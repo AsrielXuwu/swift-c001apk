@@ -1,5 +1,30 @@
 import Foundation
 
+public struct UserHomeSectionCard: Identifiable, Hashable, Sendable {
+    public let id: String
+    public var title: String
+    public var url: String
+    public var users: [UserBrief]
+    public var links: [HomeIconLink]
+    public var feeds: [FeedItem]
+
+    public init(
+        id: String,
+        title: String,
+        url: String = "",
+        users: [UserBrief] = [],
+        links: [HomeIconLink] = [],
+        feeds: [FeedItem] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.url = url
+        self.users = users
+        self.links = links
+        self.feeds = feeds
+    }
+}
+
 public struct UserProfile: Identifiable, Hashable, Sendable {
     public let id: String
     public var username: String
@@ -18,12 +43,39 @@ public struct UserProfile: Identifiable, Hashable, Sendable {
     public var location: String
     public var isFollowed: Bool
     public var gender: Int
+    public var astro: String
+    public var ipLocation: String
+    public var productOwnerCount: Int
+    public var isWishListOpen: Bool
     public var registerDate: Date?
     public var loginTime: Date?
     public var deviceTitle: String
+    public var homeTabCards: [UserHomeSectionCard]
 
     public static func == (lhs: UserProfile, rhs: UserProfile) -> Bool { lhs.id == rhs.id }
     public func hash(into hasher: inout Hasher) { hasher.combine(id) }
+
+    public var genderText: String {
+        if gender == 1 { return "男" }
+        if gender == 0 && !astro.isEmpty { return "女" }
+        if gender == 2 { return "女" }
+        return ""
+    }
+
+    public var regDaysText: String {
+        guard let registerDate else { return "" }
+        let days = max(1, Int(Date().timeIntervalSince(registerDate) / 86_400))
+        if days >= 365 {
+            let years = Double(days) / 365.0
+            return String(format: "注册 %.1f 年", years)
+        }
+        return "注册 \(days) 天"
+    }
+
+    public var isRecentlyOnline: Bool {
+        guard let loginTime else { return false }
+        return Date().timeIntervalSince(loginTime) <= 15 * 60
+    }
 
     public init(json: JSON) {
         id = json.uid.exists ? json.uid.identifier : json.entityId.identifier
@@ -40,15 +92,74 @@ public struct UserProfile: Identifiable, Hashable, Sendable {
         likeNum = json.be_like_num.int > 0 ? json.be_like_num.int : json.likenum.int
         verifyLabel = json.verify_label.string
         verifyTitle = json.verify_title.string
-        location = json.location.string
+        let province = json.province.string
+        let city = json.city.string
+        let combinedCity = [province, city].filter { !$0.isEmpty }.joined(separator: " ")
+        location = json.location.string.isEmpty ? combinedCity : json.location.string
         let followFlag = json.isFollowed.exists
             ? json.isFollowed
             : (json.is_follow.exists ? json.is_follow : (json.isFollow.exists ? json.isFollow : json.userAction.follow))
         isFollowed = followFlag.bool || followFlag.int > 0
-        gender = json.gender.int
+        gender = json.gender.exists ? json.gender.int : -1
+        astro = json.astro.string
+        ipLocation = json.ip_location.string
+        productOwnerCount = json.product_owner_count.int
+        isWishListOpen = json.is_open_product_wish_list.int > 0 || json.is_open_product_wish_list.bool
         registerDate = json.regdate.date
         loginTime = json.logintime.date
         deviceTitle = json.device_title.string.isEmpty ? json.user_device.string : json.device_title.string
+
+        var parsedCards: [UserHomeSectionCard] = []
+        for (idx, cardJSON) in json.homeTabCardRows.array.enumerated() {
+            let tpl = cardJSON.entityTemplate.string
+            if tpl == "configCard" || tpl == "fabCard" || tpl == "sponsorCard" { continue }
+            let cardTitle = cardJSON.title.string
+            let cardURL = cardJSON.url.string
+            let entities = cardJSON.entities.array
+            guard !entities.isEmpty else { continue }
+            var cardUsers: [UserBrief] = []
+            var cardLinks: [HomeIconLink] = []
+            var cardFeeds: [FeedItem] = []
+
+            for (eIdx, ent) in entities.enumerated() {
+                let eType = ent.entityType.string.lowercased()
+                if eType == "user" || ent.url.string.hasPrefix("/u/") {
+                    let u = UserBrief(json: ent)
+                    if !u.id.isEmpty && !u.username.isEmpty {
+                        cardUsers.append(u)
+                    }
+                } else if eType == "feed" || !ent.message.string.isEmpty {
+                    let f = FeedItem(json: ent)
+                    if !f.id.isEmpty {
+                        cardFeeds.append(f)
+                    }
+                } else {
+                    let title = ent.title.string.isEmpty ? ent.username.string : ent.title.string
+                    let image = !ent.logo.string.isEmpty ? ent.logo.string : (!ent.pic.string.isEmpty ? ent.pic.string : ent.userAvatar.string)
+                    let url = ent.url.string
+                    if !title.isEmpty {
+                        cardLinks.append(HomeIconLink(
+                            id: "uhcard-\(idx)-\(eIdx)-\(ent.entityId.identifier)-\(title)",
+                            title: title,
+                            image: coolapkNormalizedURL(image),
+                            url: url,
+                            subtitle: ent.sub_title.string.isEmpty ? ent.description.string : ent.sub_title.string
+                        ))
+                    }
+                }
+            }
+            if !cardUsers.isEmpty || !cardLinks.isEmpty || !cardFeeds.isEmpty {
+                parsedCards.append(UserHomeSectionCard(
+                    id: "uhsec-\(idx)-\(cardTitle)",
+                    title: cardTitle.isEmpty ? "精选内容" : cardTitle,
+                    url: cardURL,
+                    users: cardUsers,
+                    links: cardLinks,
+                    feeds: cardFeeds
+                ))
+            }
+        }
+        homeTabCards = parsedCards
     }
 }
 
@@ -123,13 +234,25 @@ public struct HomeIconLink: Identifiable, Hashable, Sendable {
     public var image: String
     public var url: String
     public var subtitle: String
+    public var hotText: String
+    public var rank: Int
 
-    public init(id: String, title: String, image: String, url: String, subtitle: String = "") {
+    public init(
+        id: String,
+        title: String,
+        image: String,
+        url: String,
+        subtitle: String = "",
+        hotText: String = "",
+        rank: Int = 0
+    ) {
         self.id = id
         self.title = title
         self.image = image
         self.url = url
         self.subtitle = subtitle
+        self.hotText = hotText
+        self.rank = rank
     }
 }
 
@@ -899,6 +1022,7 @@ public enum HomeFeedRow: Identifiable, Hashable, Sendable {
     case collection(CollectionItem)
     case event(EventItem)
     case dyh(DyhItem)
+    case goodsRanking(GoodsRankingItem)
 
     public var id: String {
         switch self {
@@ -923,6 +1047,7 @@ public enum HomeFeedRow: Identifiable, Hashable, Sendable {
         case let .collection(item): return "collection-\(item.id)"
         case let .event(item): return "event-\(item.id)"
         case let .dyh(item): return "dyh-\(item.id)"
+        case let .goodsRanking(item): return "goodsranking-\(item.id)"
         }
     }
 
@@ -944,4 +1069,184 @@ public func parseEntityFollowedState(_ json: JSON) -> Bool {
     if json.extraDataArr.showCancelFollowMenu.bool || json.extraDataArr.showCancelFollowMenu.int > 0 { return true }
     if json.extraData.showCancelFollowMenu.bool || json.extraData.showCancelFollowMenu.int > 0 { return true }
     return false
+}
+
+public struct GoodsRankingProduct: Identifiable, Hashable, Sendable {
+    public let id: String
+    public var rank: Int
+    public var title: String
+    public var cover: String
+    public var priceText: String
+    public var url: String
+
+    public init(id: String, rank: Int, title: String, cover: String, priceText: String = "", url: String = "") {
+        self.id = id
+        self.rank = rank
+        self.title = title
+        self.cover = cover
+        self.priceText = priceText
+        self.url = url
+    }
+}
+
+public struct GoodsRankingItem: Identifiable, Hashable, Sendable {
+    public let id: String
+    public var title: String
+    public var subtitle: String
+    public var cover: String
+    public var statsText: String
+    public var dateText: String
+    public var url: String
+    public var products: [GoodsRankingProduct]
+
+    public init(
+        id: String,
+        title: String,
+        subtitle: String = "",
+        cover: String = "",
+        statsText: String = "",
+        dateText: String = "",
+        url: String = "",
+        products: [GoodsRankingProduct] = []
+    ) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.cover = cover
+        self.statsText = statsText
+        self.dateText = dateText
+        self.url = url
+        self.products = products
+    }
+
+    public static func looksLikeGoodsRankingJSON(_ json: JSON) -> Bool {
+        let eType = json.entityType.string.lowercased()
+        let fType = json.feedType.string.lowercased()
+        let tpl = json.entityTemplate.string.lowercased()
+        if eType == "goodslist" || fType == "goodslist" || tpl.contains("goodslist") {
+            return true
+        }
+        if json.goodsListInfo.isObject || json.goods_list_info.isObject {
+            return true
+        }
+        if !json.goodsListItem.array.isEmpty || !json.goods_list_item.array.isEmpty {
+            return true
+        }
+        if let first = json.entities.array.first,
+           (!first.product_goods_title.string.isEmpty || !first.product_goods_cover.string.isEmpty || first.goodsListInfo.isObject) {
+            return true
+        }
+        return false
+    }
+
+    public init(json: JSON) {
+        let info = json.goodsListInfo.isObject
+            ? json.goodsListInfo
+            : (json.goods_list_info.isObject ? json.goods_list_info : (json.targetRow.isObject ? json.targetRow : json))
+        let rawID = [
+            info.id.identifier,
+            json.id.identifier,
+            json.entityId.identifier
+        ].first { !$0.isEmpty && $0 != "0" } ?? UUID().uuidString
+        id = rawID
+        title = [
+            info.title.string,
+            json.title.string,
+            json.message_title.string,
+            FeedHTMLParser.plainText(json.message.string)
+        ].first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } ?? "好物榜"
+        subtitle = [info.description.string, info.sub_title.string, json.sub_title.string, json.description.string]
+            .first { !$0.isEmpty } ?? ""
+        cover = coolapkNormalizedURL([info.cover.string, info.pic.string, info.logo.string, json.pic.string, json.cover.string].first { !$0.isEmpty } ?? "")
+
+        let itemNum = info.item_num.int > 0 ? info.item_num.int : json.item_num.int
+        let voteNum = [info.vote_num.int, info.join_num.int, json.vote_num.int, json.replynum.int, json.likenum.int].first { $0 > 0 } ?? 0
+        var statParts: [String] = []
+        if itemNum > 0 { statParts.append("共 \(itemNum) 件好物") }
+        if voteNum > 0 { statParts.append("\(voteNum) 人参与推荐") }
+        if statParts.isEmpty, !info.sub_title.string.isEmpty {
+            statParts.append(info.sub_title.string)
+        }
+        statsText = statParts.joined(separator: " · ")
+
+        let rawDateline = info.dateline.double > 0 ? info.dateline.double : json.dateline.double
+        if rawDateline > 0 {
+            let d = Date(timeIntervalSince1970: rawDateline)
+            let fmt = DateFormatter()
+            fmt.dateFormat = "MM-dd"
+            dateText = fmt.string(from: d)
+        } else {
+            dateText = ""
+        }
+
+        let directURL = [info.url.string, json.url.string].first { !$0.isEmpty } ?? ""
+        if !directURL.isEmpty {
+            url = directURL
+        } else if rawID.allSatisfy(\.isNumber) {
+            url = "/feed/\(rawID)"
+        } else {
+            url = ""
+        }
+
+        let rawProducts: [JSON] = {
+            if !json.goodsListItem.array.isEmpty { return json.goodsListItem.array }
+            if !json.goods_list_item.array.isEmpty { return json.goods_list_item.array }
+            if !info.goodsListItem.array.isEmpty { return info.goodsListItem.array }
+            if !info.goods_list_item.array.isEmpty { return info.goods_list_item.array }
+            if !info.entities.array.isEmpty { return info.entities.array }
+            if !json.entities.array.isEmpty { return json.entities.array }
+            return []
+        }()
+
+        var parsedProducts: [GoodsRankingProduct] = []
+        for (idx, p) in rawProducts.prefix(6).enumerated() {
+            let pTitle = [
+                p.product_goods_title.string,
+                p.goods_title.string,
+                p.title.string,
+                p.product_title.string
+            ].first { !$0.isEmpty } ?? ""
+            let pCover = coolapkNormalizedURL([
+                p.product_goods_cover.string,
+                p.goods_pic.string,
+                p.cover.string,
+                p.pic.string,
+                p.logo.string
+            ].first { !$0.isEmpty } ?? "")
+            guard !pTitle.isEmpty || !pCover.isEmpty else { continue }
+            let rawPrice = [p.price.string, p.goods_price.string, p.price_text.string, p.sub_title.string].first { !$0.isEmpty } ?? ""
+            let formattedPrice: String = {
+                if rawPrice.isEmpty { return "" }
+                if rawPrice.hasPrefix("¥") || rawPrice.hasPrefix("￥") { return rawPrice }
+                if Double(rawPrice) != nil { return "¥\(rawPrice)" }
+                return rawPrice
+            }()
+            let pID = [p.product_goods_id.identifier, p.id.identifier, p.entityId.identifier].first { !$0.isEmpty && $0 != "0" } ?? "\(rawID)-p-\(idx)"
+            let pURL = [p.url.string, p.goods_url.string, p.target_url.string].first { !$0.isEmpty } ?? url
+            let pRank = p.sort.int > 0 ? p.sort.int : (idx + 1)
+            parsedProducts.append(GoodsRankingProduct(
+                id: "\(rawID)-\(idx)-\(pID)",
+                rank: pRank,
+                title: pTitle,
+                cover: pCover,
+                priceText: formattedPrice,
+                url: pURL
+            ))
+        }
+        products = parsedProducts
+    }
+}
+
+public struct ProductCategoryGroup: Identifiable, Hashable, Sendable {
+    public let id: String
+    public var title: String
+    public var logo: String
+    public var items: [HomeIconLink]
+
+    public init(id: String, title: String, logo: String = "", items: [HomeIconLink] = []) {
+        self.id = id
+        self.title = title
+        self.logo = logo
+        self.items = items
+    }
 }

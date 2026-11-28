@@ -183,6 +183,14 @@ public struct AppRouteDestinationView: View {
             PageFeedView(link: link, title: title)
                 .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .partitionHub(transitionID):
+            PartitionHubView()
+                .c001NativeTopBar()
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .productCategoryBrowser(transitionID):
+            ProductCategoryBrowserView()
+                .c001NativeTopBar()
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .coolpic(tag):
             CoolPicView(initialTag: tag)
                 .c001NativeTopBar()

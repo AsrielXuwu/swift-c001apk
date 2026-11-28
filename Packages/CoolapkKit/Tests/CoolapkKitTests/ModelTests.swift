@@ -469,5 +469,63 @@ final class ModelTests: XCTestCase {
         let faceDealFeed = FeedItem(json: try JSON(data: faceDealRaw))
         XCTAssertTrue(faceDealFeed.isSecondHand)
         XCTAssertEqual(faceDealFeed.priceText, "价格面议")
+
+        // Item 1 (v21): GoodsRankingItem ("好物榜") & UserProfile rich attributes / homeTabCards
+        let goodsRankingRaw = Data("""
+        {
+          "entityType": "card",
+          "entityTemplate": "goodsListCard",
+          "id": 9901,
+          "title": "2026 年度最受欢迎数码好物榜",
+          "item_num": 28,
+          "vote_num": 1542,
+          "dateline": 1764000000,
+          "goodsListItem": [
+            {"id": 101, "sort": 1, "product_goods_title": "旗舰手机 Ultra", "product_goods_cover": "https://image.coolapk.com/g1.jpg", "price": "5999"},
+            {"id": 102, "sort": 2, "product_goods_title": "降噪耳机 Pro 2", "product_goods_cover": "https://image.coolapk.com/g2.jpg", "price": "¥1299"},
+            {"id": 103, "sort": 3, "product_goods_title": "磁吸充电宝 10000mAh", "product_goods_cover": "https://image.coolapk.com/g3.jpg", "price": "199"}
+          ]
+        }
+        """.utf8)
+        let goodsJSON = try JSON(data: goodsRankingRaw)
+        XCTAssertTrue(GoodsRankingItem.looksLikeGoodsRankingJSON(goodsJSON))
+        let goodsRanking = GoodsRankingItem(json: goodsJSON)
+        XCTAssertEqual(goodsRanking.title, "2026 年度最受欢迎数码好物榜")
+        XCTAssertEqual(goodsRanking.products.count, 3)
+        XCTAssertEqual(goodsRanking.products[0].title, "旗舰手机 Ultra")
+        XCTAssertEqual(goodsRanking.products[0].priceText, "¥5999")
+        XCTAssertEqual(goodsRanking.products[1].rank, 2)
+
+        let richUserRaw = Data("""
+        {
+          "uid": 888001,
+          "username": "酷安极客",
+          "level": 12,
+          "gender": 1,
+          "astro": "天蝎座",
+          "ip_location": "广东",
+          "product_owner_count": 6,
+          "homeTabCardRows": [
+            {
+              "entityTemplate": "iconScrollCard",
+              "title": "TA关注的板块",
+              "url": "/user/followList",
+              "entities": [
+                {"entityType": "product", "entityId": 501, "title": "iPhone 17 Pro", "logo": "https://image.coolapk.com/p1.png", "url": "/product/501"}
+              ]
+            }
+          ]
+        }
+        """.utf8)
+        let richUser = UserProfile(json: try JSON(data: richUserRaw))
+        XCTAssertEqual(richUser.genderText, "男")
+        XCTAssertEqual(richUser.astro, "天蝎座")
+        XCTAssertEqual(richUser.ipLocation, "广东")
+        XCTAssertEqual(richUser.productOwnerCount, 6)
+        XCTAssertEqual(richUser.homeTabCards.count, 1)
+        XCTAssertEqual(richUser.homeTabCards.first?.title, "TA关注的板块")
+        XCTAssertEqual(richUser.homeTabCards.first?.links.first?.title, "iPhone 17 Pro")
+        XCTAssertTrue(HomeTabConfiguration.defaultOrder.contains(.secondHand))
+        XCTAssertTrue(HomeTabConfiguration.defaultOrder.contains(.review))
     }
 }

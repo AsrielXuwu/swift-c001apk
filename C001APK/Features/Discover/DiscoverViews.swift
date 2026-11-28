@@ -668,6 +668,7 @@ public struct ProductDetailView: View {
     @State private var loadingVariantSpecIDs: Set<String> = []
     @State private var selectedVariantID: String = ""
     @State private var isLoadingSpecs = false
+    @State private var showCompareSheet = false
 
     private let fallbackTabs: [ChoiceChip] = [
         ChoiceChip(id: "all_product_feeds", title: "讨论"),
@@ -911,6 +912,14 @@ public struct ProductDetailView: View {
                 hasInitialized = true
                 await reloadAll()
             }
+            .sheet(isPresented: $showCompareSheet) {
+                let variants = !productVariants.isEmpty ? productVariants : (product?.configVariants ?? [])
+                ProductCompareSheet(
+                    productTitle: product?.title ?? initialTitle ?? "机型对比",
+                    variants: variants,
+                    preloadedSectionsByID: variantSpecSectionsByID
+                )
+            }
         }
     }
 
@@ -1093,8 +1102,24 @@ public struct ProductDetailView: View {
             VStack(alignment: .leading, spacing: 12) {
                 if !variants.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("版本配置")
-                            .font(.headline)
+                        HStack {
+                            Text("版本配置")
+                                .font(.headline)
+                            Spacer()
+                            if variants.count >= 2 {
+                                Button {
+                                    showCompareSheet = true
+                                } label: {
+                                    Label("多版本参数对比", systemImage: "rectangle.split.2x1")
+                                        .font(.caption.weight(.semibold))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 5)
+                                        .background(Color.accentColor.opacity(0.14), in: Capsule())
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
 
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
@@ -3201,4 +3226,876 @@ private struct WebViewRepresentable: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: WKWebView, context: Context) {}
+}
+
+// MARK: - Multi-SKU Product Compare Sheet
+
+public struct ProductCompareSheet: View {
+    public let productTitle: String
+    public let variants: [ProductConfigVariant]
+    @State private var sectionsByID: [String: [ProductSpecSection]]
+    @State private var selectedIDs: [String]
+    @State private var highlightDifferencesOnly = false
+    @State private var isLoadingAll = false
+    @Environment(\.dismiss) private var dismiss
+
+    public init(
+        productTitle: String,
+        variants: [ProductConfigVariant],
+        preloadedSectionsByID: [String: [ProductSpecSection]] = [:]
+    ) {
+        self.productTitle = productTitle
+        self.variants = variants
+        self._sectionsByID = State(initialValue: preloadedSectionsByID)
+        self._selectedIDs = State(initialValue: Array(variants.prefix(3).map(\.id)))
+    }
+
+    private var comparedVariants: [ProductConfigVariant] {
+        variants.filter { selectedIDs.contains($0.id) }
+    }
+
+    private struct CompareRow: Identifiable {
+        let id: String
+        let sectionTitle: String
+        let label: String
+        let values: [String: String]
+        let isDifferent: Bool
+    }
+
+    private var compareRows: [CompareRow] {
+        let active = comparedVariants
+        guard !active.isEmpty else { return [] }
+        var rows: [CompareRow] = []
+
+        func appendRow(section: String, label: String, provider: (ProductConfigVariant) -> String) {
+            var map: [String: String] = [:]
+            var distinct = Set<String>()
+            for v in active {
+                let val = provider(v).trimmingCharacters(in: .whitespacesAndNewlines)
+                let shown = val.isEmpty ? "-" : val
+                map[v.id] = shown
+                if shown != "-" { distinct.insert(shown) }
+            }
+            let isDiff = distinct.count > 1
+            if highlightDifferencesOnly && !isDiff { return }
+            rows.append(CompareRow(
+                id: "\(section)-\(label)",
+                sectionTitle: section,
+                label: label,
+                values: map,
+                isDifferent: isDiff
+            ))
+        }
+
+        appendRow(section: "概览", label: "参考价格") { $0.priceText }
+        appendRow(section: "概览", label: "发布时间") { $0.releaseTime }
+        appendRow(section: "概览", label: "配置要点") { $0.keywords }
+
+        var sectionOrder: [String] = []
+        var labelsBySection: [String: [String]] = [:]
+
+        for v in active {
+            if let detailed = sectionsByID[v.id], !detailed.isEmpty {
+                for sec in detailed {
+                    if !sectionOrder.contains(sec.title) {
+                        sectionOrder.append(sec.title)
+                    }
+                    var list = labelsBySection[sec.title] ?? []
+                    for item in sec.items where !list.contains(item.label) {
+                        list.append(item.label)
+                    }
+                    labelsBySection[sec.title] = list
+                }
+            } else {
+                let fallbackSec = "核心规格"
+                if !sectionOrder.contains(fallbackSec) {
+                    sectionOrder.append(fallbackSec)
+                }
+                var list = labelsBySection[fallbackSec] ?? []
+                for item in v.specs where !list.contains(item.label) {
+                    list.append(item.label)
+                }
+                labelsBySection[fallbackSec] = list
+            }
+        }
+
+        for secTitle in sectionOrder {
+            for label in labelsBySection[secTitle] ?? [] {
+                appendRow(section: secTitle, label: label) { variant in
+                    if let detailed = sectionsByID[variant.id],
+                       let sec = detailed.first(where: { $0.title == secTitle }),
+                       let entry = sec.items.first(where: { $0.label == label }) {
+                        return entry.value
+                    }
+                    if let direct = variant.specs.first(where: { $0.label == label }) {
+                        return direct.value
+                    }
+                    return "-"
+                }
+            }
+        }
+
+        return rows
+    }
+
+    public var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(variants) { variant in
+                                let isSelected = selectedIDs.contains(variant.id)
+                                Button {
+                                    withAnimation(.snappy(duration: 0.2)) {
+                                        if isSelected {
+                                            if selectedIDs.count > 1 {
+                                                selectedIDs.removeAll { $0 == variant.id }
+                                            }
+                                        } else {
+                                            selectedIDs.append(variant.id)
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                                            .font(.caption)
+                                        Text(variant.title)
+                                            .font(.caption.weight(.semibold))
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 7)
+                                    .background(
+                                        isSelected ? Color.accentColor.opacity(0.16) : Color(.tertiarySystemGroupedBackground),
+                                        in: Capsule()
+                                    )
+                                    .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                    }
+
+                    HStack {
+                        Text("已选 \(comparedVariants.count) 个版本对比")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Toggle("仅看差异项", isOn: $highlightDifferencesOnly.animation(.snappy))
+                            .font(.caption.weight(.medium))
+                            .fixedSize()
+                    }
+                    .padding(.horizontal, 14)
+                }
+                .padding(.vertical, 10)
+                .background(Color(.secondarySystemGroupedBackground))
+
+                if isLoadingAll && compareRows.isEmpty {
+                    ProgressView("正在加载各版本完整规格…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView([.vertical, .horizontal]) {
+                        LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                            Section {
+                                ForEach(compareRows) { row in
+                                    HStack(alignment: .top, spacing: 0) {
+                                        Text(row.label)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.secondary)
+                                            .frame(width: 96, alignment: .leading)
+                                            .padding(10)
+
+                                        ForEach(comparedVariants) { variant in
+                                            let val = row.values[variant.id] ?? "-"
+                                            Text(val)
+                                                .font(.caption)
+                                                .foregroundStyle(row.isDifferent ? Color.primary : Color.secondary)
+                                                .fontWeight(row.isDifferent ? .semibold : .regular)
+                                                .frame(width: 148, alignment: .leading)
+                                                .padding(10)
+                                        }
+                                    }
+                                    .background(row.isDifferent ? Color.accentColor.opacity(0.07) : Color.clear)
+                                    .overlay(alignment: .bottom) {
+                                        Divider().opacity(0.35)
+                                    }
+                                }
+                            } header: {
+                                HStack(spacing: 0) {
+                                    Text("参数项")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 96, alignment: .leading)
+                                        .padding(10)
+
+                                    ForEach(comparedVariants) { variant in
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(variant.title)
+                                                .font(.caption.weight(.bold))
+                                                .foregroundStyle(Color.accentColor)
+                                                .lineLimit(1)
+                                            if !variant.priceText.isEmpty {
+                                                Text(variant.priceText)
+                                                    .font(.caption2)
+                                                    .foregroundStyle(.secondary)
+                                            }
+                                        }
+                                        .frame(width: 148, alignment: .leading)
+                                        .padding(10)
+                                    }
+                                }
+                                .background(.ultraThinMaterial)
+                            }
+                        }
+                    }
+                }
+            }
+            .c001PageBackground()
+            .navigationTitle("\(productTitle) 参数对比")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { dismiss() }
+                }
+            }
+            .task {
+                isLoadingAll = true
+                for v in variants where !v.id.isEmpty && !v.id.hasPrefix("cfg-") && sectionsByID[v.id] == nil {
+                    let loaded = await API.productConfigInfo(configID: v.id)
+                    if !loaded.isEmpty {
+                        sectionsByID[v.id] = loaded
+                    }
+                }
+                isLoadingAll = false
+            }
+        }
+    }
+}
+
+// MARK: - Card-Style Partition & Discovery Hub (分区与发现广场)
+
+public struct PartitionItem: Identifiable, Hashable, Sendable {
+    public let id: String
+    public let title: String
+    public let subtitle: String
+    public let systemImage: String
+    public let tint: Color
+    public let action: PartitionAction
+
+    public enum PartitionAction: Hashable, Sendable {
+        case route(AppRoute)
+        case rawLink(String, String)
+    }
+}
+
+public struct PartitionGroup: Identifiable, Sendable {
+    public let id: String
+    public let title: String
+    public let icon: String
+    public let items: [PartitionItem]
+}
+
+public struct PartitionHubView: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
+    @State private var searchText = ""
+    @State private var mode = 0 // 0: 分区卡片导航, 1: 发现频道流
+    @State private var discoverChannels: [HomeSection] = []
+    @State private var selectedChannelID: String = ""
+    @State private var scrolledChannelID: String?
+    @State private var rowsByChannel: [String: [HomeFeedRow]] = [:]
+    @State private var loadingChannels: Set<String> = []
+    @State private var loadedChannels: Set<String> = []
+    @State private var pageByChannel: [String: Int] = [:]
+    @State private var hasMoreByChannel: [String: Bool] = [:]
+    @State private var myServerCards: [HomeFeedRow] = []
+
+    public init() {}
+
+    public static let featuredShortcuts: [PartitionItem] = [
+        PartitionItem(id: "feat-digital", title: "数码分类库", subtitle: "品牌与机型大全", systemImage: "cpu.fill", tint: .blue, action: .route(.productCategoryBrowser())),
+        PartitionItem(id: "feat-ershou", title: "二手市场", subtitle: "闲置优品与估价", systemImage: "tag.fill", tint: .orange, action: .rawLink("#/page?url=V11_FIND_GOOD_GOODS_HOME&title=二手", "二手市场")),
+        PartitionItem(id: "feat-review", title: "评测专区", subtitle: "深度首发数码测评", systemImage: "checkmark.seal.fill", tint: .teal, action: .rawLink("#/board/数码测评", "评测专区")),
+        PartitionItem(id: "feat-goods", title: "好物榜单", subtitle: "酷友真实投票排行", systemImage: "crown.fill", tint: .pink, action: .rawLink("#/page?url=V11_FIND_GOOD_THINGS&title=好物", "好物推荐")),
+        PartitionItem(id: "feat-coolpic", title: "酷图精选", subtitle: "高清壁纸与摄影", systemImage: "photo.on.rectangle.angled", tint: .purple, action: .route(.coolpic(tag: "全部"))),
+        PartitionItem(id: "feat-apps", title: "应用中心", subtitle: "精品应用与排行", systemImage: "square.stack.3d.up.fill", tint: .green, action: .rawLink("/v6/apk/index?apkType=1", "应用中心")),
+        PartitionItem(id: "feat-games", title: "游戏中心", subtitle: "热门手游与新游", systemImage: "gamecontroller.fill", tint: .indigo, action: .rawLink("/v6/apk/index?apkType=2", "游戏中心")),
+        PartitionItem(id: "feat-topics", title: "话题广场", subtitle: "全站兴趣圈子", systemImage: "number.circle.fill", tint: .cyan, action: .rawLink("#/page?url=V11_VERTICAL_TOPIC&title=话题广场", "话题广场"))
+    ]
+
+    public static let partitionGroups: [PartitionGroup] = [
+        PartitionGroup(
+            id: "grp-digital",
+            title: "数码与装备专区",
+            icon: "iphone.gen3",
+            items: [
+                PartitionItem(id: "dig-lib", title: "品牌机型分类库", subtitle: "按品牌查看全部手机/平板/电脑/外设", systemImage: "square.grid.3x2.fill", tint: .blue, action: .route(.productCategoryBrowser())),
+                PartitionItem(id: "dig-home", title: "数码综合广场", subtitle: "热门新机热议与机主真实到手价", systemImage: "cpu", tint: .cyan, action: .rawLink("#/page?url=V10_DIGITAL_HOME&title=数码", "数码广场")),
+                PartitionItem(id: "dig-review", title: "数码测评专栏", subtitle: "硬核开箱、长测体验与横评", systemImage: "checkmark.seal.fill", tint: .teal, action: .rawLink("#/board/数码测评", "评测专区")),
+                PartitionItem(id: "dig-ershou", title: "酷安二手闲置", subtitle: "官方严选与个人闲置交易区", systemImage: "tag.fill", tint: .orange, action: .rawLink("#/page?url=V11_FIND_GOOD_GOODS_HOME&title=二手", "二手市场"))
+            ]
+        ),
+        PartitionGroup(
+            id: "grp-community",
+            title: "内容与社区生态",
+            icon: "sparkles.rectangle.stack.fill",
+            items: [
+                PartitionItem(id: "com-headline", title: "头条快讯", subtitle: "每日科技数码精选资讯", systemImage: "newspaper.fill", tint: .red, action: .rawLink("/main/headline", "头条快讯")),
+                PartitionItem(id: "com-rank", title: "酷安热榜", subtitle: "实时全站高能讨论风向标", systemImage: "flame.fill", tint: .orange, action: .rawLink("#/page?url=V9_HOME_TAB_RANKING&title=热榜", "酷安热榜")),
+                PartitionItem(id: "com-dyh", title: "看看号专栏", subtitle: "深度图文专栏与媒体订阅", systemImage: "doc.richtext.fill", tint: .blue, action: .rawLink("/user/dyhSubscribe", "看看号")),
+                PartitionItem(id: "com-qa", title: "问答社区", subtitle: "购机求助与疑难解答互助", systemImage: "questionmark.bubble.fill", tint: .green, action: .rawLink("#/page?url=V9_HOME_TAB_QUESTION&title=问答", "问答社区")),
+                PartitionItem(id: "com-coolpic", title: "酷图壁纸", subtitle: "桌面美学、锁屏壁纸与摄影作品", systemImage: "camera.aperture", tint: .purple, action: .route(.coolpic(tag: "全部"))),
+                PartitionItem(id: "com-topic", title: "话题分类广场", subtitle: "全部兴趣话题与讨论小组", systemImage: "number.square.fill", tint: .indigo, action: .rawLink("#/page?url=V11_VERTICAL_TOPIC&title=话题", "话题广场"))
+            ]
+        ),
+        PartitionGroup(
+            id: "grp-goods",
+            title: "福利、活动与好物",
+            icon: "gift.fill",
+            items: [
+                PartitionItem(id: "act-goods", title: "好物推荐与榜单", subtitle: "TOP 排行榜与真实买点推荐", systemImage: "bag.fill", tint: .pink, action: .rawLink("#/page?url=V11_FIND_GOOD_THINGS&title=好物", "好物推荐")),
+                PartitionItem(id: "act-events", title: "酷友圈活动", subtitle: "众测体验、征文打卡与有奖话题", systemImage: "flag.2.crossed.fill", tint: .orange, action: .rawLink("/v6/event/list", "酷友圈活动")),
+                PartitionItem(id: "act-apps", title: "应用推荐", subtitle: "Android / iOS 优质软件合集", systemImage: "app.badge.checkmark.fill", tint: .green, action: .rawLink("/v6/apk/index?apkType=1", "应用中心")),
+                PartitionItem(id: "act-games", title: "游戏发现", subtitle: "高分独立游戏与热门新游榜", systemImage: "gamecontroller.fill", tint: .indigo, action: .rawLink("/v6/apk/index?apkType=2", "游戏中心"))
+            ]
+        ),
+        PartitionGroup(
+            id: "grp-tools",
+            title: "个人中心与实用管理",
+            icon: "slider.horizontal.3",
+            items: [
+                PartitionItem(id: "tool-history", title: "浏览历史", subtitle: "本机与云端跨设备足迹", systemImage: "clock.arrow.circlepath", tint: .blue, action: .route(.history)),
+                PartitionItem(id: "tool-fav", title: "收藏夹管理", subtitle: "本地与云端双同步收藏夹", systemImage: "star.fill", tint: .yellow, action: .route(.favorites)),
+                PartitionItem(id: "tool-localfollow", title: "本机与悄悄关注", subtitle: "不公开的本机私密关注列表", systemImage: "eye.slash.fill", tint: .purple, action: .route(.localFollowList)),
+                PartitionItem(id: "tool-filter", title: "内容与关键词过滤", subtitle: "屏蔽引战词、推广帖与黑名单", systemImage: "line.3.horizontal.decrease.circle.fill", tint: .teal, action: .route(.contentFilterSettings))
+            ]
+        )
+    ]
+
+    private var filteredGroups: [PartitionGroup] {
+        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !keyword.isEmpty else { return Self.partitionGroups }
+        return Self.partitionGroups.compactMap { group in
+            let matched = group.items.filter {
+                $0.title.lowercased().contains(keyword) || $0.subtitle.lowercased().contains(keyword)
+            }
+            return matched.isEmpty ? nil : PartitionGroup(id: group.id, title: group.title, icon: group.icon, items: matched)
+        }
+    }
+
+    public var body: some View {
+        VStack(spacing: 0) {
+            Picker("模式", selection: $mode.animation(.snappy(duration: 0.22))) {
+                Text("分区卡片").tag(0)
+                Text("发现频道").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+
+            if mode == 0 {
+                partitionCardsBody
+            } else {
+                discoverChannelsBody
+            }
+        }
+        .c001PageBackground()
+        .navigationTitle("分区与发现")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索分区、板块、榜单或功能")
+        .task {
+            if discoverChannels.isEmpty {
+                let loaded = (try? await API.discoverChannels()) ?? []
+                if !loaded.isEmpty {
+                    discoverChannels = loaded
+                } else {
+                    discoverChannels = [
+                        HomeSection(id: "d-ershou", title: "二手", subtitle: "", url: "#/page?url=V11_FIND_GOOD_GOODS_HOME&title=二手", style: ""),
+                        HomeSection(id: "d-goods", title: "好物", subtitle: "", url: "#/page?url=V11_FIND_GOOD_THINGS&title=好物", style: ""),
+                        HomeSection(id: "d-review", title: "评测", subtitle: "", url: "#/board/数码测评", style: ""),
+                        HomeSection(id: "d-digital", title: "数码", subtitle: "", url: "#/page?url=V10_DIGITAL_HOME&title=数码", style: ""),
+                        HomeSection(id: "d-dyh", title: "看看号", subtitle: "", url: "/user/dyhSubscribe", style: "")
+                    ]
+                }
+                if selectedChannelID.isEmpty, let first = discoverChannels.first?.id {
+                    selectedChannelID = first
+                    scrolledChannelID = first
+                }
+            }
+            if myServerCards.isEmpty {
+                myServerCards = (try? await API.myProfileCards()) ?? []
+            }
+        }
+    }
+
+    private var partitionCardsBody: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "flame.fill")
+                                .foregroundStyle(.orange)
+                            Text("常用与核心专区")
+                                .font(.headline)
+                        }
+                        .padding(.horizontal, 4)
+
+                        let cols = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
+                        LazyVGrid(columns: cols, spacing: 14) {
+                            ForEach(Self.featuredShortcuts) { item in
+                                let sourceID = "part-feat-\(transitionSeed)-\(item.id)"
+                                Button {
+                                    trigger(item, sourceID: sourceID)
+                                } label: {
+                                    VStack(spacing: 7) {
+                                        RoundedRectangle(cornerRadius: 15, style: .continuous)
+                                            .fill(item.tint.opacity(0.15))
+                                            .frame(width: 50, height: 50)
+                                            .overlay {
+                                                Image(systemName: item.systemImage)
+                                                    .font(.title3.weight(.semibold))
+                                                    .foregroundStyle(item.tint)
+                                            }
+                                        Text(item.title)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 15)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    .padding(14)
+                    .c001CardStyle(cornerRadius: 22)
+                    .padding(.horizontal, 12)
+                }
+
+                ForEach(filteredGroups) { group in
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 7) {
+                            Image(systemName: group.icon)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.accentColor)
+                            Text(group.title)
+                                .font(.headline)
+                        }
+                        .padding(.horizontal, 16)
+
+                        let twoCols = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
+                        LazyVGrid(columns: twoCols, spacing: 10) {
+                            ForEach(group.items) { item in
+                                let sourceID = "part-card-\(transitionSeed)-\(item.id)"
+                                Button {
+                                    trigger(item, sourceID: sourceID)
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(item.tint.opacity(0.15))
+                                            .frame(width: 40, height: 40)
+                                            .overlay {
+                                                Image(systemName: item.systemImage)
+                                                    .font(.subheadline.weight(.semibold))
+                                                    .foregroundStyle(item.tint)
+                                            }
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(item.title)
+                                                .font(.subheadline.weight(.semibold))
+                                                .foregroundStyle(.primary)
+                                                .lineLimit(1)
+                                            Text(item.subtitle)
+                                                .font(.caption2)
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                                .multilineTextAlignment(.leading)
+                                        }
+                                        Spacer(minLength: 0)
+                                    }
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .c001CardStyle(cornerRadius: 18)
+                                    .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 18)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                    }
+                }
+
+                if !myServerCards.isEmpty && searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(spacing: 7) {
+                            Image(systemName: "rectangle.stack.person.crop.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(Color.accentColor)
+                            Text("云端发现卡片")
+                                .font(.headline)
+                        }
+                        .padding(.horizontal, 16)
+
+                        ForEach(myServerCards) { row in
+                            HomeRowRenderer(row: row)
+                        }
+                    }
+                }
+            }
+            .padding(.vertical, 10)
+            .padding(.bottom, 72)
+        }
+    }
+
+    private var activeDiscoverChannel: HomeSection {
+        discoverChannels.first { $0.id == selectedChannelID }
+            ?? discoverChannels.first
+            ?? HomeSection(id: "d-ershou", title: "二手", subtitle: "", url: "#/page?url=V11_FIND_GOOD_GOODS_HOME&title=二手", style: "")
+    }
+
+    private var discoverChannelsBody: some View {
+        ScrollViewReader { proxy in
+            VStack(spacing: 0) {
+                if !discoverChannels.isEmpty {
+                    FloatingTabStrip(
+                        items: discoverChannels,
+                        selection: activeDiscoverChannel,
+                        titleProvider: \.title,
+                        onSelect: { ch in
+                            selectedChannelID = ch.id
+                        },
+                        onReselect: { ch in
+                            withAnimation(.snappy) {
+                                proxy.scrollTo("disc-top-\(ch.id)", anchor: .top)
+                            }
+                        }
+                    )
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 0) {
+                        ForEach(discoverChannels) { ch in
+                            discoverChannelPage(for: ch)
+                                .containerRelativeFrame(.horizontal)
+                                .frame(maxHeight: .infinity)
+                                .id(ch.id)
+                        }
+                    }
+                    .scrollTargetLayout()
+                }
+                .scrollTargetBehavior(.paging)
+                .scrollPosition(id: $scrolledChannelID)
+            }
+            .onChange(of: scrolledChannelID) { _, next in
+                if let next, next != selectedChannelID {
+                    selectedChannelID = next
+                }
+            }
+            .onChange(of: selectedChannelID) { _, next in
+                if scrolledChannelID != next {
+                    withAnimation(.snappy(duration: 0.24)) {
+                        scrolledChannelID = next
+                    }
+                }
+                if let ch = discoverChannels.first(where: { $0.id == next }) {
+                    Task { await loadChannel(ch, force: false) }
+                }
+            }
+            .task(id: selectedChannelID) {
+                if let ch = discoverChannels.first(where: { $0.id == selectedChannelID }) {
+                    await loadChannel(ch, force: false)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func discoverChannelPage(for channel: HomeSection) -> some View {
+        let rows = rowsByChannel[channel.id] ?? []
+        let isLoading = loadingChannels.contains(channel.id)
+        let hasLoaded = loadedChannels.contains(channel.id)
+
+        if (!hasLoaded || isLoading) && rows.isEmpty {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if rows.isEmpty {
+            ContentUnavailableView("暂无该频道内容", systemImage: "sparkles")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                VStack(spacing: 0) {
+                    Color.clear.frame(height: 0).id("disc-top-\(channel.id)")
+                    LazyVStack(spacing: 10) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { idx, row in
+                            HomeRowRenderer(row: row)
+                                .onAppear {
+                                    if idx >= rows.count - 4 {
+                                        Task { await loadMoreChannel(channel) }
+                                    }
+                                }
+                        }
+                    }
+                    .padding(.vertical, 8)
+                    .padding(.bottom, 80)
+                }
+            }
+            .refreshable {
+                await loadChannel(channel, force: true)
+            }
+        }
+    }
+
+    private func loadChannel(_ channel: HomeSection, force: Bool) async {
+        if !force && (loadedChannels.contains(channel.id) || loadingChannels.contains(channel.id)) { return }
+        loadingChannels.insert(channel.id)
+        defer { loadingChannels.remove(channel.id) }
+        pageByChannel[channel.id] = 1
+        do {
+            let fetched = try await API.linkFeed(link: channel.url, page: 1)
+            withAnimation(.smooth(duration: 0.22)) {
+                rowsByChannel[channel.id] = fetched
+                loadedChannels.insert(channel.id)
+                hasMoreByChannel[channel.id] = !fetched.isEmpty
+            }
+        } catch {
+            _ = await appState.handleAPIError(error)
+        }
+    }
+
+    private func loadMoreChannel(_ channel: HomeSection) async {
+        guard hasMoreByChannel[channel.id] != false,
+              !loadingChannels.contains(channel.id) else { return }
+        loadingChannels.insert(channel.id)
+        defer { loadingChannels.remove(channel.id) }
+        let next = (pageByChannel[channel.id] ?? 1) + 1
+        if let fetched = try? await API.linkFeed(link: channel.url, page: next) {
+            let current = rowsByChannel[channel.id] ?? []
+            var seen = Set(current.map(\.id))
+            let unique = fetched.filter { seen.insert($0.id).inserted }
+            rowsByChannel[channel.id] = current + unique
+            hasMoreByChannel[channel.id] = !unique.isEmpty
+            if !unique.isEmpty { pageByChannel[channel.id] = next }
+        }
+    }
+
+    private func trigger(_ item: PartitionItem, sourceID: String) {
+        switch item.action {
+        case let .route(route):
+            switch route {
+            case .productCategoryBrowser:
+                appState.push(.productCategoryBrowser(transitionID: sourceID))
+            case .partitionHub:
+                appState.push(.partitionHub(transitionID: sourceID))
+            default:
+                appState.push(route)
+            }
+        case let .rawLink(link, title):
+            appState.openRawLink(link, title: title, transitionID: sourceID)
+        }
+    }
+}
+
+// MARK: - Two-Pane Digital Brand & Category Directory Browser (数码品牌分类库)
+
+public struct ProductCategoryBrowserView: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
+    @State private var groups: [ProductCategoryGroup] = []
+    @State private var selectedGroupID: String = ""
+    @State private var searchText = ""
+    @State private var isGridView = true
+    @State private var isLoading = true
+
+    public init() {}
+
+    private var activeGroup: ProductCategoryGroup? {
+        groups.first { $0.id == selectedGroupID } ?? groups.first
+    }
+
+    private var filteredItems: [HomeIconLink] {
+        let keyword = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !keyword.isEmpty {
+            var all: [HomeIconLink] = []
+            var seen = Set<String>()
+            for grp in groups {
+                for item in grp.items where item.title.lowercased().contains(keyword) {
+                    if seen.insert(item.title + item.url).inserted {
+                        all.append(item)
+                    }
+                }
+            }
+            return all
+        }
+        return activeGroup?.items ?? []
+    }
+
+    public var body: some View {
+        Group {
+            if isLoading && groups.isEmpty {
+                ProgressView("正在加载数码品牌分类库…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if groups.isEmpty {
+                ContentUnavailableView("暂无数码分类数据", systemImage: "cpu")
+            } else {
+                HStack(spacing: 0) {
+                    if searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        ScrollView(showsIndicators: false) {
+                            LazyVStack(spacing: 4) {
+                                ForEach(groups) { grp in
+                                    let isSelected = activeGroup?.id == grp.id
+                                    Button {
+                                        withAnimation(.snappy(duration: 0.2)) {
+                                            selectedGroupID = grp.id
+                                        }
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Capsule()
+                                                .fill(isSelected ? Color.accentColor : Color.clear)
+                                                .frame(width: 3.5, height: 18)
+                                            Text(grp.title)
+                                                .font(.subheadline.weight(isSelected ? .bold : .medium))
+                                                .foregroundStyle(isSelected ? Color.accentColor : Color.primary)
+                                                .lineLimit(1)
+                                            Spacer(minLength: 0)
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 12)
+                                        .background(
+                                            isSelected ? Color.accentColor.opacity(0.12) : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(8)
+                        }
+                        .frame(width: 106)
+                        .background(Color(.secondarySystemGroupedBackground))
+                    }
+
+                    ScrollView {
+                        if isGridView {
+                            let cols = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
+                            LazyVGrid(columns: cols, spacing: 12) {
+                                ForEach(filteredItems) { item in
+                                    categoryItemGridCell(item)
+                                }
+                            }
+                            .padding(12)
+                            .padding(.bottom, 76)
+                        } else {
+                            LazyVStack(spacing: 8) {
+                                ForEach(filteredItems) { item in
+                                    categoryItemListRow(item)
+                                }
+                            }
+                            .padding(12)
+                            .padding(.bottom, 76)
+                        }
+                    }
+                }
+            }
+        }
+        .c001PageBackground()
+        .navigationTitle("数码品牌分类库")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索品牌或数码品类")
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        isGridView.toggle()
+                    }
+                } label: {
+                    Image(systemName: isGridView ? "list.bullet" : "square.grid.2x2")
+                }
+                .accessibilityLabel(isGridView ? "列表视图" : "网格视图")
+            }
+        }
+        .task {
+            guard groups.isEmpty else { return }
+            isLoading = true
+            let loaded = (try? await API.productCategoryGroups()) ?? []
+            withAnimation(.smooth(duration: 0.22)) {
+                groups = loaded
+                if selectedGroupID.isEmpty, let first = loaded.first?.id {
+                    selectedGroupID = first
+                }
+                isLoading = false
+            }
+        }
+    }
+
+    private func categoryItemGridCell(_ item: HomeIconLink) -> some View {
+        let isWide = IconLinksScrollView.isWideIconURL(item.image)
+        let sourceID = "pcat-cell-\(transitionSeed)-\(item.id)"
+        return Button {
+            appState.openRawLink(item.url, title: item.title, transitionID: sourceID)
+        } label: {
+            VStack(spacing: 8) {
+                if isWide {
+                    RemoteImageView(url: item.image, maxPixelSize: 220, contentMode: .fit)
+                        .frame(height: 38)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 6)
+                } else {
+                    RemoteImageView(url: item.image, maxPixelSize: 180, contentMode: .fit)
+                        .frame(width: 50, height: 50)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                Text(item.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity)
+            .c001CardStyle(cornerRadius: 16)
+            .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 16)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func categoryItemListRow(_ item: HomeIconLink) -> some View {
+        let isWide = IconLinksScrollView.isWideIconURL(item.image)
+        let sourceID = "pcat-row-\(transitionSeed)-\(item.id)"
+        return Button {
+            appState.openRawLink(item.url, title: item.title, transitionID: sourceID)
+        } label: {
+            HStack(spacing: 12) {
+                if isWide {
+                    RemoteImageView(url: item.image, maxPixelSize: 220, contentMode: .fit)
+                        .frame(width: 68, height: 34)
+                } else {
+                    RemoteImageView(url: item.image, maxPixelSize: 160)
+                        .frame(width: 42, height: 42)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    if !item.subtitle.isEmpty {
+                        Text(item.subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .c001CardStyle(cornerRadius: 16)
+            .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 16)
+        }
+        .buttonStyle(.plain)
+    }
 }

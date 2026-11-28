@@ -51,7 +51,10 @@ public struct UserDetailView: View {
         return uid.allSatisfy(\.isNumber) ? "" : uid
     }
 
+    @State private var ratingTargetFilter: String = "all"
+
     private enum UserTab: String, CaseIterable, Identifiable {
+        case home = "主页"
         case feeds = "动态"
         case htmlFeeds = "图文"
         case qa = "问答"
@@ -67,6 +70,7 @@ public struct UserDetailView: View {
 
         var apiKey: String {
             switch self {
+            case .home: return "home"
             case .feeds: return "feeds"
             case .htmlFeeds: return "htmlFeeds"
             case .qa: return "qa"
@@ -77,6 +81,14 @@ public struct UserDetailView: View {
             case .collections, .following, .fans: return ""
             }
         }
+    }
+
+    private var visibleUserTabs: [UserTab] {
+        let effectiveProfile = profile ?? appState.cachedUserProfile(uid: uid)
+        if let cards = effectiveProfile?.homeTabCards, !cards.isEmpty {
+            return UserTab.allCases
+        }
+        return UserTab.allCases.filter { $0 != .home }
     }
 
     public init(uid: String, initialUsername: String? = nil, initialAvatar: String? = nil, initialTab: String? = nil) {
@@ -94,7 +106,7 @@ public struct UserDetailView: View {
             ZStack(alignment: .top) {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 0) {
-                        ForEach(UserTab.allCases) { item in
+                        ForEach(visibleUserTabs) { item in
                             tabScrollPage(for: item)
                                 .containerRelativeFrame(.horizontal)
                                 .frame(maxHeight: .infinity)
@@ -116,7 +128,7 @@ public struct UserDetailView: View {
                         .padding(.top, 8)
                 } tabStrip: {
                     FloatingTabStrip(
-                        items: UserTab.allCases,
+                        items: visibleUserTabs,
                         selection: tab,
                         titleProvider: { $0.rawValue },
                         onSelect: { selected in
@@ -379,12 +391,53 @@ public struct UserDetailView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 20) {
-                    Text("\(Formatting.count(profile.feedNum)) 动态")
-                    Text("\(Formatting.count(profile.followNum)) 关注")
-                    Text("\(Formatting.count(profile.fansNum)) 粉丝")
+                userAttributeChips(profile)
+
+                HStack(spacing: 18) {
+                    Button {
+                        withAnimation(.snappy) { tab = .feeds }
+                    } label: {
+                        Text("\(Formatting.count(profile.feedNum)) 动态")
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        withAnimation(.snappy) { tab = .following }
+                    } label: {
+                        Text("\(Formatting.count(profile.followNum)) 关注")
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        withAnimation(.snappy) { tab = .fans }
+                    } label: {
+                        Text("\(Formatting.count(profile.fansNum)) 粉丝")
+                    }
+                    .buttonStyle(.plain)
+
                     if profile.likeNum > 0 {
                         Text("\(Formatting.count(profile.likeNum)) 获赞")
+                    }
+
+                    if profile.productOwnerCount > 0 {
+                        Spacer()
+                        let equipSourceID = "user-equip-\(transitionSeed)-\(profile.id)"
+                        Button {
+                            appState.openRawLink(
+                                "#/page?url=/v6/user/productList&uid=\(profile.id)&type=owner&title=TA的数码装备",
+                                title: "\(profile.username) 的装备",
+                                transitionID: equipSourceID
+                            )
+                        } label: {
+                            Label("\(profile.productOwnerCount) 件装备", systemImage: "cpu")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3.5)
+                                .background(Color.accentColor.opacity(0.14), in: Capsule())
+                                .foregroundStyle(Color.accentColor)
+                                .applyZoomSource(id: equipSourceID, in: zoomNamespace, cornerRadius: 10)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .font(.caption.weight(.medium))
@@ -450,8 +503,74 @@ public struct UserDetailView: View {
         )
     }
 
+    @ViewBuilder
+    private func userAttributeChips(_ profile: UserProfile) -> some View {
+        let genderAstro = [profile.genderText, profile.astro].filter { !$0.isEmpty }.joined(separator: " · ")
+        let activeText: String = {
+            if profile.isRecentlyOnline { return "当前在线" }
+            if let t = profile.loginTime { return "\(Formatting.relativeTime(t))活跃" }
+            return ""
+        }()
+        let hasChips = !activeText.isEmpty || !genderAstro.isEmpty || !profile.ipLocation.isEmpty || !profile.regDaysText.isEmpty || !profile.deviceTitle.isEmpty
+        if hasChips {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    if !activeText.isEmpty {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(profile.isRecentlyOnline ? Color.green : Color.secondary.opacity(0.5))
+                                .frame(width: 6, height: 6)
+                            Text(activeText)
+                        }
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3.5)
+                        .background(Color(.tertiarySystemFill), in: Capsule())
+                        .foregroundStyle(profile.isRecentlyOnline ? Color.green : Color.secondary)
+                    }
+                    if !genderAstro.isEmpty {
+                        Text(genderAstro)
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3.5)
+                            .background(Color(.tertiarySystemFill), in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
+                    if !profile.ipLocation.isEmpty {
+                        Text("IP \(profile.ipLocation)")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3.5)
+                            .background(Color(.tertiarySystemFill), in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
+                    if !profile.regDaysText.isEmpty {
+                        Text(profile.regDaysText)
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3.5)
+                            .background(Color(.tertiarySystemFill), in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
+                    if !profile.deviceTitle.isEmpty {
+                        Label(profile.deviceTitle, systemImage: "iphone")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3.5)
+                            .background(Color(.tertiarySystemFill), in: Capsule())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .scrollEdgeEffectHidden(true)
+        }
+    }
+
     private func isTabEmpty(_ item: UserTab) -> Bool {
         switch item {
+        case .home:
+            let cards = (profile ?? appState.cachedUserProfile(uid: uid))?.homeTabCards ?? []
+            return cards.isEmpty && (feedRowsByTab[.feeds] ?? []).isEmpty
         case .feeds, .htmlFeeds, .qa, .coolpic, .ratings, .ershou, .likes:
             return (feedRowsByTab[item] ?? []).isEmpty
         case .collections: return userCollections.isEmpty
@@ -477,7 +596,12 @@ public struct UserDetailView: View {
                 .frame(maxWidth: .infinity, minHeight: 200)
         } else {
             switch item {
-            case .feeds, .htmlFeeds, .qa, .coolpic, .ratings, .ershou, .likes:
+            case .home:
+                userHomeCardsBody
+            case .ratings:
+                ratingsFilterBar
+                feedList(feedRowsByTab[item] ?? [], for: item)
+            case .feeds, .htmlFeeds, .qa, .coolpic, .ershou, .likes:
                 feedList(feedRowsByTab[item] ?? [], for: item)
             case .collections:
                 ForEach(Array(userCollections.enumerated()), id: \.element.id) { idx, col in
@@ -529,6 +653,106 @@ public struct UserDetailView: View {
         }
     }
 
+    private var ratingsFilterBar: some View {
+        let filters: [(id: String, title: String)] = [
+            ("all", "全部点评"),
+            ("product", "只看数码"),
+            ("apk", "只看应用")
+        ]
+        return HStack(spacing: 8) {
+            ForEach(filters, id: \.id) { item in
+                let isSelected = ratingTargetFilter == item.id
+                Button {
+                    guard ratingTargetFilter != item.id else { return }
+                    withAnimation(.snappy(duration: 0.2)) {
+                        ratingTargetFilter = item.id
+                    }
+                    Task { await reloadTab(.ratings, force: true) }
+                } label: {
+                    Text(item.title)
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(
+                            isSelected ? Color.accentColor.opacity(0.16) : Color(.secondarySystemGroupedBackground),
+                            in: Capsule()
+                        )
+                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 2)
+    }
+
+    @ViewBuilder
+    private var userHomeCardsBody: some View {
+        let cards = (profile ?? appState.cachedUserProfile(uid: uid))?.homeTabCards ?? []
+        ForEach(cards) { card in
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text(card.title)
+                        .font(.headline)
+                    Spacer()
+                    if !card.url.isEmpty {
+                        let moreSourceID = "uhmore-\(transitionSeed)-\(card.id)"
+                        Button {
+                            appState.openRawLink(card.url, title: card.title, transitionID: moreSourceID)
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text("查看全部")
+                                Image(systemName: "chevron.right")
+                            }
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .applyZoomSource(id: moreSourceID, in: zoomNamespace, cornerRadius: 10)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 16)
+
+                if !card.users.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 14) {
+                            ForEach(card.users) { u in
+                                let uSourceID = "uhuser-\(transitionSeed)-\(card.id)-\(u.id)"
+                                Button {
+                                    appState.push(.user(uid: u.id, initialUsername: u.username, initialAvatar: u.avatar, transitionID: uSourceID))
+                                } label: {
+                                    VStack(spacing: 6) {
+                                        AvatarView(url: u.avatar, size: 50)
+                                        Text(u.username)
+                                            .font(.caption)
+                                            .foregroundStyle(.primary)
+                                            .lineLimit(1)
+                                    }
+                                    .frame(width: 68)
+                                    .applyZoomSource(id: uSourceID, in: zoomNamespace, cornerRadius: 25)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                    }
+                    .c001CardStyle(cornerRadius: 20)
+                    .padding(.horizontal, 12)
+                }
+
+                if !card.links.isEmpty {
+                    IconLinksScrollView(links: card.links)
+                }
+
+                ForEach(card.feeds) { feed in
+                    FeedRowView(feed: feed)
+                }
+            }
+        }
+    }
+
     private func feedList(_ items: [HomeFeedRow], for activeTab: UserTab) -> some View {
         ForEach(Array(items.enumerated()), id: \.element.id) { idx, row in
             HomeRowRenderer(row: row)
@@ -569,7 +793,18 @@ public struct UserDetailView: View {
         let targetUID = resolvedNumericUID
         do {
             switch targetTab {
-            case .feeds, .htmlFeeds, .qa, .coolpic, .ratings, .ershou, .likes:
+            case .home:
+                loadedTabs.insert(.home)
+                hasMoreByTab[.home] = false
+            case .ratings:
+                let fetched = try await API.userRatingFeeds(uid: targetUID, targetType: ratingTargetFilter, page: 1)
+                guard !Task.isCancelled else { return }
+                withAnimation(.smooth(duration: 0.24)) {
+                    feedRowsByTab[targetTab] = fetched
+                    loadedTabs.insert(targetTab)
+                }
+                hasMoreByTab[targetTab] = !fetched.isEmpty
+            case .feeds, .htmlFeeds, .qa, .coolpic, .ershou, .likes:
                 let fetched = try await API.userTabFeeds(uid: targetUID, tabKey: targetTab.apiKey, page: 1)
                 guard !Task.isCancelled else { return }
                 withAnimation(.smooth(duration: 0.24)) {
@@ -636,7 +871,16 @@ public struct UserDetailView: View {
         let targetUID = resolvedNumericUID
         do {
             switch targetTab {
-            case .feeds, .htmlFeeds, .qa, .coolpic, .ratings, .ershou, .likes:
+            case .home:
+                hasMoreByTab[.home] = false
+            case .ratings:
+                let fetched = try await API.userRatingFeeds(uid: targetUID, targetType: ratingTargetFilter, page: next)
+                let current = feedRowsByTab[targetTab] ?? []
+                var seen = Set(current.map(\.id))
+                let unique = fetched.filter { seen.insert($0.id).inserted }
+                feedRowsByTab[targetTab] = current + unique
+                hasMoreByTab[targetTab] = !unique.isEmpty
+            case .feeds, .htmlFeeds, .qa, .coolpic, .ershou, .likes:
                 let fetched = try await API.userTabFeeds(uid: targetUID, tabKey: targetTab.apiKey, page: next)
                 let current = feedRowsByTab[targetTab] ?? []
                 var seen = Set(current.map(\.id))
