@@ -3475,6 +3475,46 @@ public struct ProductCompareSheet: View {
 
 // MARK: - Card-Style Partition & Discovery Hub (分区与发现广场)
 
+public struct FloatingSearchBar: View {
+    @Binding public var text: String
+    public let prompt: String
+
+    public init(text: Binding<String>, prompt: String) {
+        self._text = text
+        self.prompt = prompt
+    }
+
+    public var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+            TextField(prompt, text: $text)
+                .font(.subheadline)
+                .textInputAutocapitalization(.never)
+                .disableAutocorrection(true)
+            if !text.isEmpty {
+                Button {
+                    withAnimation(.snappy(duration: 0.18)) {
+                        text = ""
+                    }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .glassEffect(.regular.interactive(), in: .capsule)
+        .padding(.horizontal, 14)
+        .padding(.top, 4)
+        .padding(.bottom, 2)
+    }
+}
+
 public struct PartitionItem: Identifiable, Hashable, Sendable {
     public let id: String
     public let title: String
@@ -3518,6 +3558,7 @@ public struct PartitionHubView: View {
     @State private var scrolledChannelID: String?
     @State private var rowsByChannel: [String: [HomeFeedRow]] = [:]
     @State private var loadingChannels: Set<String> = []
+    @State private var loadingMoreChannels: Set<String> = []
     @State private var loadedChannels: Set<String> = []
     @State private var pageByChannel: [String: Int] = [:]
     @State private var hasMoreByChannel: [String: Bool] = [:]
@@ -3608,6 +3649,10 @@ public struct PartitionHubView: View {
             .c001PageBackground()
             .safeAreaBar(edge: .top, spacing: 0) {
                 VStack(spacing: 0) {
+                    if selectedMode.id == 0 {
+                        FloatingSearchBar(text: $searchText, prompt: "搜索分区、板块、榜单或功能")
+                    }
+
                     FloatingTabStrip(
                         items: modeOptions,
                         selection: selectedMode,
@@ -3647,7 +3692,6 @@ public struct PartitionHubView: View {
             }
             .navigationTitle("分区与发现")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索分区、板块、榜单或功能")
             .task {
                 if discoverChannels.isEmpty {
                     let loaded = (try? await API.discoverChannels()) ?? []
@@ -3764,7 +3808,7 @@ public struct PartitionHubView: View {
                                             Spacer(minLength: 0)
                                         }
                                         .padding(12)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
                                         .c001CardStyle(cornerRadius: 18)
                                         .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                                         .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 18)
@@ -3820,6 +3864,8 @@ public struct PartitionHubView: View {
         }
         .scrollTargetBehavior(.paging)
         .scrollPosition(id: $scrolledChannelID)
+        .scrollClipDisabled()
+        .ignoresSafeArea(.container, edges: .bottom)
         .onChange(of: scrolledChannelID) { _, next in
             if let next, next != selectedChannelID {
                 selectedChannelID = next
@@ -3867,9 +3913,14 @@ public struct PartitionHubView: View {
                                     }
                                 }
                         }
+
+                        if loadingMoreChannels.contains(channel.id) {
+                            ProgressView()
+                                .padding(.vertical, 16)
+                        }
                     }
                     .padding(.vertical, 8)
-                    .padding(.bottom, 80)
+                    .padding(.bottom, 88)
                 }
             }
             .refreshable {
@@ -3879,6 +3930,46 @@ public struct PartitionHubView: View {
         }
     }
 
+    private func sanitizeDiscoverRows(_ rawRows: [HomeFeedRow], channelID: String, page: Int) -> [HomeFeedRow] {
+        var result: [HomeFeedRow] = []
+        var seenIDs = Set<String>()
+        for (idx, row) in rawRows.enumerated() {
+            // Re-key structural rows with channel & page prefix so pagination never collides on key="0" or "icons-1"
+            let normalizedRow: HomeFeedRow
+            switch row {
+            case let .sectionTitle(k, t, u, s):
+                if t.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { continue }
+                normalizedRow = .sectionTitle(key: "\(channelID)-p\(page)-\(idx)-\(k)", title: t, url: u, subtitle: s)
+            case let .icons(k, links):
+                let valid = links.filter { !$0.title.isEmpty || !$0.image.isEmpty }
+                if valid.isEmpty { continue }
+                normalizedRow = .icons("\(channelID)-p\(page)-\(idx)-\(k)", valid)
+            case let .sections(k, secs):
+                let valid = secs.filter { !$0.title.isEmpty || !$0.style.isEmpty }
+                if valid.isEmpty { continue }
+                normalizedRow = .sections("\(channelID)-p\(page)-\(idx)-\(k)", valid)
+            case let .banners(k, bans):
+                let valid = bans.filter { !$0.image.isEmpty }
+                if valid.isEmpty { continue }
+                normalizedRow = .banners("\(channelID)-p\(page)-\(idx)-\(k)", valid)
+            case let .linkBar(k, secs):
+                if k.hasPrefix("sortbar-") || secs.isEmpty { continue }
+                normalizedRow = .linkBar("\(channelID)-p\(page)-\(idx)-\(k)", secs)
+            case let .linkList(k, secs):
+                if secs.isEmpty { continue }
+                normalizedRow = .linkList("\(channelID)-p\(page)-\(idx)-\(k)", secs)
+            case .columnTabs:
+                continue
+            default:
+                normalizedRow = row
+            }
+            if seenIDs.insert(normalizedRow.id).inserted {
+                result.append(normalizedRow)
+            }
+        }
+        return result
+    }
+
     private func loadChannel(_ channel: HomeSection, force: Bool) async {
         if !force && (loadedChannels.contains(channel.id) || loadingChannels.contains(channel.id)) { return }
         loadingChannels.insert(channel.id)
@@ -3886,11 +3977,10 @@ public struct PartitionHubView: View {
         pageByChannel[channel.id] = 1
         do {
             let fetched = try await API.linkFeed(link: channel.url, page: 1)
-            withAnimation(.smooth(duration: 0.22)) {
-                rowsByChannel[channel.id] = fetched
-                loadedChannels.insert(channel.id)
-                hasMoreByChannel[channel.id] = !fetched.isEmpty
-            }
+            let cleaned = sanitizeDiscoverRows(fetched, channelID: channel.id, page: 1)
+            rowsByChannel[channel.id] = cleaned
+            loadedChannels.insert(channel.id)
+            hasMoreByChannel[channel.id] = !cleaned.isEmpty
         } catch {
             _ = await appState.handleAPIError(error)
         }
@@ -3898,14 +3988,16 @@ public struct PartitionHubView: View {
 
     private func loadMoreChannel(_ channel: HomeSection) async {
         guard hasMoreByChannel[channel.id] != false,
-              !loadingChannels.contains(channel.id) else { return }
-        loadingChannels.insert(channel.id)
-        defer { loadingChannels.remove(channel.id) }
+              !loadingChannels.contains(channel.id),
+              !loadingMoreChannels.contains(channel.id) else { return }
+        loadingMoreChannels.insert(channel.id)
+        defer { loadingMoreChannels.remove(channel.id) }
         let next = (pageByChannel[channel.id] ?? 1) + 1
         if let fetched = try? await API.linkFeed(link: channel.url, page: next) {
+            let cleaned = sanitizeDiscoverRows(fetched, channelID: channel.id, page: next)
             let current = rowsByChannel[channel.id] ?? []
             var seen = Set(current.map(\.id))
-            let unique = fetched.filter { seen.insert($0.id).inserted }
+            let unique = cleaned.filter { seen.insert($0.id).inserted }
             rowsByChannel[channel.id] = current + unique
             hasMoreByChannel[channel.id] = !unique.isEmpty
             if !unique.isEmpty { pageByChannel[channel.id] = next }
@@ -3958,7 +4050,7 @@ public struct ProductCategoryBrowserView: View {
     }
 
     public var body: some View {
-        ScrollViewReader { proxy in
+        ScrollViewReader { _ in
             Group {
                 if isLoading && groups.isEmpty {
                     ProgressView("正在加载数码品牌分类库…")
@@ -3968,14 +4060,17 @@ public struct ProductCategoryBrowserView: View {
                 } else if isSearching {
                     List {
                         ForEach(searchMatchedGroups) { grp in
-                            Section(grp.title) {
+                            Section {
                                 ForEach(grp.items) { item in
                                     categoryNativeRow(item)
                                 }
+                            } header: {
+                                Text("\(grp.title)（\(grp.items.count)）")
                             }
                         }
                     }
                     .listStyle(.insetGrouped)
+                    .scrollEdgeEffectStyle(.soft, for: .top)
                 } else {
                     ScrollView(.horizontal, showsIndicators: false) {
                         LazyHStack(spacing: 0) {
@@ -4000,7 +4095,15 @@ public struct ProductCategoryBrowserView: View {
                     }
                     .scrollTargetBehavior(.paging)
                     .scrollPosition(id: $scrolledGroupID)
-                    .safeAreaBar(edge: .top, spacing: 0) {
+                    .scrollClipDisabled()
+                }
+            }
+            .ignoresSafeArea(.container, edges: .bottom)
+            .c001PageBackground()
+            .safeAreaBar(edge: .top, spacing: 0) {
+                VStack(spacing: 0) {
+                    FloatingSearchBar(text: $searchText, prompt: "搜索品牌或数码品类")
+                    if !isSearching && !groups.isEmpty {
                         FloatingTabStrip(
                             items: groups,
                             selection: activeGroup,
@@ -4015,10 +4118,8 @@ public struct ProductCategoryBrowserView: View {
                     }
                 }
             }
-            .c001PageBackground()
             .navigationTitle("数码品牌分类库")
             .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索品牌或数码品类")
             .onChange(of: scrolledGroupID) { _, next in
                 if let next, next != selectedGroupID {
                     selectedGroupID = next
@@ -4054,26 +4155,31 @@ public struct ProductCategoryBrowserView: View {
             appState.openRawLink(item.url, title: item.title, transitionID: sourceID)
         } label: {
             HStack(spacing: 12) {
-                if !item.image.isEmpty {
-                    if isWide {
-                        RemoteImageView(url: item.image, maxPixelSize: 220, contentMode: .fit)
-                            .frame(width: 56, height: 28)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(Color(.tertiarySystemGroupedBackground))
+                    if !item.image.isEmpty {
+                        if isWide {
+                            RemoteImageView(url: item.image, maxPixelSize: 220, contentMode: .fit)
+                                .frame(width: 44, height: 24)
+                        } else {
+                            RemoteImageView(url: item.image, maxPixelSize: 160, contentMode: .fit)
+                                .frame(width: 34, height: 34)
+                                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
                     } else {
-                        RemoteImageView(url: item.image, maxPixelSize: 160, contentMode: .fit)
-                            .frame(width: 36, height: 36)
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        Image(systemName: "cpu")
+                            .font(.body)
+                            .foregroundStyle(Color.accentColor)
                     }
-                } else {
-                    Image(systemName: "cpu")
-                        .font(.body)
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 32, height: 32)
                 }
+                .frame(width: 52, height: 38)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
-                        .font(.body)
+                        .font(.body.weight(.medium))
                         .foregroundStyle(.primary)
+                        .lineLimit(1)
                     if !item.subtitle.isEmpty {
                         Text(item.subtitle)
                             .font(.caption)
@@ -4081,19 +4187,22 @@ public struct ProductCategoryBrowserView: View {
                             .lineLimit(1)
                     }
                 }
-                Spacer()
+                Spacer(minLength: 8)
                 if !item.hotText.isEmpty {
                     Text(item.hotText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
-            .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 12)
+            .applyZoomSource(id: sourceID, in: zoomNamespace)
         }
         .buttonStyle(.plain)
+        .listRowInsets(EdgeInsets(top: 7, leading: 16, bottom: 7, trailing: 16))
     }
 }

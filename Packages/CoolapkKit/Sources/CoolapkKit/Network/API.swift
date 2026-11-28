@@ -43,12 +43,65 @@ public enum API: Sendable {
     }
 
     public static func homeFeed(page: Int) async throws -> [HomeFeedRow] {
-        let json = try await client.get(
+        let now = String(Int(Date().timeIntervalSince1970))
+        async let v8Task = client.get(
             "/v6/main/indexV8",
-            ["page": String(page), "t": String(Int(Date().timeIntervalSince1970))],
+            [
+                "page": String(page),
+                "firstLaunch": "0",
+                "installTime": now,
+                "ids": "",
+                "t": now
+            ],
             base: CoolapkClient.api2Base
         )
-        return rows(from: json.data.array)
+        let json = try await v8Task
+        var parsed = rows(from: json.data.array)
+
+        // When /v6/main/indexV8 on page 1 returns only 1 top banner item (or splits banners across headline),
+        // supplement with top banners from /v6/main/headline so the home top carousel always has a multi-card stack.
+        if page == 1 {
+            let existingBannerCount = parsed.reduce(0) { acc, row in
+                if case let .banners(_, b) = row { return acc + b.count }
+                return acc
+            }
+            if existingBannerCount <= 1,
+               let headlineJSON = try? await client.get("/v6/main/headline", ["page": "1", "t": now], clearProofOnCaptcha: false) {
+                let headlineRows = rows(from: headlineJSON.data.array)
+                var extraBanners: [HomeBanner] = []
+                for hRow in headlineRows {
+                    if case let .banners(_, bList) = hRow {
+                        extraBanners.append(contentsOf: bList)
+                    } else if case let .sections(_, sList) = hRow, sList.count > 1 {
+                        for (sIdx, sec) in sList.enumerated() where !sec.style.isEmpty {
+                            extraBanners.append(HomeBanner(
+                                id: "hl-sec-\(sIdx)-\(sec.id)",
+                                title: sec.title,
+                                subtitle: sec.subtitle,
+                                image: sec.style,
+                                url: sec.url
+                            ))
+                        }
+                    }
+                }
+                if !extraBanners.isEmpty {
+                    if let firstBannerIdx = parsed.firstIndex(where: {
+                        if case .banners = $0 { return true }
+                        return false
+                    }), case let .banners(key, currentBanners) = parsed[firstBannerIdx] {
+                        var combined = currentBanners
+                        var seen = Set(currentBanners.map(\.image))
+                        for b in extraBanners where seen.insert(b.image).inserted {
+                            combined.append(b)
+                        }
+                        parsed[firstBannerIdx] = .banners(key, combined)
+                    } else if extraBanners.count > 1 {
+                        parsed.insert(.banners("banner-top-hl", extraBanners), at: 0)
+                    }
+                }
+            }
+        }
+        return parsed
     }
 
     public static func headlineFeed(page: Int) async throws -> [HomeFeedRow] {
@@ -83,12 +136,47 @@ public enum API: Sendable {
     }
 
     public static func coolPic(tag: String = "全部", type: String = "recommend", page: Int) async throws -> [HomeFeedRow] {
-        let json = try await client.get("/v6/picture/list", [
-            "tag": tag,
-            "type": type,
-            "page": String(page)
-        ])
-        return rows(from: json.data.array)
+        let trimmedTag = tag.trimmingCharacters(in: .whitespacesAndNewlines)
+        let apiTag = (trimmedTag == "全部" || trimmedTag.lowercased() == "all") ? "" : trimmedTag
+
+        // 1. Try /v6/picture/list with normalized empty tag for "全部" (matching coolapk-desktop get_picture_list)
+        let candidateQueries: [[String: String]] = [
+            ["tag": apiTag, "type": type, "page": String(page)],
+            ["tag": apiTag, "type": type, "feedType": "picture", "page": String(page)],
+            ["tag": trimmedTag, "type": type, "page": String(page)]
+        ]
+        for query in candidateQueries {
+            if let json = try? await client.get("/v6/picture/list", query) {
+                let mapped = rows(from: json.data.array)
+                if !mapped.isEmpty { return mapped }
+            }
+        }
+
+        // 2. Fallback: V11_FIND_COOLPIC sub-tabs or dataList `#/picture/list` / `#/feed/coolPictureList`
+        let sortListType: String = {
+            switch type.lowercased() {
+            case "new", "latest", "dateline_desc": return "dateline_desc"
+            case "hot", "popular", "hot_num": return "popular"
+            default: return "recommend"
+            }
+        }()
+        let dataListCandidates: [(String, [String: String])] = [
+            ("/picture/list", ["tag": apiTag, "type": type, "listType": sortListType]),
+            ("/feed/coolPictureList", ["tag": apiTag, "type": type, "listType": sortListType]),
+            ("V11_FIND_COOLPIC", ["type": type, "listType": sortListType])
+        ]
+        for (urlPath, extra) in dataListCandidates {
+            if let items = try? await dataListFollowingFlexList(url: urlPath, page: page, extra: extra) {
+                let mapped = rows(from: items).filter { row in
+                    switch row {
+                    case .linkBar, .columnTabs: return false
+                    default: return true
+                    }
+                }
+                if !mapped.isEmpty { return mapped }
+            }
+        }
+        return []
     }
 
     public static let followPageName = "V9_HOME_TAB_FOLLOW"
@@ -128,6 +216,31 @@ public enum API: Sendable {
         }
         if lower.contains("v11_find_good_things") || lower.contains("v11_find_goods") || lower == "#/goods/feedlist" || lower == "/v6/goodslist/list" {
             return try await goodsRecommendationFeed(page: page)
+        }
+        // User followList / fansList links (e.g. from UserDetailView "TA关注的人 -> 查看全部")
+        if lower.contains("/user/followlist") || lower.contains("/user/fanslist") {
+            let parsed = parsePageLink(trimmed)
+            let isFans = lower.contains("fanslist")
+            let targetUID: String = {
+                if let u = parsed.extra["uid"], !u.isEmpty { return u }
+                if let comps = URLComponents(string: trimmed.hasPrefix("#") ? String(trimmed.dropFirst()) : trimmed),
+                   let u = comps.queryItems?.first(where: { $0.name == "uid" || $0.name == "id" })?.value,
+                   !u.isEmpty {
+                    return u
+                }
+                return ""
+            }()
+            if !targetUID.isEmpty {
+                let users = try await userList(uid: targetUID, followers: isFans, page: page)
+                return users.map { .user($0) }
+            }
+        }
+        // User digital equipment / product list (`#/product/productList?type=owner&uid=...` or `/v6/user/productList`)
+        if lower.contains("user/productlist") || (lower.contains("product/productlist") && (lower.contains("type=owner") || lower.contains("type=wish") || lower.contains("type=buy") || lower.contains("uid="))) {
+            let parsed = parsePageLink(trimmed)
+            let targetUID = parsed.extra["uid"] ?? ""
+            let pType = parsed.extra["type"] ?? "owner"
+            return try await userEquipmentFeed(uid: targetUID, type: pType, page: page)
         }
         if trimmed.hasPrefix("/v6/") {
             let parsed = parsePageLink(trimmed)
@@ -576,7 +689,32 @@ public enum API: Sendable {
                 coalesced.append(row)
             }
         }
-        return coalesced
+        // Deduplicate any identical row IDs within the same batch so SwiftUI ForEach never sees duplicate IDs
+        // (which causes cards to flicker/disappear or leave blank gaps during scroll in LazyVStack).
+        var seenRowIDs = Set<String>()
+        var deduplicated: [HomeFeedRow] = []
+        deduplicated.reserveCapacity(coalesced.count)
+        for (idx, row) in coalesced.enumerated() {
+            let rid = row.id
+            if seenRowIDs.insert(rid).inserted {
+                deduplicated.append(row)
+            } else {
+                // Re-key structural rows if their ID collided
+                switch row {
+                case let .sectionTitle(k, t, u, s):
+                    deduplicated.append(.sectionTitle(key: "\(k)-dup-\(idx)", title: t, url: u, subtitle: s))
+                case let .icons(k, links):
+                    deduplicated.append(.icons("\(k)-dup-\(idx)", links))
+                case let .sections(k, secs):
+                    deduplicated.append(.sections("\(k)-dup-\(idx)", secs))
+                case let .banners(k, bans):
+                    deduplicated.append(.banners("\(k)-dup-\(idx)", bans))
+                default:
+                    break
+                }
+            }
+        }
+        return deduplicated
     }
 
     private static func looksLikeFeedOrRatingJSON(_ item: JSON) -> Bool {
@@ -823,10 +961,17 @@ public enum API: Sendable {
         switch template {
         case "imageCarouselCard_1", "imageCarouselCard_2", "imageCarouselCard":
             var banners = entities.enumerated().compactMap { offset, entity -> HomeBanner? in
-                let image = [entity.pic.string, entity.logo.string, entity.cover.string].first { !$0.isEmpty } ?? ""
+                let image = [
+                    entity.pic.string,
+                    entity.logo.string,
+                    entity.cover.string,
+                    entity.picArr.array.first?.string ?? "",
+                    entity.extraDataArr.pic.string,
+                    entity.extraData.parsed.pic.string
+                ].first { !$0.isEmpty } ?? ""
                 guard !image.isEmpty else { return nil }
                 return HomeBanner(
-                    id: "car-\(index)-\(offset)-\(entity.entityId.identifier)",
+                    id: "car-\(index)-\(offset)-\(entity.entityId.identifier)-\(image.hashValue)",
                     title: entity.title.string.isEmpty ? entity.description.string : entity.title.string,
                     subtitle: entity.sub_title.string,
                     image: coolapkNormalizedURL(image),
@@ -834,11 +979,27 @@ public enum API: Sendable {
                 )
             }
             if banners.isEmpty {
+                let picArr = item.picArr.array.isEmpty ? item.pics.array : item.picArr.array
+                if !picArr.isEmpty {
+                    banners = picArr.enumerated().compactMap { offset, picJSON -> HomeBanner? in
+                        let rawPic = picJSON.string.isEmpty ? picJSON.url.string : picJSON.string
+                        guard !rawPic.isEmpty else { return nil }
+                        return HomeBanner(
+                            id: "car-picarr-\(index)-\(offset)",
+                            title: item.title.string.isEmpty ? item.description.string : item.title.string,
+                            subtitle: item.sub_title.string,
+                            image: coolapkNormalizedURL(rawPic),
+                            url: resolveSectionURL(for: item, parentCard: .null, isLinkBar: false)
+                        )
+                    }
+                }
+            }
+            if banners.isEmpty {
                 let selfImg = [item.pic.string, item.logo.string, item.cover.string].first { !$0.isEmpty } ?? ""
                 if !selfImg.isEmpty {
                     banners = [
                         HomeBanner(
-                            id: "car-self-\(index)",
+                            id: "car-self-\(index)-\(selfImg.hashValue)",
                             title: item.title.string.isEmpty ? item.description.string : item.title.string,
                             subtitle: item.sub_title.string,
                             image: coolapkNormalizedURL(selfImg),
@@ -847,7 +1008,7 @@ public enum API: Sendable {
                     ]
                 }
             }
-            return banners.isEmpty ? [] : [.banners("banner-\(index)", banners)]
+            return banners.isEmpty ? [] : [.banners("banner-\(index)-\(banners.first?.id ?? "")", banners)]
 
         case "imageTextScrollCard":
             let sections = entities.enumerated().map { offset, entity in
@@ -2499,5 +2660,33 @@ public enum API: Sendable {
             return ershouHome
         }
         return (try? await topicFeeds(tag: "好物推荐", page: page)) ?? []
+    }
+
+    public static func userEquipmentFeed(uid: String, type: String = "owner", page: Int) async throws -> [HomeFeedRow] {
+        let cleanUID = uid.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidates: [(String, [String: String])] = [
+            ("#/product/productList?type=\(type)&uid=\(cleanUID)", ["uid": cleanUID, "type": type]),
+            ("/product/productList?type=\(type)&uid=\(cleanUID)", ["uid": cleanUID, "type": type]),
+            ("#/product/productList?type=\(type)", ["uid": cleanUID, "type": type]),
+            ("/user/productList?uid=\(cleanUID)&type=\(type)", ["uid": cleanUID, "type": type])
+        ]
+        for (urlPath, extra) in candidates {
+            if let items = try? await client.dataList(url: urlPath, page: page, extra: extra) {
+                let mapped = rows(from: items)
+                if !mapped.isEmpty { return mapped }
+            }
+        }
+        let directPaths = ["/v6/user/productList", "/v6/product/productList"]
+        for path in directPaths {
+            if let json = try? await client.get(path, ["uid": cleanUID, "type": type, "page": String(page)], clearProofOnCaptcha: false) {
+                let mapped = rows(from: json.data.array)
+                if !mapped.isEmpty { return mapped }
+            }
+        }
+        // Fallback: search user's feeds mentioning digital products or ratings
+        if !cleanUID.isEmpty, let ratingRows = try? await userRatingFeeds(uid: cleanUID, targetType: "product", page: page), !ratingRows.isEmpty {
+            return ratingRows
+        }
+        return []
     }
 }

@@ -101,7 +101,24 @@ public struct MediaViewerView: View {
                 if showControls {
                     controlsOverlay(safeInsets: safeInsets)
                 }
+
+                if let toast = appState.toastMessage {
+                    VStack {
+                        Spacer()
+                        Text(toast)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .padding(.bottom, max(resolvedBottomSafeInset(from: safeInsets), 24) + 64)
+                    }
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(200)
+                    .allowsHitTesting(false)
+                }
             }
+            .animation(.snappy(duration: 0.22), value: appState.toastMessage)
             .frame(width: containerSize.width, height: containerSize.height)
             .ignoresSafeArea(.all)
         }
@@ -225,8 +242,7 @@ public struct MediaViewerView: View {
                     }
 
                     Button {
-                        UIPasteboard.general.string = currentItem.sourceUrl
-                        appState.showToast("已复制图片链接")
+                        appState.copyLinkToPasteboard(currentItem.sourceUrl, toastMessage: "已复制图片链接")
                     } label: {
                         Image(systemName: "link")
                             .font(.body)
@@ -259,42 +275,11 @@ public struct MediaViewerView: View {
     }
 
     private func saveMedia(item: FeedMedia) async {
-        let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
-        guard status == .authorized || status == .limited else {
-            appState.showToast("请在系统设置中允许访问相册")
-            return
-        }
-
-        if item.isLivePhoto || (liveByIndex[currentIndex] ?? false) {
-            if let vidFile = await ImagePipeline.shared.resolveLiveVideoFile(for: item),
-               let imgFile = await ImagePipeline.shared.downloadToTemporaryFile(urlString: item.sourceUrl, defaultExtension: "jpg") {
-                do {
-                    try await PHPhotoLibrary.shared().performChanges {
-                        let req = PHAssetCreationRequest.forAsset()
-                        req.addResource(with: .photo, fileURL: imgFile, options: nil)
-                        req.addResource(with: .pairedVideo, fileURL: vidFile, options: nil)
-                    }
-                    appState.showToast("已保存实况照片到相册")
-                } catch {
-                    appState.showToast("保存失败：\(error.localizedDescription)")
-                }
-                return
-            }
-        }
-
-        guard let data = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl) else {
-            appState.showToast("原图下载失败")
-            return
-        }
-        do {
-            try await PHPhotoLibrary.shared().performChanges {
-                let req = PHAssetCreationRequest.forAsset()
-                req.addResource(with: .photo, data: data, options: nil)
-            }
-            appState.showToast("已保存原图到相册")
-        } catch {
-            appState.showToast("保存失败：\(error.localizedDescription)")
-        }
+        await MediaActionsContextMenu.saveImageToPhotos(
+            item,
+            appState: appState,
+            forceLiveCheck: liveByIndex[currentIndex] ?? false
+        )
     }
 
     private func saveAllMedia() async {
@@ -305,15 +290,19 @@ public struct MediaViewerView: View {
         }
         var savedCount = 0
         for item in presentation.items {
-            if let data = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl) {
-                try? await PHPhotoLibrary.shared().performChanges {
-                    let req = PHAssetCreationRequest.forAsset()
-                    req.addResource(with: .photo, data: data, options: nil)
-                }
+            guard let rawData = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl),
+                  let fileURL = await MediaActionsContextMenu.prepareCompatiblePhotoFile(from: rawData, isGif: item.isGif) else {
+                continue
+            }
+            let ok = await MediaActionsContextMenu.performPhotoLibrarySave(photoFileURL: fileURL, pairedVideoURL: nil)
+            if ok {
+                savedCount += 1
+            } else if let img = UIImage(data: rawData) {
+                UIImageWriteToSavedPhotosAlbum(img, nil, nil, nil)
                 savedCount += 1
             }
         }
-        appState.showToast("已保存 \(savedCount) 张图片到相册")
+        appState.showToast(savedCount > 0 ? "已保存 \(savedCount) 张图片到相册" : "图片保存失败")
     }
 }
 

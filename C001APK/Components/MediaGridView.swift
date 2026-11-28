@@ -199,8 +199,7 @@ public struct MediaActionsContextMenu: View {
         }
 
         Button {
-            UIPasteboard.general.string = item.sourceUrl
-            appState.showToast("已复制图片链接")
+            appState.copyLinkToPasteboard(item.sourceUrl, toastMessage: "已复制图片链接")
         } label: {
             Label("复制图片链接", systemImage: "link")
         }
@@ -229,35 +228,92 @@ public struct MediaActionsContextMenu: View {
     }
 
     @MainActor
-    public static func saveImageToPhotos(_ item: FeedMedia, appState: AppState) async {
+    public static func saveImageToPhotos(_ item: FeedMedia, appState: AppState, forceLiveCheck: Bool = false) async {
         let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
         guard status == .authorized || status == .limited else {
             appState.showToast("请在系统设置中允许访问相册")
             return
         }
-        guard let tempURL = await ImagePipeline.shared.downloadToTemporaryFile(
-            urlString: item.sourceUrl,
-            defaultExtension: item.isGif ? "gif" : "jpg"
-        ) else {
+
+        let isLive = item.isLivePhoto || forceLiveCheck || ImagePipeline.cachedLiveFlagSync(urlString: item.sourceUrl)
+        if isLive,
+           let vidFile = await ImagePipeline.shared.resolveLiveVideoFile(for: item),
+           let rawImgData = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl),
+           let normalizedImgFile = await Self.prepareCompatiblePhotoFile(from: rawImgData, isGif: false) {
+            let liveSaved = await Self.performPhotoLibrarySave(photoFileURL: normalizedImgFile, pairedVideoURL: vidFile)
+            if liveSaved {
+                appState.showToast("已保存实况照片到相册")
+                return
+            }
+        }
+
+        guard let rawData = await ImagePipeline.shared.fetchRawData(urlString: item.sourceUrl) else {
             appState.showToast("图片下载失败")
             return
         }
-        let videoTemp: URL? = if let videoUrl = item.videoUrl, !videoUrl.isEmpty {
-            await ImagePipeline.shared.downloadToTemporaryFile(urlString: videoUrl, defaultExtension: "mov")
-        } else {
-            nil
+        guard let photoFileURL = await Self.prepareCompatiblePhotoFile(from: rawData, isGif: item.isGif) else {
+            appState.showToast("图片格式解析失败")
+            return
         }
-        do {
-            try await PHPhotoLibrary.shared().performChanges {
-                let req = PHAssetCreationRequest.forAsset()
-                req.addResource(with: .photo, fileURL: tempURL, options: nil)
-                if let videoTemp {
-                    req.addResource(with: .pairedVideo, fileURL: videoTemp, options: nil)
-                }
+        let saved = await Self.performPhotoLibrarySave(photoFileURL: photoFileURL, pairedVideoURL: nil)
+        if saved {
+            appState.showToast("已保存到相册")
+        } else {
+            // Fallback to UIImageWriteToSavedPhotosAlbum for environments where PHAssetCreationRequest rejects container format
+            if let uiImage = UIImage(data: rawData) {
+                UIImageWriteToSavedPhotosAlbum(uiImage, nil, nil, nil)
+                appState.showToast("已保存到相册")
+            } else {
+                appState.showToast("保存失败，请检查相册权限")
             }
-            appState.showToast(videoTemp != nil ? "已保存实况照片到相册" : "已保存到相册")
-        } catch {
-            appState.showToast("保存失败：\(error.localizedDescription)")
+        }
+    }
+
+    nonisolated public static func prepareCompatiblePhotoFile(from data: Data, isGif: Bool) async -> URL? {
+        guard !data.isEmpty else { return nil }
+        let tempDir = FileManager.default.temporaryDirectory
+        if isGif && data.starts(with: [0x47, 0x49, 0x46]) {
+            let url = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("gif")
+            if (try? data.write(to: url, options: .atomic)) != nil {
+                return url
+            }
+        }
+        // Check if JPEG or PNG magic bytes; if WebP or non-standard container, transcode to high-quality JPEG so PHPhotoLibrary never crashes or rejects it.
+        let isJPEG = data.starts(with: [0xFF, 0xD8])
+        let isPNG = data.starts(with: [0x89, 0x50, 0x4E, 0x47])
+        if isJPEG || isPNG {
+            let ext = isPNG ? "png" : "jpg"
+            let url = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension(ext)
+            if (try? data.write(to: url, options: .atomic)) != nil {
+                return url
+            }
+        }
+        if let image = UIImage(data: data),
+           let jpegData = image.jpegData(compressionQuality: 0.96) {
+            let url = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
+            if (try? jpegData.write(to: url, options: .atomic)) != nil {
+                return url
+            }
+        }
+        return nil
+    }
+
+    nonisolated public static func performPhotoLibrarySave(photoFileURL: URL, pairedVideoURL: URL?) async -> Bool {
+        await withCheckedContinuation { continuation in
+            PHPhotoLibrary.shared().performChanges({
+                let req = PHAssetCreationRequest.forAsset()
+                let photoOpts = PHAssetResourceCreationOptions()
+                photoOpts.shouldMoveFile = false
+                req.addResource(with: .photo, fileURL: photoFileURL, options: photoOpts)
+                if let pairedVideoURL {
+                    let videoOpts = PHAssetResourceCreationOptions()
+                    videoOpts.shouldMoveFile = false
+                    req.addResource(with: .pairedVideo, fileURL: pairedVideoURL, options: videoOpts)
+                }
+            }, completionHandler: { success, _ in
+                try? FileManager.default.removeItem(at: photoFileURL)
+                continuation.resume(returning: success)
+            })
         }
     }
 
@@ -780,7 +836,7 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
         // Center rawSlots around activeRounded (boundary at N + 0.5) rather than floor(phase) (boundary at N.0)
         // so starting a rightward swipe from an integer rest state or settling with spring overshoot around N.0
         // never unmounts or recreates adjacent card views.
-        let rawSlots = count <= 0 ? [] : (count == 1 ? [0, 1] : Array((activeRounded - 2)...(activeRounded + 2)))
+        let rawSlots = count <= 0 ? [] : (count == 1 ? [0] : Array((activeRounded - 2)...(activeRounded + 2)))
 
         ZStack {
             ForEach(rawSlots, id: \.self) { rawSlot in
@@ -1857,8 +1913,7 @@ struct HorizontalDeckPanOverlay: UIViewRepresentable {
                         image: UIImage(systemName: "link")
                     ) { _ in
                         Task { @MainActor in
-                            UIPasteboard.general.string = item.sourceUrl
-                            appState.showToast("已复制图片链接")
+                            appState.copyLinkToPasteboard(item.sourceUrl, toastMessage: "已复制图片链接")
                         }
                     }
                 ]

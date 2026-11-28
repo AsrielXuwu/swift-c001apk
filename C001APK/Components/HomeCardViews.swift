@@ -149,7 +149,7 @@ struct BannerCarouselView: View {
             EmptyView()
         } else {
             let count = banners.count
-            let visibleLayers = max(2, min(count, 3))
+            let visibleLayers = min(count, 3)
             let activeIdx = currentNearestIndex
             let leftInset: CGFloat = visibleLayers > 2 ? 24 : 12
             let rightInset: CGFloat = visibleLayers > 1 ? 24 : 12
@@ -518,7 +518,7 @@ public struct IconLinksScrollView: View {
 
     private var rankedGridBody: some View {
         let cols = Array(repeating: GridItem(.flexible(), spacing: 10), count: min(4, max(2, links.count)))
-        return LazyVGrid(columns: cols, spacing: 12) {
+        return LazyVGrid(columns: cols, spacing: 14) {
             ForEach(Array(links.enumerated()), id: \.element.id) { idx, item in
                 let rank = item.rank > 0 ? item.rank : (idx + 1)
                 let sourceID = "iconrank-\(transitionSeed)-\(item.id)"
@@ -532,16 +532,16 @@ public struct IconLinksScrollView: View {
                             RemoteImageView(url: item.image, maxPixelSize: 220, contentMode: .fit)
                                 .frame(width: 56, height: 56)
                                 .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
-                                .frame(maxWidth: .infinity)
+                                .padding(.top, 5)
+                                .padding(.horizontal, 6)
 
                             if rank <= 4 {
                                 Text("TOP \(rank)")
                                     .font(.system(size: 9, weight: .heavy, design: .rounded))
                                     .foregroundStyle(.white)
-                                    .padding(.horizontal, 5)
+                                    .padding(.horizontal, 6)
                                     .padding(.vertical, 2)
                                     .background(rankBadgeColor(rank), in: Capsule())
-                                    .offset(x: 2, y: -2)
                             }
                         }
 
@@ -562,8 +562,9 @@ public struct IconLinksScrollView: View {
                             }
                         }
                     }
+                    .padding(.vertical, 4)
                     .frame(maxWidth: .infinity)
-                    .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 13)
+                    .applyZoomSource(id: sourceID, in: zoomNamespace)
                 }
                 .buttonStyle(.plain)
             }
@@ -656,7 +657,7 @@ struct ImageTextSectionsView: View {
             EmptyView()
         } else {
             let count = sections.count
-            let visibleLayers = max(2, min(count, 3))
+            let visibleLayers = min(count, 3)
             let activeIdx = currentNearestIndex
             let leftInset: CGFloat = visibleLayers > 2 ? 24 : 12
             let rightInset: CGFloat = visibleLayers > 1 ? 24 : 12
@@ -857,6 +858,8 @@ struct SectionHeaderRow: View {
     let subtitle: String
     let url: String
     @Environment(AppState.self) private var appState
+    @Environment(\.zoomNamespace) private var zoomNamespace
+    @State private var transitionSeed = UUID().uuidString
 
     var body: some View {
         HStack {
@@ -871,13 +874,24 @@ struct SectionHeaderRow: View {
             }
             Spacer()
             if !url.isEmpty {
-                Button("更多") {
-                    appState.openRawLink(url, title: title)
+                let sourceID = "secmore-\(transitionSeed)"
+                Button {
+                    appState.openRawLink(url, title: title, transitionID: sourceID)
+                } label: {
+                    HStack(spacing: 3) {
+                        Text("查看全部")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .bold))
+                    }
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .contentShape(Capsule())
+                    .glassEffect(.regular.interactive(), in: .capsule)
+                    .foregroundStyle(Color.accentColor)
+                    .applyZoomSource(id: sourceID, in: zoomNamespace)
                 }
-                .font(.caption.weight(.medium))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .glassEffect(.regular.interactive(), in: .capsule)
+                .buttonStyle(.plain)
             }
         }
         .padding(.horizontal, 16)

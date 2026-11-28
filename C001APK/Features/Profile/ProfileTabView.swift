@@ -59,7 +59,7 @@ public struct ProfileTabView: View {
                         }
                         .padding(.vertical, 4)
                         .contentShape(Rectangle())
-                        .applyZoomSource(id: headerSourceID, in: zoomNamespace, cornerRadius: 12)
+                        .applyZoomSource(id: headerSourceID, in: zoomNamespace)
                     }
                     .buttonStyle(.plain)
                 } else {
@@ -143,6 +143,9 @@ public struct ProfileTabView: View {
             }
 
             Section("我的内容") {
+                zoomRouteRow(title: "我的关注（动态与板块）", systemImage: "person.2", key: "followFeed") { id in
+                    .followFeed(transitionID: id)
+                }
                 zoomRouteRow(title: "我的收藏", systemImage: "star", key: "favorites") { id in
                     .favorites(transitionID: id)
                 }
@@ -262,7 +265,7 @@ public struct ProfileTabView: View {
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
-            .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 10)
+            .applyZoomSource(id: sourceID, in: zoomNamespace)
         }
         .buttonStyle(.plain)
     }
@@ -278,8 +281,12 @@ public struct ProfileTabView: View {
         return Button {
             appState.push(routeBuilder(sourceID))
         } label: {
-            HStack {
-                Label(title, systemImage: systemImage)
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.body)
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 26, height: 24, alignment: .center)
+                Text(title)
                     .foregroundStyle(.primary)
                 Spacer()
                 if !badge.isEmpty {
@@ -291,8 +298,9 @@ public struct ProfileTabView: View {
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
+            .padding(.vertical, 2)
             .contentShape(Rectangle())
-            .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 10)
+            .applyZoomSource(id: sourceID, in: zoomNamespace)
         }
         .buttonStyle(.plain)
     }

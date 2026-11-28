@@ -393,49 +393,65 @@ public struct UserDetailView: View {
 
                 userAttributeChips(profile)
 
-                HStack(spacing: 18) {
-                    Button {
-                        withAnimation(.snappy) { tab = .feeds }
-                    } label: {
-                        Text("\(Formatting.count(profile.feedNum)) 动态")
-                    }
-                    .buttonStyle(.plain)
+                HStack(spacing: 12) {
+                    HStack(spacing: 14) {
+                        Button {
+                            withAnimation(.snappy) { tab = .feeds }
+                        } label: {
+                            Text("\(Formatting.count(profile.feedNum)) 动态")
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .buttonStyle(.plain)
 
-                    Button {
-                        withAnimation(.snappy) { tab = .following }
-                    } label: {
-                        Text("\(Formatting.count(profile.followNum)) 关注")
-                    }
-                    .buttonStyle(.plain)
+                        Button {
+                            withAnimation(.snappy) { tab = .following }
+                        } label: {
+                            Text("\(Formatting.count(profile.followNum)) 关注")
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .buttonStyle(.plain)
 
-                    Button {
-                        withAnimation(.snappy) { tab = .fans }
-                    } label: {
-                        Text("\(Formatting.count(profile.fansNum)) 粉丝")
-                    }
-                    .buttonStyle(.plain)
+                        Button {
+                            withAnimation(.snappy) { tab = .fans }
+                        } label: {
+                            Text("\(Formatting.count(profile.fansNum)) 粉丝")
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .buttonStyle(.plain)
 
-                    if profile.likeNum > 0 {
-                        Text("\(Formatting.count(profile.likeNum)) 获赞")
+                        if profile.likeNum > 0 {
+                            Text("\(Formatting.count(profile.likeNum)) 获赞")
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
                     }
+
+                    Spacer(minLength: 4)
 
                     if profile.productOwnerCount > 0 {
-                        Spacer()
                         let equipSourceID = "user-equip-\(transitionSeed)-\(profile.id)"
                         Button {
-                            appState.openRawLink(
-                                "#/page?url=/v6/user/productList&uid=\(profile.id)&type=owner&title=TA的数码装备",
-                                title: "\(profile.username) 的装备",
+                            appState.push(.page(
+                                link: "/user/productList?uid=\(profile.id)&type=owner",
+                                title: "\(profile.username) 的数码装备",
                                 transitionID: equipSourceID
-                            )
+                            ))
                         } label: {
-                            Label("\(profile.productOwnerCount) 件装备", systemImage: "cpu")
-                                .font(.caption2.weight(.semibold))
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3.5)
-                                .background(Color.accentColor.opacity(0.14), in: Capsule())
-                                .foregroundStyle(Color.accentColor)
-                                .applyZoomSource(id: equipSourceID, in: zoomNamespace, cornerRadius: 10)
+                            HStack(spacing: 4) {
+                                Image(systemName: "cpu")
+                                Text("\(profile.productOwnerCount) 件装备")
+                                    .lineLimit(1)
+                            }
+                            .font(.caption.weight(.semibold))
+                            .fixedSize(horizontal: true, vertical: false)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .glassEffect(.regular.interactive(), in: .capsule)
+                            .foregroundStyle(Color.accentColor)
+                            .applyZoomSource(id: equipSourceID, in: zoomNamespace)
                         }
                         .buttonStyle(.plain)
                     }
@@ -653,38 +669,32 @@ public struct UserDetailView: View {
         }
     }
 
+    private struct RatingFilterOption: Identifiable, Hashable {
+        let id: String
+        let title: String
+    }
+
+    private let ratingFilterOptions: [RatingFilterOption] = [
+        RatingFilterOption(id: "all", title: "全部点评"),
+        RatingFilterOption(id: "product", title: "只看数码"),
+        RatingFilterOption(id: "apk", title: "只看应用")
+    ]
+
     private var ratingsFilterBar: some View {
-        let filters: [(id: String, title: String)] = [
-            ("all", "全部点评"),
-            ("product", "只看数码"),
-            ("apk", "只看应用")
-        ]
-        return HStack(spacing: 8) {
-            ForEach(filters, id: \.id) { item in
-                let isSelected = ratingTargetFilter == item.id
-                Button {
-                    guard ratingTargetFilter != item.id else { return }
-                    withAnimation(.snappy(duration: 0.2)) {
-                        ratingTargetFilter = item.id
-                    }
-                    Task { await reloadTab(.ratings, force: true) }
-                } label: {
-                    Text(item.title)
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(
-                            isSelected ? Color.accentColor.opacity(0.16) : Color(.secondarySystemGroupedBackground),
-                            in: Capsule()
-                        )
-                        .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
-                }
-                .buttonStyle(.plain)
+        let selectedOption = ratingFilterOptions.first { $0.id == ratingTargetFilter } ?? ratingFilterOptions[0]
+        return FloatingTabStrip(
+            items: ratingFilterOptions,
+            selection: selectedOption,
+            titleProvider: \.title,
+            onSelect: { option in
+                guard ratingTargetFilter != option.id else { return }
+                ratingTargetFilter = option.id
+                Task { await reloadTab(.ratings, force: true) }
+            },
+            onReselect: { _ in
+                Task { await reloadTab(.ratings, force: true) }
             }
-            Spacer()
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 2)
+        )
     }
 
     @ViewBuilder
@@ -696,23 +706,29 @@ public struct UserDetailView: View {
                     Text(card.title)
                         .font(.headline)
                     Spacer()
-                    if !card.url.isEmpty {
+                    if !card.url.isEmpty || !card.users.isEmpty || !card.feeds.isEmpty {
                         let moreSourceID = "uhmore-\(transitionSeed)-\(card.id)"
                         Button {
-                            appState.openRawLink(card.url, title: card.title, transitionID: moreSourceID)
+                            handleHomeCardViewAllTap(card, transitionID: moreSourceID)
                         } label: {
                             HStack(spacing: 3) {
                                 Text("查看全部")
                                 Image(systemName: "chevron.right")
+                                    .font(.system(size: 10, weight: .bold))
                             }
                             .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .contentShape(Capsule())
+                            .glassEffect(.regular.interactive(), in: .capsule)
                             .foregroundStyle(Color.accentColor)
-                            .applyZoomSource(id: moreSourceID, in: zoomNamespace, cornerRadius: 10)
+                            .applyZoomSource(id: moreSourceID, in: zoomNamespace)
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 16)
+                .padding(.top, 4)
 
                 if !card.users.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -723,20 +739,23 @@ public struct UserDetailView: View {
                                     appState.push(.user(uid: u.id, initialUsername: u.username, initialAvatar: u.avatar, transitionID: uSourceID))
                                 } label: {
                                     VStack(spacing: 6) {
-                                        AvatarView(url: u.avatar, size: 50)
+                                        AvatarView(url: u.avatar, size: 52)
                                         Text(u.username)
                                             .font(.caption)
                                             .foregroundStyle(.primary)
                                             .lineLimit(1)
+                                            .truncationMode(.tail)
+                                            .frame(width: 74)
                                     }
-                                    .frame(width: 68)
-                                    .applyZoomSource(id: uSourceID, in: zoomNamespace, cornerRadius: 25)
+                                    .padding(.vertical, 4)
+                                    .padding(.horizontal, 2)
+                                    .applyZoomSource(id: uSourceID, in: zoomNamespace)
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
                         .padding(.horizontal, 14)
-                        .padding(.vertical, 12)
+                        .padding(.vertical, 10)
                     }
                     .c001CardStyle(cornerRadius: 20)
                     .padding(.horizontal, 12)
@@ -750,6 +769,37 @@ public struct UserDetailView: View {
                     FeedRowView(feed: feed)
                 }
             }
+        }
+    }
+
+    private func handleHomeCardViewAllTap(_ card: UserHomeSectionCard, transitionID: String) {
+        let lowerURL = card.url.lowercased()
+        let lowerTitle = card.title.lowercased()
+        if !card.users.isEmpty || lowerURL.contains("followlist") || lowerTitle.contains("关注的人") || lowerTitle.contains("关注的酷友") {
+            withAnimation(.snappy(duration: 0.22)) {
+                tab = .following
+            }
+            return
+        }
+        if lowerURL.contains("fanslist") || lowerTitle.contains("粉丝") {
+            withAnimation(.snappy(duration: 0.22)) {
+                tab = .fans
+            }
+            return
+        }
+        if !card.feeds.isEmpty || lowerTitle.contains("动态") {
+            withAnimation(.snappy(duration: 0.22)) {
+                tab = .feeds
+            }
+            return
+        }
+        var targetURL = card.url
+        if !targetURL.isEmpty && !targetURL.contains("uid=") {
+            let sep = targetURL.contains("?") ? "&" : "?"
+            targetURL = "\(targetURL)\(sep)uid=\(resolvedNumericUID)"
+        }
+        if !targetURL.isEmpty {
+            appState.openRawLink(targetURL, title: card.title, transitionID: transitionID)
         }
     }
 

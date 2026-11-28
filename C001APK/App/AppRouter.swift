@@ -175,16 +175,22 @@ public struct RootTabConfiguration: Codable, Equatable, Sendable {
     public static let defaultOrder: [RootTab] = [
         .home,
         .partition,
-        .follow,
         .swipe,
         .profile,
-        .search
+        .search,
+        .follow
     ]
+    public static let defaultHidden: Set<RootTab> = [.follow]
+    public static let requiredTabs: Set<RootTab> = [.home, .profile, .search]
+    public static let maxVisibleCount: Int = 5
 
     public var order: [RootTab]
     public var hidden: Set<RootTab>
 
-    public init(order: [RootTab] = RootTabConfiguration.defaultOrder, hidden: Set<RootTab> = []) {
+    public init(
+        order: [RootTab] = RootTabConfiguration.defaultOrder,
+        hidden: Set<RootTab> = RootTabConfiguration.defaultHidden
+    ) {
         var resolved: [RootTab] = []
         for tab in order where Self.defaultOrder.contains(tab) && !resolved.contains(tab) {
             resolved.append(tab)
@@ -193,12 +199,30 @@ public struct RootTabConfiguration: Codable, Equatable, Sendable {
             resolved.append(tab)
         }
         self.order = resolved
-        // Keep .home and .profile always visible so user can always browse and access settings.
-        self.hidden = hidden.subtracting([.home, .profile])
+
+        // Required tabs (.home, .profile, .search) can never be hidden.
+        var cleanHidden = hidden.subtracting(Self.requiredTabs)
+        // Enforce maximum 5 visible tabs so iOS never collapses the bottom bar into a broken "More" tab.
+        var visibleCount = 0
+        for tab in resolved {
+            if Self.requiredTabs.contains(tab) {
+                visibleCount += 1
+            }
+        }
+        for tab in resolved where !Self.requiredTabs.contains(tab) {
+            if !cleanHidden.contains(tab) {
+                if visibleCount < Self.maxVisibleCount {
+                    visibleCount += 1
+                } else {
+                    cleanHidden.insert(tab)
+                }
+            }
+        }
+        self.hidden = cleanHidden
     }
 
     public var visibleTabs: [RootTab] {
-        order.filter { !hidden.contains($0) }
+        Array(order.filter { !hidden.contains($0) }.prefix(Self.maxVisibleCount))
     }
 }
 
@@ -213,6 +237,7 @@ public enum AppRoute: Hashable, Sendable {
     case event(id: String, initial: EventItem? = nil, transitionID: String? = nil)
     case page(link: String, title: String, transitionID: String? = nil)
     case partitionHub(transitionID: String? = nil)
+    case followFeed(transitionID: String? = nil)
     case productCategoryBrowser(transitionID: String? = nil)
     case coolpic(tag: String, transitionID: String? = nil)
     case messages
@@ -244,6 +269,7 @@ public enum AppRoute: Hashable, Sendable {
              let .event(_, _, id),
              let .page(_, _, id),
              let .partitionHub(id),
+             let .followFeed(id),
              let .productCategoryBrowser(id),
              let .coolpic(_, id),
              let .chat(_, _, _, _, id),
@@ -279,6 +305,7 @@ public enum AppRoute: Hashable, Sendable {
         case let .event(eid, initial, _): return .event(id: eid, initial: initial, transitionID: id)
         case let .page(link, title, _): return .page(link: link, title: title, transitionID: id)
         case .partitionHub: return .partitionHub(transitionID: id)
+        case .followFeed: return .followFeed(transitionID: id)
         case .productCategoryBrowser: return .productCategoryBrowser(transitionID: id)
         case let .coolpic(tag, _): return .coolpic(tag: tag, transitionID: id)
         case .messages: return .messages

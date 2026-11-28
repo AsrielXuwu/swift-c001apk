@@ -337,8 +337,10 @@ public struct BrowseItem: Identifiable, Hashable, Sendable {
     public var dateline: Date?
 
     public init(json: JSON) {
-        id = json.id.exists ? json.id.identifier : json.entityId.identifier
-        title = json.title.string
+        let rawID = [json.id.identifier, json.entityId.identifier, json.product_id.identifier, json.productId.identifier]
+            .first { !$0.isEmpty && $0 != "0" } ?? ""
+        title = json.title.string.isEmpty ? json.name.string : json.title.string
+        id = rawID.isEmpty ? "prod-\(title)-\(json.url.string)" : rawID
         subtitle = json.description.string
         logo = coolapkNormalizedURL(json.logo.string.isEmpty ? json.pic.string : json.logo.string)
         url = json.url.string
@@ -754,8 +756,10 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
     }
 
     public init(json: JSON) {
-        id = json.id.exists ? json.id.identifier : json.entityId.identifier
-        title = Self.cleanTitle(json.title.string)
+        let rawID = [json.id.identifier, json.entityId.identifier].first { !$0.isEmpty && $0 != "0" } ?? ""
+        let cleanT = Self.cleanTitle(json.title.string)
+        title = cleanT
+        id = rawID.isEmpty ? "topic-\(cleanT)-\(json.url.string)" : rawID
         description = json.description.string
         logo = coolapkNormalizedURL(json.logo.string.isEmpty ? json.pic.string : json.logo.string)
         let rawFeedTxt = [

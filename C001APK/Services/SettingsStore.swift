@@ -138,7 +138,7 @@ public final class SettingsStore {
     public var rootTabConfig: RootTabConfiguration {
         didSet {
             if let data = try? JSONEncoder().encode(rootTabConfig) {
-                defaults.set(data, forKey: "settings.rootTabConfig")
+                defaults.set(data, forKey: "settings.rootTabConfig.v2")
             }
         }
     }
@@ -260,7 +260,7 @@ public final class SettingsStore {
             self.homeTabConfig = HomeTabConfiguration()
         }
 
-        if let rootData = defaults.data(forKey: "settings.rootTabConfig"),
+        if let rootData = defaults.data(forKey: "settings.rootTabConfig.v2"),
            let decodedRoot = try? JSONDecoder().decode(RootTabConfiguration.self, from: rootData) {
             self.rootTabConfig = RootTabConfiguration(order: decodedRoot.order, hidden: decodedRoot.hidden)
         } else {

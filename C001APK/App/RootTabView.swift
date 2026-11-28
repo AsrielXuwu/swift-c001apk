@@ -209,6 +209,10 @@ public struct AppRouteDestinationView: View {
             PartitionHubView()
                 .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .followFeed(transitionID):
+            FollowView()
+                .c001NativeTopBar()
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case let .productCategoryBrowser(transitionID):
             ProductCategoryBrowserView()
                 .c001NativeTopBar()

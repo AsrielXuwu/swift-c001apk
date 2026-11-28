@@ -376,7 +376,11 @@ struct RootTabsEditorSheet: View {
     @State private var draftHidden: Set<RootTab> = []
 
     private func isPinned(_ tab: RootTab) -> Bool {
-        tab == .home || tab == .profile
+        RootTabConfiguration.requiredTabs.contains(tab)
+    }
+
+    private var currentVisibleCount: Int {
+        draftOrder.filter { isPinned($0) || !draftHidden.contains($0) }.count
     }
 
     var body: some View {
@@ -392,6 +396,10 @@ struct RootTabsEditorSheet: View {
                                 .onTapGesture {
                                     guard !pinned else { return }
                                     if draftHidden.contains(tab) {
+                                        guard currentVisibleCount < RootTabConfiguration.maxVisibleCount else {
+                                            appState.showToast("底部栏最多只能同时选择 5 个入口")
+                                            return
+                                        }
                                         draftHidden.remove(tab)
                                     } else {
                                         draftHidden.insert(tab)
@@ -400,7 +408,7 @@ struct RootTabsEditorSheet: View {
                             Label(tab.title, systemImage: tab.systemImage)
                             Spacer()
                             if pinned {
-                                Text("固定显示")
+                                Text("必选固定")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -410,7 +418,7 @@ struct RootTabsEditorSheet: View {
                         draftOrder.move(fromOffsets: indices, toOffset: newOffset)
                     }
                 } header: {
-                    Text("勾选显示底部栏按钮，拖动右侧手柄调整顺序")
+                    Text("最多选择 5 项（当前已选 \(currentVisibleCount)/\(RootTabConfiguration.maxVisibleCount)），首页/我的/搜索为必选；拖动右侧手柄调整顺序")
                 }
 
                 Section {
