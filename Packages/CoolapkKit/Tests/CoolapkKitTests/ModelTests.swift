@@ -541,7 +541,7 @@ final class ModelTests: XCTestCase {
         """.utf8)
         let goodsCardJSON = try JSON(data: goodsCardRaw)
         let ranking = GoodsRankingItem(json: goodsCardJSON)
-        XCTAssertFalse(ranking.isEmpty)
+        XCTAssertFalse(ranking.title.isEmpty)
         XCTAssertEqual(ranking.title, "2026 年度酷安数码好物榜")
         XCTAssertTrue(ranking.products.isEmpty)
 
