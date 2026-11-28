@@ -529,6 +529,21 @@ public enum API: Sendable {
                     rows.append(.feed(FeedItem(json: Self.mergedFeedPayload(from: item))))
                 } else if Self.looksLikeFeedOrRatingJSON(item) {
                     rows.append(.feed(FeedItem(json: item)))
+                } else if !template.isEmpty || !item.entities.array.isEmpty {
+                    let mappedCards = cardRows(item, template: template, index: index)
+                    if !mappedCards.isEmpty {
+                        rows.append(contentsOf: mappedCards)
+                    } else if !item.title.string.isEmpty && !item.url.string.isEmpty {
+                        rows.append(.linkBar("misc-\(index)", [
+                            HomeSection(
+                                id: "misc-\(index)-\(item.entityId.identifier)",
+                                title: item.title.string,
+                                subtitle: item.sub_title.string,
+                                url: item.url.string,
+                                style: item.logo.string.isEmpty ? item.pic.string : item.logo.string
+                            )
+                        ]))
+                    }
                 } else if !item.title.string.isEmpty && !item.url.string.isEmpty {
                     rows.append(.linkBar("misc-\(index)", [
                         HomeSection(
