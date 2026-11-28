@@ -96,12 +96,7 @@ public final class HomeFeedViewModel {
                     }
                 }
             case .goods:
-                let primary = (try? await API.pageFeed(pageName: "V11_FIND_GOODS", page: page)) ?? []
-                if !primary.isEmpty {
-                    loaded = primary
-                } else {
-                    loaded = try await API.linkFeed(link: "#/goods/feedList", page: page)
-                }
+                loaded = try await API.goodsRecommendationFeed(page: page)
             case .topic:
                 if subCategoriesByTab[.topic]?.isEmpty != false {
                     let categories = try await API.topicVerticalTabs()
@@ -134,7 +129,7 @@ public final class HomeFeedViewModel {
             case .secondHand:
                 loaded = try await API.pageFeed(pageName: "V11_FIND_GOOD_GOODS_HOME", page: page)
             case .review:
-                loaded = try await API.linkFeed(link: "#/board/数码测评", page: page)
+                loaded = try await API.reviewFeeds(page: page)
             case .game:
                 loaded = try await API.appIndex(type: 2, page: page)
             case .coolpic:

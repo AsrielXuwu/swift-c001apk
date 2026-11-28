@@ -8,55 +8,206 @@ public struct ProfileTabView: View {
 
     public init() {}
 
-    private struct QuickCardItem: Identifiable {
-        let id: String
-        let title: String
-        let subtitle: String
-        let icon: String
-        let tint: Color
-        let requiresLogin: Bool
-        let route: AppRoute
-    }
-
-    private var myContentCards: [QuickCardItem] {
-        [
-            QuickCardItem(id: "qc-history", title: "浏览历史", subtitle: "足迹与记录", icon: "clock.arrow.circlepath", tint: .blue, requiresLogin: false, route: .history),
-            QuickCardItem(id: "qc-fav", title: "我的收藏", subtitle: "本地与云端", icon: "star.fill", tint: .orange, requiresLogin: false, route: .favorites),
-            QuickCardItem(id: "qc-localfollow", title: appState.accounts.isLoggedIn ? "悄悄关注" : "本机关注", subtitle: "\(appState.localFollow.users.count) 人", icon: "person.badge.shield.checkmark", tint: .purple, requiresLogin: false, route: .localFollowList),
-            QuickCardItem(id: "qc-recent", title: "最近常去", subtitle: "常逛话题数码", icon: "safari.fill", tint: .cyan, requiresLogin: false, route: .myRecentVisits),
-            QuickCardItem(id: "qc-likes", title: "我赞过的", subtitle: "点赞动态归档", icon: "hand.thumbsup.fill", tint: .pink, requiresLogin: false, route: .myLikes),
-            QuickCardItem(id: "qc-replies", title: "我的回复", subtitle: "发出与收到的评论", icon: "text.bubble.fill", tint: .green, requiresLogin: false, route: .myReplies)
-        ]
-    }
-
     public var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 14) {
-                profileHeaderSection
+        List {
+            Section {
+                if let active = appState.accounts.activeAccount {
+                    let profile = appState.currentUserProfile
+                    let displayName = profile?.username.isEmpty == false ? profile!.username : active.displayName
+                    let avatarURL = profile?.avatar.isEmpty == false ? profile!.avatar : active.avatar
+                    let level = profile?.level ?? active.level
+                    let headerSourceID = "prof-header-\(transitionSeed)-\(active.uid)"
 
-                myContentGridSection
-
-                partitionDiscoveryCardSection
-
-                settingsCardSection
+                    Button {
+                        appState.push(.user(
+                            uid: active.uid,
+                            initialUsername: displayName,
+                            initialAvatar: avatarURL,
+                            transitionID: headerSourceID,
+                            initialTab: "动态"
+                        ))
+                    } label: {
+                        HStack(spacing: 14) {
+                            AvatarView(url: avatarURL, size: 56)
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack(spacing: 6) {
+                                    Text(displayName.isEmpty ? "UID: \(active.uid)" : displayName)
+                                        .font(.headline)
+                                        .foregroundStyle(.primary)
+                                    Text("Lv.\(level)")
+                                        .font(.caption2.weight(.semibold))
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.accentColor.opacity(0.14), in: Capsule())
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                                if let bio = profile?.bio, !bio.isEmpty {
+                                    Text(bio)
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                } else {
+                                    Text("UID: \(active.uid)")
+                                        .font(.subheadline)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.vertical, 4)
+                        .contentShape(Rectangle())
+                        .applyZoomSource(id: headerSourceID, in: zoomNamespace, cornerRadius: 12)
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    HStack(spacing: 14) {
+                        Image(systemName: "person.crop.circle.fill")
+                            .font(.system(size: 48))
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("游客模式")
+                                .font(.headline)
+                            Text("可正常浏览信息流、本地收藏与本地关注")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("登录") {
+                            appState.showLoginSheet = true
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                    .padding(.vertical, 4)
+                }
             }
-            .padding(.vertical, 10)
-            .padding(.bottom, 76)
+
+            Section {
+                let profile = appState.currentUserProfile
+                let active = appState.accounts.activeAccount
+                let feedsCount = Formatting.count(profile?.feedNum ?? 0)
+                let followCount = Formatting.count(profile?.followNum ?? appState.localFollow.users.count)
+                let fansCount = Formatting.count(profile?.fansNum ?? 0)
+
+                HStack(spacing: 0) {
+                    statCell(title: "动态", count: feedsCount, sourceKey: "feeds") { sourceID in
+                        if let active {
+                            appState.push(.user(
+                                uid: active.uid,
+                                initialUsername: profile?.username ?? active.displayName,
+                                initialAvatar: profile?.avatar ?? active.avatar,
+                                transitionID: sourceID,
+                                initialTab: "动态"
+                            ))
+                        } else {
+                            appState.showLoginSheet = true
+                        }
+                    }
+
+                    Divider().frame(height: 28)
+
+                    statCell(title: "关注", count: followCount, sourceKey: "follow") { sourceID in
+                        if let active, appState.settings.enableCloudFollowLoad {
+                            appState.push(.user(
+                                uid: active.uid,
+                                initialUsername: profile?.username ?? active.displayName,
+                                initialAvatar: profile?.avatar ?? active.avatar,
+                                transitionID: sourceID,
+                                initialTab: "关注"
+                            ))
+                        } else {
+                            appState.push(.localFollowList(transitionID: sourceID))
+                        }
+                    }
+
+                    Divider().frame(height: 28)
+
+                    statCell(title: "粉丝", count: fansCount, sourceKey: "fans") { sourceID in
+                        if let active {
+                            appState.push(.user(
+                                uid: active.uid,
+                                initialUsername: profile?.username ?? active.displayName,
+                                initialAvatar: profile?.avatar ?? active.avatar,
+                                transitionID: sourceID,
+                                initialTab: "粉丝"
+                            ))
+                        } else {
+                            appState.showLoginSheet = true
+                        }
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            Section("我的内容") {
+                zoomRouteRow(title: "我的收藏", systemImage: "star", key: "favorites") { id in
+                    .favorites(transitionID: id)
+                }
+                zoomRouteRow(title: "浏览历史", systemImage: "clock", key: "history") { id in
+                    .history(transitionID: id)
+                }
+                zoomRouteRow(
+                    title: appState.accounts.isLoggedIn ? "悄悄关注" : "本机关注",
+                    systemImage: "person.badge.shield.checkmark",
+                    badge: "\(appState.localFollow.users.count)",
+                    key: "localFollow"
+                ) { id in
+                    .localFollowList(transitionID: id)
+                }
+                zoomRouteRow(title: "我的常去", systemImage: "location", key: "recentVisits") { id in
+                    .myRecentVisits(transitionID: id)
+                }
+                zoomRouteRow(title: "我的赞", systemImage: "hand.thumbsup", key: "myLikes") { id in
+                    .myLikes(transitionID: id)
+                }
+                zoomRouteRow(title: "我的回复", systemImage: "bubble.left.and.bubble.right", key: "myReplies") { id in
+                    .myReplies(transitionID: id)
+                }
+            }
+
+            Section("发现") {
+                zoomRouteRow(title: "分区与发现广场", systemImage: "square.grid.2x2", key: "partitionHub") { id in
+                    .partitionHub(transitionID: id)
+                }
+                zoomRouteRow(title: "数码品牌分类库", systemImage: "cpu", key: "productCat") { id in
+                    .productCategoryBrowser(transitionID: id)
+                }
+                zoomRouteRow(title: "看看号", systemImage: "newspaper", key: "dyhSub") { id in
+                    .page(link: "/user/dyhSubscribe", title: "看看号订阅", transitionID: id)
+                }
+                zoomRouteRow(title: "酷图", systemImage: "photo.on.rectangle.angled", key: "coolpic") { id in
+                    .coolpic(tag: "全部", transitionID: id)
+                }
+                zoomRouteRow(title: "酷安热榜", systemImage: "flame", key: "hotRank") { id in
+                    .page(link: "V9_HOME_TAB_RANKING", title: "热榜", transitionID: id)
+                }
+            }
+
+            Section("账号与设置") {
+                zoomRouteRow(
+                    title: "账号管理",
+                    systemImage: "person.2.badge.key",
+                    badge: "已保存 \(appState.accounts.accounts.count) 个",
+                    key: "accounts"
+                ) { id in
+                    .accounts(transitionID: id)
+                }
+                zoomRouteRow(title: "内容屏蔽与过滤", systemImage: "line.3.horizontal.decrease.circle", key: "filter") { id in
+                    .contentFilterSettings(transitionID: id)
+                }
+                zoomRouteRow(title: "关于 Swift C001APK", systemImage: "info.circle", key: "about") { id in
+                    .about(transitionID: id)
+                }
+            }
         }
-        .c001PageBackground()
-        .c001NativeTopBar()
+        .listStyle(.insetGrouped)
         .navigationTitle("我的")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    let sourceID = "prof-part-btn-\(transitionSeed)"
-                    appState.push(.partitionHub(transitionID: sourceID))
-                } label: {
-                    Image(systemName: "square.grid.2x2")
-                }
-                .accessibilityLabel("分区与发现")
-
                 Button {
                     appState.push(.messages)
                 } label: {
@@ -73,7 +224,7 @@ public struct ProfileTabView: View {
                 .accessibilityLabel("消息")
 
                 Button {
-                    appState.push(.settings)
+                    appState.push(.settings())
                 } label: {
                     Image(systemName: "gearshape")
                 }
@@ -90,295 +241,58 @@ public struct ProfileTabView: View {
         }
     }
 
-    @ViewBuilder
-    private var profileHeaderSection: some View {
-        if let active = appState.accounts.activeAccount {
-            let profile = appState.currentUserProfile
-            let displayName = profile?.username.isEmpty == false ? profile!.username : active.displayName
-            let avatarURL = profile?.avatar.isEmpty == false ? profile!.avatar : active.avatar
-            let level = profile?.level ?? active.level
-            let headerSourceID = "my-profile-header-\(transitionSeed)-\(active.uid)"
-
-            VStack(spacing: 12) {
-                Button {
-                    appState.push(.user(
-                        uid: active.uid,
-                        initialUsername: displayName,
-                        initialAvatar: avatarURL,
-                        transitionID: headerSourceID,
-                        initialTab: "动态"
-                    ))
-                } label: {
-                    HStack(spacing: 14) {
-                        AvatarView(url: avatarURL, size: 60)
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 6) {
-                                Text(displayName.isEmpty ? "UID: \(active.uid)" : displayName)
-                                    .font(.title3.weight(.semibold))
-                                    .foregroundStyle(.primary)
-                                Text("Lv.\(level)")
-                                    .font(.caption.weight(.semibold))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.accentColor.opacity(0.14), in: Capsule())
-                                    .foregroundStyle(Color.accentColor)
-                            }
-                            if let bio = profile?.bio, !bio.isEmpty {
-                                Text(bio)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            } else {
-                                Text("UID: \(active.uid)")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                Divider().opacity(0.4)
-                HStack(spacing: 0) {
-                    statButton(title: "动态", count: profile?.feedNum ?? 0, tab: "动态", uid: active.uid, name: displayName, avatar: avatarURL)
-                    statButton(title: "关注", count: profile?.followNum ?? appState.localFollow.users.count, tab: "关注", uid: active.uid, name: displayName, avatar: avatarURL)
-                    statButton(title: "粉丝", count: profile?.fansNum ?? 0, tab: "粉丝", uid: active.uid, name: displayName, avatar: avatarURL)
-                    statButton(title: "获赞", count: profile?.likeNum ?? 0, tab: "赞过", uid: active.uid, name: displayName, avatar: avatarURL)
-                }
-            }
-            .padding(16)
-            .c001CardStyle(cornerRadius: 22)
-            .applyZoomSource(id: headerSourceID, in: zoomNamespace, cornerRadius: 22)
-            .padding(.horizontal, 12)
-        } else {
-            VStack(spacing: 12) {
-                HStack(spacing: 14) {
-                    Image(systemName: "person.crop.circle.fill")
-                        .font(.system(size: 52))
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("游客模式")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(.primary)
-                        Text("可正常浏览信息流、本地收藏与本地关注")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button("登录") {
-                        appState.showLoginSheet = true
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                }
-            }
-            .padding(16)
-            .c001CardStyle(cornerRadius: 22)
-            .padding(.horizontal, 12)
-        }
-    }
-
-    private func statButton(title: String, count: Int, tab: String, uid: String, name: String, avatar: String) -> some View {
-        let sourceID = "my-stat-\(transitionSeed)-\(tab)"
+    private func statCell(
+        title: String,
+        count: String,
+        sourceKey: String,
+        action: @escaping (String) -> Void
+    ) -> some View {
+        let sourceID = "prof-stat-\(transitionSeed)-\(sourceKey)"
         return Button {
-            if tab == "关注" && !appState.settings.enableCloudFollowLoad {
-                appState.push(.localFollowList)
-            } else {
-                appState.push(.user(uid: uid, initialUsername: name, initialAvatar: avatar, transitionID: sourceID, initialTab: tab))
-            }
+            action(sourceID)
         } label: {
-            VStack(spacing: 2) {
-                Text(Formatting.count(count))
-                    .font(.subheadline.weight(.bold))
+            VStack(spacing: 3) {
+                Text(count)
+                    .font(.headline)
                     .foregroundStyle(.primary)
                     .monospacedDigit()
                 Text(title)
-                    .font(.caption2)
+                    .font(.caption)
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
             .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 10)
         }
         .buttonStyle(.plain)
     }
 
-    private var myContentGridSection: some View {
-        let cols = Array(repeating: GridItem(.flexible(), spacing: 10), count: 3)
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("我的内容")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 18)
-
-            LazyVGrid(columns: cols, spacing: 10) {
-                ForEach(myContentCards) { card in
-                    let sourceID = "prof-qc-\(transitionSeed)-\(card.id)"
-                    Button {
-                        appState.push(card.route)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(card.tint.opacity(0.15))
-                                    .frame(width: 34, height: 34)
-                                    .overlay {
-                                        Image(systemName: card.icon)
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(card.tint)
-                                    }
-                                Spacer()
-                            }
-                            Text(card.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                            Text(card.subtitle)
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .c001CardStyle(cornerRadius: 18)
-                        .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 18)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 12)
-        }
-    }
-
-    private var partitionDiscoveryCardSection: some View {
-        let allSourceID = "prof-part-all-\(transitionSeed)"
-        let cols = Array(repeating: GridItem(.flexible(), spacing: 10), count: 4)
-        return VStack(alignment: .leading, spacing: 12) {
+    private func zoomRouteRow(
+        title: String,
+        systemImage: String,
+        badge: String = "",
+        key: String,
+        routeBuilder: @escaping (String) -> AppRoute
+    ) -> some View {
+        let sourceID = "prof-row-\(transitionSeed)-\(key)"
+        return Button {
+            appState.push(routeBuilder(sourceID))
+        } label: {
             HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "square.grid.2x2.fill")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.accentColor)
-                    Text("分区与发现")
-                        .font(.headline)
-                }
-                Spacer()
-                Button {
-                    appState.push(.partitionHub(transitionID: allSourceID))
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("全部分区")
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.bold))
-                    }
-                    .font(.caption.weight(.semibold))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(Color.accentColor.opacity(0.14), in: Capsule())
-                    .foregroundStyle(Color.accentColor)
-                    .applyZoomSource(id: allSourceID, in: zoomNamespace, cornerRadius: 12)
-                }
-                .buttonStyle(.plain)
-            }
-
-            LazyVGrid(columns: cols, spacing: 14) {
-                ForEach(PartitionHubView.featuredShortcuts) { item in
-                    let sourceID = "prof-part-item-\(transitionSeed)-\(item.id)"
-                    Button {
-                        switch item.action {
-                        case let .route(route):
-                            switch route {
-                            case .productCategoryBrowser:
-                                appState.push(.productCategoryBrowser(transitionID: sourceID))
-                            case .partitionHub:
-                                appState.push(.partitionHub(transitionID: sourceID))
-                            default:
-                                appState.push(route)
-                            }
-                        case let .rawLink(link, title):
-                            appState.openRawLink(link, title: title, transitionID: sourceID)
-                        }
-                    } label: {
-                        VStack(spacing: 6) {
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(item.tint.opacity(0.15))
-                                .frame(width: 48, height: 48)
-                                .overlay {
-                                    Image(systemName: item.systemImage)
-                                        .font(.headline)
-                                        .foregroundStyle(item.tint)
-                                }
-                            Text(item.title)
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-                        }
-                        .frame(maxWidth: .infinity)
-                        .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 14)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-        }
-        .padding(14)
-        .c001CardStyle(cornerRadius: 22)
-        .padding(.horizontal, 12)
-    }
-
-    private var settingsCardSection: some View {
-        VStack(spacing: 0) {
-            settingRow(title: "账号管理", trailingText: "已保存 \(appState.accounts.accounts.count) 个", icon: "person.2.badge.key.fill", tint: .blue) {
-                appState.push(.accounts)
-            }
-            Divider().padding(.leading, 48)
-            settingRow(title: "内容过滤与屏蔽", icon: "line.3.horizontal.decrease.circle.fill", tint: .teal) {
-                appState.push(.contentFilterSettings)
-            }
-            Divider().padding(.leading, 48)
-            settingRow(title: "应用设置", icon: "gearshape.fill", tint: .gray) {
-                appState.push(.settings)
-            }
-            Divider().padding(.leading, 48)
-            settingRow(title: "关于 c001apk", icon: "info.circle.fill", tint: .indigo) {
-                appState.push(.about)
-            }
-        }
-        .padding(.vertical, 4)
-        .c001CardStyle(cornerRadius: 22)
-        .padding(.horizontal, 12)
-    }
-
-    private func settingRow(title: String, trailingText: String = "", icon: String, tint: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(tint.opacity(0.15))
-                    .frame(width: 30, height: 30)
-                    .overlay {
-                        Image(systemName: icon)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(tint)
-                    }
-                Text(title)
-                    .font(.subheadline.weight(.medium))
+                Label(title, systemImage: systemImage)
                     .foregroundStyle(.primary)
                 Spacer()
-                if !trailingText.isEmpty {
-                    Text(trailingText)
-                        .font(.caption)
+                if !badge.isEmpty {
+                    Text(badge)
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                 }
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 11)
             .contentShape(Rectangle())
+            .applyZoomSource(id: sourceID, in: zoomNamespace, cornerRadius: 10)
         }
         .buttonStyle(.plain)
     }

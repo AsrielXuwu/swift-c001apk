@@ -138,12 +138,68 @@ public extension View {
     }
 }
 
-public enum RootTab: Hashable, Sendable {
-    case home
-    case follow
-    case swipe
-    case profile
-    case search
+public enum RootTab: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
+    case home = "home"
+    case partition = "partition"
+    case follow = "follow"
+    case swipe = "swipe"
+    case profile = "profile"
+    case search = "search"
+
+    public var id: String { rawValue }
+
+    public var title: String {
+        switch self {
+        case .home: return "首页"
+        case .partition: return "分区"
+        case .follow: return "关注"
+        case .swipe: return "刷动态"
+        case .profile: return "我的"
+        case .search: return "搜索"
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .home: return "house"
+        case .partition: return "square.grid.2x2"
+        case .follow: return "person.2"
+        case .swipe: return "rectangle.stack"
+        case .profile: return "person.crop.circle"
+        case .search: return "magnifyingglass"
+        }
+    }
+}
+
+public struct RootTabConfiguration: Codable, Equatable, Sendable {
+    public static let defaultOrder: [RootTab] = [
+        .home,
+        .partition,
+        .follow,
+        .swipe,
+        .profile,
+        .search
+    ]
+
+    public var order: [RootTab]
+    public var hidden: Set<RootTab>
+
+    public init(order: [RootTab] = RootTabConfiguration.defaultOrder, hidden: Set<RootTab> = []) {
+        var resolved: [RootTab] = []
+        for tab in order where Self.defaultOrder.contains(tab) && !resolved.contains(tab) {
+            resolved.append(tab)
+        }
+        for tab in Self.defaultOrder where !resolved.contains(tab) {
+            resolved.append(tab)
+        }
+        self.order = resolved
+        // Keep .home and .profile always visible so user can always browse and access settings.
+        self.hidden = hidden.subtracting([.home, .profile])
+    }
+
+    public var visibleTabs: [RootTab] {
+        order.filter { !hidden.contains($0) }
+    }
 }
 
 public enum AppRoute: Hashable, Sendable {
@@ -158,23 +214,23 @@ public enum AppRoute: Hashable, Sendable {
     case page(link: String, title: String, transitionID: String? = nil)
     case partitionHub(transitionID: String? = nil)
     case productCategoryBrowser(transitionID: String? = nil)
-    case coolpic(tag: String)
+    case coolpic(tag: String, transitionID: String? = nil)
     case messages
     case chat(ukey: String, uid: String, username: String, avatar: String, transitionID: String? = nil)
-    case history
-    case favorites
-    case localFollowList
-    case myRecentVisits
-    case myLikes
-    case myReplies
-    case accounts
-    case settings
-    case contentFilterSettings
-    case blacklist(isTopic: Bool)
-    case deviceIdentity
-    case protocolParams
-    case about
-    case web(url: URL)
+    case history(transitionID: String? = nil)
+    case favorites(transitionID: String? = nil)
+    case localFollowList(transitionID: String? = nil)
+    case myRecentVisits(transitionID: String? = nil)
+    case myLikes(transitionID: String? = nil)
+    case myReplies(transitionID: String? = nil)
+    case accounts(transitionID: String? = nil)
+    case settings(transitionID: String? = nil)
+    case contentFilterSettings(transitionID: String? = nil)
+    case blacklist(isTopic: Bool, transitionID: String? = nil)
+    case deviceIdentity(transitionID: String? = nil)
+    case protocolParams(transitionID: String? = nil)
+    case about(transitionID: String? = nil)
+    case web(url: URL, transitionID: String? = nil)
 
     public var transitionID: String? {
         switch self {
@@ -189,10 +245,58 @@ public enum AppRoute: Hashable, Sendable {
              let .page(_, _, id),
              let .partitionHub(id),
              let .productCategoryBrowser(id),
-             let .chat(_, _, _, _, id):
+             let .coolpic(_, id),
+             let .chat(_, _, _, _, id),
+             let .history(id),
+             let .favorites(id),
+             let .localFollowList(id),
+             let .myRecentVisits(id),
+             let .myLikes(id),
+             let .myReplies(id),
+             let .accounts(id),
+             let .settings(id),
+             let .contentFilterSettings(id),
+             let .blacklist(_, id),
+             let .deviceIdentity(id),
+             let .protocolParams(id),
+             let .about(id),
+             let .web(_, id):
             return id
-        default:
+        case .messages:
             return nil
+        }
+    }
+
+    public func withTransitionID(_ id: String?) -> AppRoute {
+        switch self {
+        case let .feed(fid, initial, _): return .feed(id: fid, initial: initial, transitionID: id)
+        case let .user(uid, name, avatar, _, tab): return .user(uid: uid, initialUsername: name, initialAvatar: avatar, transitionID: id, initialTab: tab)
+        case let .topic(tag, _): return .topic(tag: tag, transitionID: id)
+        case let .product(pid, title, _): return .product(id: pid, initialTitle: title, transitionID: id)
+        case let .app(aid, title, _): return .app(id: aid, initialTitle: title, transitionID: id)
+        case let .collection(cid, title, _): return .collection(id: cid, initialTitle: title, transitionID: id)
+        case let .dyh(did, title, _): return .dyh(id: did, initialTitle: title, transitionID: id)
+        case let .event(eid, initial, _): return .event(id: eid, initial: initial, transitionID: id)
+        case let .page(link, title, _): return .page(link: link, title: title, transitionID: id)
+        case .partitionHub: return .partitionHub(transitionID: id)
+        case .productCategoryBrowser: return .productCategoryBrowser(transitionID: id)
+        case let .coolpic(tag, _): return .coolpic(tag: tag, transitionID: id)
+        case .messages: return .messages
+        case let .chat(ukey, uid, username, avatar, _): return .chat(ukey: ukey, uid: uid, username: username, avatar: avatar, transitionID: id)
+        case .history: return .history(transitionID: id)
+        case .favorites: return .favorites(transitionID: id)
+        case .localFollowList: return .localFollowList(transitionID: id)
+        case .myRecentVisits: return .myRecentVisits(transitionID: id)
+        case .myLikes: return .myLikes(transitionID: id)
+        case .myReplies: return .myReplies(transitionID: id)
+        case .accounts: return .accounts(transitionID: id)
+        case .settings: return .settings(transitionID: id)
+        case .contentFilterSettings: return .contentFilterSettings(transitionID: id)
+        case let .blacklist(isTopic, _): return .blacklist(isTopic: isTopic, transitionID: id)
+        case .deviceIdentity: return .deviceIdentity(transitionID: id)
+        case .protocolParams: return .protocolParams(transitionID: id)
+        case .about: return .about(transitionID: id)
+        case let .web(url, _): return .web(url: url, transitionID: id)
         }
     }
 
@@ -218,7 +322,7 @@ public enum AppRoute: Hashable, Sendable {
                 ?? FeedLink.inferredPageTitle(from: link)
                 ?? "列表"
             return .page(link: link, title: resolvedTitle, transitionID: transitionID)
-        case let .web(url): return .web(url: url)
+        case let .web(url): return .web(url: url, transitionID: transitionID)
         }
     }
 }

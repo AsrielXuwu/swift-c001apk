@@ -9,45 +9,18 @@ public struct RootTabView: View {
 
     public var body: some View {
         @Bindable var state = appState
+        let visibleTabs = appState.settings.rootTabConfig.visibleTabs
 
         TabView(selection: tabSelectionBinding) {
-            Tab("首页", systemImage: "house", value: RootTab.home) {
-                NavigationStack(path: $state.homeNavigationPath) {
-                    HomeView()
-                        .c001NativeTopBar()
-                        .navigationDestination(for: AppRoute.self, destination: destinationView)
-                }
-            }
-
-            Tab("关注", systemImage: "person.2", value: RootTab.follow) {
-                NavigationStack(path: $state.followNavigationPath) {
-                    FollowView()
-                        .c001NativeTopBar()
-                        .navigationDestination(for: AppRoute.self, destination: destinationView)
-                }
-            }
-
-            Tab("刷动态", systemImage: "rectangle.stack", value: RootTab.swipe) {
-                NavigationStack(path: $state.swipeNavigationPath) {
-                    SwipeDeckView()
-                        .c001NativeTopBar()
-                        .navigationDestination(for: AppRoute.self, destination: destinationView)
-                }
-            }
-
-            Tab("我的", systemImage: "person.crop.circle", value: RootTab.profile) {
-                NavigationStack(path: $state.profileNavigationPath) {
-                    ProfileTabView()
-                        .c001NativeTopBar()
-                        .navigationDestination(for: AppRoute.self, destination: destinationView)
-                }
-            }
-
-            Tab("搜索", systemImage: "magnifyingglass", value: RootTab.search, role: .search) {
-                NavigationStack(path: $state.searchNavigationPath) {
-                    SearchView()
-                        .c001NativeTopBar()
-                        .navigationDestination(for: AppRoute.self, destination: destinationView)
+            ForEach(visibleTabs) { tab in
+                if tab == .search {
+                    Tab(tab.title, systemImage: tab.systemImage, value: tab, role: .search) {
+                        tabNavigationStack(for: tab, state: $state)
+                    }
+                } else {
+                    Tab(tab.title, systemImage: tab.systemImage, value: tab) {
+                        tabNavigationStack(for: tab, state: $state)
+                    }
                 }
             }
         }
@@ -55,6 +28,11 @@ public struct RootTabView: View {
         .tabBarMinimizeBehavior(.onScrollDown)
         .environment(\.zoomNamespace, appZoomNamespace)
         .environment(\.oledPureBlack, appState.settings.useOledPureBlackDarkMode)
+        .onChange(of: visibleTabs) { _, newTabs in
+            if !newTabs.contains(appState.selectedTab) {
+                appState.selectedTab = newTabs.first ?? .home
+            }
+        }
         .sheet(isPresented: $state.showOnboarding) {
             OnboardingView()
                 .interactiveDismissDisabled()
@@ -94,6 +72,48 @@ public struct RootTabView: View {
         .animation(.snappy(duration: 0.22), value: appState.toastMessage)
     }
 
+    @ViewBuilder
+    private func tabNavigationStack(for tab: RootTab, state: Bindable<AppState>) -> some View {
+        switch tab {
+        case .home:
+            NavigationStack(path: state.homeNavigationPath) {
+                HomeView()
+                    .c001NativeTopBar()
+                    .navigationDestination(for: AppRoute.self, destination: destinationView)
+            }
+        case .partition:
+            NavigationStack(path: state.partitionNavigationPath) {
+                PartitionHubView()
+                    .c001NativeTopBar()
+                    .navigationDestination(for: AppRoute.self, destination: destinationView)
+            }
+        case .follow:
+            NavigationStack(path: state.followNavigationPath) {
+                FollowView()
+                    .c001NativeTopBar()
+                    .navigationDestination(for: AppRoute.self, destination: destinationView)
+            }
+        case .swipe:
+            NavigationStack(path: state.swipeNavigationPath) {
+                SwipeDeckView()
+                    .c001NativeTopBar()
+                    .navigationDestination(for: AppRoute.self, destination: destinationView)
+            }
+        case .profile:
+            NavigationStack(path: state.profileNavigationPath) {
+                ProfileTabView()
+                    .c001NativeTopBar()
+                    .navigationDestination(for: AppRoute.self, destination: destinationView)
+            }
+        case .search:
+            NavigationStack(path: state.searchNavigationPath) {
+                SearchView()
+                    .c001NativeTopBar()
+                    .navigationDestination(for: AppRoute.self, destination: destinationView)
+            }
+        }
+    }
+
     private var tabSelectionBinding: Binding<RootTab> {
         Binding(
             get: { appState.selectedTab },
@@ -106,6 +126,8 @@ public struct RootTabView: View {
                         } else {
                             appState.homeDoubleTapTrigger += 1
                         }
+                    case .partition:
+                        appState.partitionNavigationPath.removeAll()
                     case .follow:
                         if !appState.followNavigationPath.isEmpty {
                             appState.followNavigationPath.removeAll()
@@ -191,9 +213,10 @@ public struct AppRouteDestinationView: View {
             ProductCategoryBrowserView()
                 .c001NativeTopBar()
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
-        case let .coolpic(tag):
+        case let .coolpic(tag, transitionID):
             CoolPicView(initialTag: tag)
                 .c001NativeTopBar()
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         case .messages:
             MessagesView()
                 .c001NativeTopBar()
@@ -202,48 +225,62 @@ public struct AppRouteDestinationView: View {
                 .c001NativeTopBar()
                 .toolbar(.hidden, for: .tabBar)
                 .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
-        case .history:
+        case let .history(transitionID):
             HistoryListView()
                 .c001NativeTopBar()
-        case .favorites:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .favorites(transitionID):
             FavoritesListView()
                 .c001NativeTopBar()
-        case .localFollowList:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .localFollowList(transitionID):
             LocalFollowListView()
                 .c001NativeTopBar()
-        case .myRecentVisits:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .myRecentVisits(transitionID):
             UserRecentVisitsView()
                 .c001NativeTopBar()
-        case .myLikes:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .myLikes(transitionID):
             UserLikesListView()
                 .c001NativeTopBar()
-        case .myReplies:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .myReplies(transitionID):
             UserRepliesListView()
                 .c001NativeTopBar()
-        case .accounts:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .accounts(transitionID):
             AccountsView()
                 .c001NativeTopBar()
-        case .settings:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .settings(transitionID):
             SettingsView()
                 .c001NativeTopBar()
-        case .contentFilterSettings:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .contentFilterSettings(transitionID):
             ContentFilterSettingsView()
                 .c001NativeTopBar()
-        case let .blacklist(isTopic):
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .blacklist(isTopic, transitionID):
             BlacklistView(isTopic: isTopic)
                 .c001NativeTopBar()
-        case .deviceIdentity:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .deviceIdentity(transitionID):
             DeviceIdentityView()
                 .c001NativeTopBar()
-        case .protocolParams:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .protocolParams(transitionID):
             ProtocolParamsView()
                 .c001NativeTopBar()
-        case .about:
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .about(transitionID):
             AboutView()
                 .c001NativeTopBar()
-        case let .web(url):
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
+        case let .web(url, transitionID):
             InAppWebView(url: url)
                 .c001NativeTopBar()
+                .applyZoomTransition(sourceID: transitionID, in: zoomNamespace)
         }
     }
 }

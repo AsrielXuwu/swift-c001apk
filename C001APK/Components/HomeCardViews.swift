@@ -149,7 +149,7 @@ struct BannerCarouselView: View {
             EmptyView()
         } else {
             let count = banners.count
-            let visibleLayers = min(count, 3)
+            let visibleLayers = max(2, min(count, 3))
             let activeIdx = currentNearestIndex
             let leftInset: CGFloat = visibleLayers > 2 ? 24 : 12
             let rightInset: CGFloat = visibleLayers > 1 ? 24 : 12
@@ -530,10 +530,9 @@ public struct IconLinksScrollView: View {
                     VStack(spacing: 6) {
                         ZStack(alignment: .topLeading) {
                             RemoteImageView(url: item.image, maxPixelSize: 220, contentMode: .fit)
-                                .frame(height: 58)
+                                .frame(width: 56, height: 56)
+                                .clipShape(RoundedRectangle(cornerRadius: 13, style: .continuous))
                                 .frame(maxWidth: .infinity)
-                                .padding(6)
-                                .background(Color(.tertiarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
 
                             if rank <= 4 {
                                 Text("TOP \(rank)")
@@ -542,7 +541,7 @@ public struct IconLinksScrollView: View {
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 2)
                                     .background(rankBadgeColor(rank), in: Capsule())
-                                    .padding(4)
+                                    .offset(x: 2, y: -2)
                             }
                         }
 
@@ -655,16 +654,9 @@ struct ImageTextSectionsView: View {
     var body: some View {
         if sections.isEmpty {
             EmptyView()
-        } else if sections.count == 1, let single = sections.first, !single.style.isEmpty {
-            SingleImageLinkCardView(
-                imageURL: single.style,
-                title: single.title,
-                subtitle: single.subtitle,
-                targetURL: single.url
-            )
         } else {
             let count = sections.count
-            let visibleLayers = min(count, 3)
+            let visibleLayers = max(2, min(count, 3))
             let activeIdx = currentNearestIndex
             let leftInset: CGFloat = visibleLayers > 2 ? 24 : 12
             let rightInset: CGFloat = visibleLayers > 1 ? 24 : 12

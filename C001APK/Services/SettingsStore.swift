@@ -135,6 +135,13 @@ public final class SettingsStore {
             }
         }
     }
+    public var rootTabConfig: RootTabConfiguration {
+        didSet {
+            if let data = try? JSONEncoder().encode(rootTabConfig) {
+                defaults.set(data, forKey: "settings.rootTabConfig")
+            }
+        }
+    }
     public var hideHomePublishButton: Bool {
         didSet { defaults.set(hideHomePublishButton, forKey: "settings.hideHomePublishButton") }
     }
@@ -248,9 +255,16 @@ public final class SettingsStore {
 
         if let tabData = defaults.data(forKey: "settings.homeTabConfig"),
            let decodedTabs = try? JSONDecoder().decode(HomeTabConfiguration.self, from: tabData) {
-            self.homeTabConfig = decodedTabs
+            self.homeTabConfig = HomeTabConfiguration(order: decodedTabs.order, hidden: decodedTabs.hidden)
         } else {
             self.homeTabConfig = HomeTabConfiguration()
+        }
+
+        if let rootData = defaults.data(forKey: "settings.rootTabConfig"),
+           let decodedRoot = try? JSONDecoder().decode(RootTabConfiguration.self, from: rootData) {
+            self.rootTabConfig = RootTabConfiguration(order: decodedRoot.order, hidden: decodedRoot.hidden)
+        } else {
+            self.rootTabConfig = RootTabConfiguration()
         }
 
         self.hideHomePublishButton = defaults.bool(forKey: "settings.hideHomePublishButton")

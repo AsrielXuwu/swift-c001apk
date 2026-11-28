@@ -21,6 +21,7 @@ public final class AppState {
 
     public var selectedTab: RootTab = .home
     public var homeNavigationPath: [AppRoute] = []
+    public var partitionNavigationPath: [AppRoute] = []
     public var followNavigationPath: [AppRoute] = []
     public var swipeNavigationPath: [AppRoute] = []
     public var profileNavigationPath: [AppRoute] = []
@@ -643,6 +644,7 @@ public final class AppState {
         cachedDyhs.removeAll()
         clearedEndpointBadges.removeAll()
         homeNavigationPath.removeAll()
+        partitionNavigationPath.removeAll()
         followNavigationPath.removeAll()
         swipeNavigationPath.removeAll()
         profileNavigationPath.removeAll()
@@ -659,6 +661,7 @@ public final class AppState {
         }
         switch selectedTab {
         case .home: homeNavigationPath.append(route)
+        case .partition: partitionNavigationPath.append(route)
         case .follow: followNavigationPath.append(route)
         case .swipe: swipeNavigationPath.append(route)
         case .profile: profileNavigationPath.append(route)
@@ -688,6 +691,7 @@ public final class AppState {
     private func currentActiveNavigationPath() -> [AppRoute] {
         switch selectedTab {
         case .home: return homeNavigationPath
+        case .partition: return partitionNavigationPath
         case .follow: return followNavigationPath
         case .swipe: return swipeNavigationPath
         case .profile: return profileNavigationPath

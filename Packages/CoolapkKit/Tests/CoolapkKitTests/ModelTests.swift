@@ -528,4 +528,46 @@ final class ModelTests: XCTestCase {
         XCTAssertTrue(HomeTabConfiguration.defaultOrder.contains(.secondHand))
         XCTAssertTrue(HomeTabConfiguration.defaultOrder.contains(.review))
     }
+
+    func testGoodsRankingItemWithoutInlineProductsAndConsecutiveBannersCoalesce() {
+        let goodsCardJSON = JSONValue.parse("""
+        {
+            "entityType": "card",
+            "entityTemplate": "goodsListCard",
+            "title": "2026 年度酷安数码好物榜",
+            "url": "/v6/goodsList/detail?id=9981",
+            "pic": "https://image.coolapk.com/goods_cover.png"
+        }
+        """)
+        let ranking = GoodsRankingItem(json: goodsCardJSON)
+        XCTAssertNotNil(ranking)
+        XCTAssertEqual(ranking?.title, "2026 年度酷安数码好物榜")
+        XCTAssertTrue(ranking?.products.isEmpty ?? false)
+
+        let rowsJSON = JSONValue.parse("""
+        {
+            "data": [
+                {
+                    "entityTemplate": "imageCarouselCard_1",
+                    "entities": [
+                        {"title": "Banner 1", "pic": "https://image.coolapk.com/b1.jpg", "url": "/feed/1001"}
+                    ]
+                },
+                {
+                    "entityTemplate": "imageCarouselCard_1",
+                    "entities": [
+                        {"title": "Banner 2", "pic": "https://image.coolapk.com/b2.jpg", "url": "/feed/1002"}
+                    ]
+                }
+            ]
+        }
+        """)
+        let rows = API.rows(from: rowsJSON.data)
+        XCTAssertEqual(rows.count, 1)
+        if case let .banners(_, items) = rows.first {
+            XCTAssertEqual(items.count, 2)
+        } else {
+            XCTFail("Expected coalesced .banners row")
+        }
+    }
 }

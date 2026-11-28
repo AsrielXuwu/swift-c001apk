@@ -780,7 +780,7 @@ public struct OrbitalDeckStage<CardContent: View>: View, @MainActor Animatable {
         // Center rawSlots around activeRounded (boundary at N + 0.5) rather than floor(phase) (boundary at N.0)
         // so starting a rightward swipe from an integer rest state or settling with spring overshoot around N.0
         // never unmounts or recreates adjacent card views.
-        let rawSlots = count <= 1 ? [0] : Array((activeRounded - 2)...(activeRounded + 2))
+        let rawSlots = count <= 0 ? [] : (count == 1 ? [0, 1] : Array((activeRounded - 2)...(activeRounded + 2)))
 
         ZStack {
             ForEach(rawSlots, id: \.self) { rawSlot in

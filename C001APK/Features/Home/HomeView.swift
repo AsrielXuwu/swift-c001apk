@@ -91,12 +91,6 @@ public struct HomeView: View {
 
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button {
-                        appState.push(.partitionHub())
-                    } label: {
-                        Label("分区", systemImage: "square.grid.2x2")
-                    }
-
-                    Button {
                         appState.push(.page(link: "/main/headline", title: "头条"))
                     } label: {
                         Label("头条", systemImage: "newspaper")
@@ -370,6 +364,81 @@ struct HomeTabsEditorSheet: View {
             .onAppear {
                 draftOrder = appState.settings.homeTabConfig.order
                 draftHidden = appState.settings.homeTabConfig.hidden
+            }
+        }
+    }
+}
+
+struct RootTabsEditorSheet: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.dismiss) private var dismiss
+    @State private var draftOrder: [RootTab] = []
+    @State private var draftHidden: Set<RootTab> = []
+
+    private func isPinned(_ tab: RootTab) -> Bool {
+        tab == .home || tab == .profile
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(draftOrder) { tab in
+                        let pinned = isPinned(tab)
+                        let isVisible = pinned || !draftHidden.contains(tab)
+                        HStack(spacing: 12) {
+                            Image(systemName: isVisible ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(isVisible ? Color.accentColor : Color.secondary)
+                                .onTapGesture {
+                                    guard !pinned else { return }
+                                    if draftHidden.contains(tab) {
+                                        draftHidden.remove(tab)
+                                    } else {
+                                        draftHidden.insert(tab)
+                                    }
+                                }
+                            Label(tab.title, systemImage: tab.systemImage)
+                            Spacer()
+                            if pinned {
+                                Text("固定显示")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .onMove { indices, newOffset in
+                        draftOrder.move(fromOffsets: indices, toOffset: newOffset)
+                    }
+                } header: {
+                    Text("勾选显示底部栏按钮，拖动右侧手柄调整顺序")
+                }
+
+                Section {
+                    Button("恢复默认底部栏布局") {
+                        let def = RootTabConfiguration()
+                        draftOrder = def.order
+                        draftHidden = def.hidden
+                    }
+                }
+            }
+            .environment(\.editMode, .constant(.active))
+            .navigationTitle("编辑底部导航栏")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") {
+                        appState.settings.rootTabConfig = RootTabConfiguration(order: draftOrder, hidden: draftHidden)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+            .onAppear {
+                draftOrder = appState.settings.rootTabConfig.order
+                draftHidden = appState.settings.rootTabConfig.hidden
             }
         }
     }

@@ -34,7 +34,7 @@ public struct FollowView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        appState.push(.localFollowList)
+                        appState.push(.localFollowList())
                     } label: {
                         Label("关注名单", systemImage: "person.badge.shield.checkmark")
                     }

@@ -110,6 +110,25 @@ public enum API: Sendable {
             let dyhs = try await followedDyhs(page: page)
             return dyhs.map { .dyh($0) }
         }
+        if trimmed.contains("数码测评") || lower.contains("/board/数码测评") {
+            return try await reviewFeeds(page: page)
+        }
+        if let boardRange = trimmed.range(of: "/board/") {
+            let rawTag = String(trimmed[boardRange.upperBound...])
+                .split(whereSeparator: { $0 == "?" || $0 == "&" || $0 == "/" })
+                .first
+                .map(String.init) ?? ""
+            let decodedTag = (rawTag.removingPercentEncoding ?? rawTag).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !decodedTag.isEmpty {
+                let tagRows = (try? await topicFeeds(tag: decodedTag, page: page)) ?? []
+                if !tagRows.isEmpty { return tagRows }
+                let searchJSON = (try? await search(keyword: decodedTag, type: "feed", page: page)) ?? []
+                return rows(from: searchJSON)
+            }
+        }
+        if lower.contains("v11_find_good_things") || lower.contains("v11_find_goods") || lower == "#/goods/feedlist" || lower == "/v6/goodslist/list" {
+            return try await goodsRecommendationFeed(page: page)
+        }
         if trimmed.hasPrefix("/v6/") {
             let parsed = parsePageLink(trimmed)
             var params = parsed.extra
@@ -427,7 +446,7 @@ public enum API: Sendable {
     private static let iconCardTemplates: Set<String> = [
         "iconLinkGridCard", "iconMiniScrollCard", "iconListCard", "iconGridCard",
         "iconMiniGridCard", "iconMiniLinkGridCard", "iconLongTitleGridCard",
-        "iconButtonGridCard", "iconLargeScrollCard", "imageSquareScrollCard",
+        "iconButtonGridCard", "iconLargeScrollCard",
     ]
 
     private static let linkBarTemplates: Set<String> = [
@@ -475,7 +494,7 @@ public enum API: Sendable {
             flushAll()
             if GoodsRankingItem.looksLikeGoodsRankingJSON(item) {
                 let ranking = GoodsRankingItem(json: item)
-                if !ranking.products.isEmpty {
+                if !ranking.title.isEmpty || !ranking.products.isEmpty {
                     rows.append(.goodsRanking(ranking))
                     continue
                 }
@@ -525,7 +544,24 @@ public enum API: Sendable {
             }
         }
         flushAll()
-        return rows
+        // Merge consecutive .banners rows (e.g. when /v6/main/indexV8 returns multiple top banner cards)
+        // so the top carousel displays all banners together in one stacked deck.
+        var coalesced: [HomeFeedRow] = []
+        for row in rows {
+            if case let .banners(key, incoming) = row,
+               let lastIdx = coalesced.indices.last,
+               case let .banners(prevKey, existing) = coalesced[lastIdx] {
+                var combined = existing
+                var seenURLs = Set(existing.map(\.image))
+                for b in incoming where seenURLs.insert(b.image).inserted {
+                    combined.append(b)
+                }
+                coalesced[lastIdx] = .banners(prevKey.isEmpty ? key : prevKey, combined)
+            } else {
+                coalesced.append(row)
+            }
+        }
+        return coalesced
     }
 
     private static func looksLikeFeedOrRatingJSON(_ item: JSON) -> Bool {
@@ -587,14 +623,14 @@ public enum API: Sendable {
 
         if GoodsRankingItem.looksLikeGoodsRankingJSON(item) {
             let ranking = GoodsRankingItem(json: item)
-            if !ranking.products.isEmpty {
+            if !ranking.title.isEmpty || !ranking.products.isEmpty {
                 return titled([.goodsRanking(ranking)])
             }
         }
 
         let goodsRankingEntities = entities.filter { GoodsRankingItem.looksLikeGoodsRankingJSON($0) }
         if !goodsRankingEntities.isEmpty && goodsRankingEntities.count == entities.count {
-            let mapped = goodsRankingEntities.map { GoodsRankingItem(json: $0) }.filter { !$0.products.isEmpty }
+            let mapped = goodsRankingEntities.map { GoodsRankingItem(json: $0) }.filter { !$0.title.isEmpty || !$0.products.isEmpty }
             if !mapped.isEmpty {
                 return titled(mapped.map { .goodsRanking($0) })
             }
@@ -687,7 +723,15 @@ public enum API: Sendable {
             if !banners.isEmpty { return [.banners("banner-\(index)", banners)] }
         }
 
-        if !entities.isEmpty, entities.allSatisfy({ $0.entityType.string == "event" || $0.url.string.contains("/event/") }) {
+        let isCarouselOrImageTemplate = template.lowercased().contains("carousel")
+            || template == "imageSquareScrollCard"
+            || template == "imageTextScrollCard"
+            || template == "imageCard"
+            || template == "imageScaleCard"
+            || template == "singleImageCard"
+        if !isCarouselOrImageTemplate,
+           !entities.isEmpty,
+           entities.allSatisfy({ $0.entityType.string == "event" }) {
             let events = entities.map { EventItem(json: $0) }.filter { !$0.title.isEmpty || !$0.cover.isEmpty }
             if !events.isEmpty { return titled(events.map { HomeFeedRow.event($0) }) }
         }
@@ -763,36 +807,44 @@ public enum API: Sendable {
 
         switch template {
         case "imageCarouselCard_1", "imageCarouselCard_2", "imageCarouselCard":
-            let banners = entities.enumerated().compactMap { offset, entity -> HomeBanner? in
-                let image = entity.pic.string
+            var banners = entities.enumerated().compactMap { offset, entity -> HomeBanner? in
+                let image = [entity.pic.string, entity.logo.string, entity.cover.string].first { !$0.isEmpty } ?? ""
                 guard !image.isEmpty else { return nil }
                 return HomeBanner(
                     id: "car-\(index)-\(offset)-\(entity.entityId.identifier)",
                     title: entity.title.string.isEmpty ? entity.description.string : entity.title.string,
                     subtitle: entity.sub_title.string,
-                    image: image,
+                    image: coolapkNormalizedURL(image),
                     url: resolveSectionURL(for: entity, parentCard: item, isLinkBar: false)
                 )
+            }
+            if banners.isEmpty {
+                let selfImg = [item.pic.string, item.logo.string, item.cover.string].first { !$0.isEmpty } ?? ""
+                if !selfImg.isEmpty {
+                    banners = [
+                        HomeBanner(
+                            id: "car-self-\(index)",
+                            title: item.title.string.isEmpty ? item.description.string : item.title.string,
+                            subtitle: item.sub_title.string,
+                            image: coolapkNormalizedURL(selfImg),
+                            url: resolveSectionURL(for: item, parentCard: .null, isLinkBar: false)
+                        )
+                    ]
+                }
             }
             return banners.isEmpty ? [] : [.banners("banner-\(index)", banners)]
 
         case "imageTextScrollCard":
-            let allEvents = !entities.isEmpty && entities.allSatisfy {
-                $0.entityType.string == "event" || $0.url.string.contains("/event/")
-            }
-            if allEvents {
-                return titled(entities.map { HomeFeedRow.event(EventItem(json: $0)) })
-            }
             let sections = entities.enumerated().map { offset, entity in
                 HomeSection(
                     id: "sec-\(index)-\(offset)-\(entity.entityId.identifier)-\(entity.title.string)",
                     title: entity.title.string,
                     subtitle: entity.sub_title.string.isEmpty ? entity.description.string : entity.sub_title.string,
                     url: resolveSectionURL(for: entity, parentCard: item, isLinkBar: true),
-                    style: entity.pic.string
+                    style: coolapkNormalizedURL(!entity.pic.string.isEmpty ? entity.pic.string : entity.logo.string)
                 )
-            }
-            return sections.isEmpty ? [] : [.sections("sections-\(index)", sections)]
+            }.filter { !$0.style.isEmpty || !$0.title.isEmpty }
+            return sections.isEmpty ? [] : titled([.sections("sections-\(index)", sections)])
 
         case "verticalColumnsFullPageCard":
             let columns = entities.enumerated()
@@ -2402,5 +2454,35 @@ public enum API: Sendable {
 
     public static func userRatingFeeds(uid: String, targetType: String = "all", page: Int) async throws -> [HomeFeedRow] {
         try await linkFeed(link: "/feed/nodeRatingList?uid=\(uid)&targetType=\(targetType)&parseRatingToFeed=1", page: page)
+    }
+
+    public static func reviewFeeds(page: Int) async throws -> [HomeFeedRow] {
+        for tag in ["数码测评", "评测", "深度评测"] {
+            if let rows = try? await topicFeeds(tag: tag, page: page, listType: "lastupdate_desc"), !rows.isEmpty {
+                return rows
+            }
+        }
+        if let raw = try? await search(keyword: "评测", type: "feed", page: page) {
+            let mapped = rows(from: raw)
+            if !mapped.isEmpty { return mapped }
+        }
+        return []
+    }
+
+    public static func goodsRecommendationFeed(page: Int) async throws -> [HomeFeedRow] {
+        if let v11 = try? await pageFeed(pageName: "V11_FIND_GOODS", page: page), !v11.isEmpty {
+            return v11
+        }
+        if let json = try? await client.get("/v6/goodsList/list", ["page": String(page)]) {
+            let parsed = rows(from: json.data.array)
+            if !parsed.isEmpty { return parsed }
+        }
+        if let feedList = try? await pageFeed(pageName: "/goods/feedList", page: page), !feedList.isEmpty {
+            return feedList
+        }
+        if let ershouHome = try? await pageFeed(pageName: "V11_FIND_GOOD_GOODS_HOME", page: page), !ershouHome.isEmpty {
+            return ershouHome
+        }
+        return (try? await topicFeeds(tag: "好物推荐", page: page)) ?? []
     }
 }

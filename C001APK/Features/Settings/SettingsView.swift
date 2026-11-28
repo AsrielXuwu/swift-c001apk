@@ -7,6 +7,7 @@ public struct SettingsView: View {
     @State private var cacheBytes: Int64 = 0
     @State private var showClearCacheDialog = false
     @State private var showTabEditor = false
+    @State private var showRootTabEditor = false
     @State private var isCheckingUpdate = false
     @State private var latestRelease: AppReleaseInfo?
     @State private var showReleaseAlert = false
@@ -38,8 +39,12 @@ public struct SettingsView: View {
                 }
                 Toggle("OLED 纯黑深色背景", isOn: $settings.useOledPureBlackDarkMode)
 
-                Button("编辑主页分类顺序与显隐") {
+                Button("编辑主页顶部分类顺序与显隐") {
                     showTabEditor = true
+                }
+
+                Button("编辑底部 Tab 栏按钮顺序与显隐") {
+                    showRootTabEditor = true
                 }
 
                 Toggle("不写东西（隐藏主页发布按钮）", isOn: $settings.hideHomePublishButton)
@@ -101,7 +106,7 @@ public struct SettingsView: View {
                 if appState.accounts.isLoggedIn {
                     Toggle("悄悄关注", isOn: $localFollow.secretFollowEnabled)
                 }
-                NavigationLink(value: AppRoute.localFollowList) {
+                NavigationLink(value: AppRoute.localFollowList()) {
                     Text("管理关注列表（本机与云端）")
                 }
             } header: {
@@ -111,7 +116,7 @@ public struct SettingsView: View {
             }
 
             Section("内容屏蔽") {
-                NavigationLink(value: AppRoute.contentFilterSettings) {
+                NavigationLink(value: AppRoute.contentFilterSettings()) {
                     HStack {
                         Text("屏蔽傻逼内容")
                         Spacer()
@@ -178,10 +183,10 @@ public struct SettingsView: View {
 
             Section("协议与设备") {
                 Toggle("启动时自动获取数盟 DUID", isOn: $settings.autoAcquireSzlmOnLaunch)
-                NavigationLink(value: AppRoute.deviceIdentity) {
+                NavigationLink(value: AppRoute.deviceIdentity()) {
                     Text("设备标识（数盟 DUID）")
                 }
-                NavigationLink(value: AppRoute.protocolParams) {
+                NavigationLink(value: AppRoute.protocolParams()) {
                     Text("客户端协议参数")
                 }
             }
@@ -190,7 +195,7 @@ public struct SettingsView: View {
                 Button("重新打开使用引导") {
                     appState.showOnboarding = true
                 }
-                NavigationLink(value: AppRoute.accounts) {
+                NavigationLink(value: AppRoute.accounts()) {
                     Text("账号管理")
                 }
             }
@@ -199,6 +204,9 @@ public struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showTabEditor) {
             HomeTabsEditorSheet()
+        }
+        .sheet(isPresented: $showRootTabEditor) {
+            RootTabsEditorSheet()
         }
         .confirmationDialog("确定清理所有已缓存的图片与离线临时文件？", isPresented: $showClearCacheDialog, titleVisibility: .visible) {
             Button("确认清理", role: .destructive) {
