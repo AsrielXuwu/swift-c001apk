@@ -103,7 +103,11 @@ public final class FeedDetailViewModel {
         hasMoreReplies = true
 
         if let initialFeed, !shouldFetchImmediately {
-            appState.cacheFeedDetail(initialFeed, verified: !initialFeed.needsDetailRefresh || alreadyVerified)
+            let hasProductRelation = initialFeed.relationEntities.contains {
+                $0.entityType.lowercased() == "product" || $0.url.contains("/product/")
+            }
+            let shouldRefreshProductMeta = !alreadyVerified && initialFeed.priceText.isEmpty && (initialFeed.subTabID == "6" || hasProductRelation)
+            appState.cacheFeedDetail(initialFeed, verified: (!initialFeed.needsDetailRefresh && !shouldRefreshProductMeta) || alreadyVerified)
             appState.historyAndFav.recordVisit(initialFeed, enabled: appState.settings.recordHistory)
             if !repliesDeferred {
                 await fetchReplies(page: 1, append: false, appState: appState)
@@ -111,6 +115,17 @@ public final class FeedDetailViewModel {
             isLoadingReplies = false
             if initialFeed.kind == .question, (answers.isEmpty || forceRefreshDetail) {
                 await reloadAnswers(appState: appState)
+            }
+            if initialFeed.needsDetailRefresh || shouldRefreshProductMeta {
+                if var loaded = await fetchFeedDetail(appState: appState) {
+                    loaded.mergePreservedMetadata(from: initialFeed)
+                    if !Self.isBodyEquivalent(initialFeed, loaded) {
+                        withAnimation(.easeInOut(duration: 0.24)) {
+                            feed = loaded
+                        }
+                    }
+                    appState.cacheFeedDetail(loaded, verified: true)
+                }
             }
             isLoadingFeed = false
             return
@@ -121,7 +136,10 @@ public final class FeedDetailViewModel {
             ? ()
             : await fetchReplies(page: 1, append: false, appState: appState)
 
-        if let loaded = await loadedFeed {
+        if var loaded = await loadedFeed {
+            if let initialFeed {
+                loaded.mergePreservedMetadata(from: initialFeed)
+            }
             withAnimation(.easeInOut(duration: 0.25)) {
                 feed = loaded
             }
@@ -168,7 +186,8 @@ public final class FeedDetailViewModel {
             appState.cacheFeedDetail(current, verified: true)
             return
         }
-        guard let loaded = await fetchFeedDetail(appState: appState) else { return }
+        guard var loaded = await fetchFeedDetail(appState: appState) else { return }
+        loaded.mergePreservedMetadata(from: current)
         guard !Self.isBodyEquivalent(current, loaded) else {
             appState.cacheFeedDetail(current, verified: true)
             return
@@ -236,6 +255,9 @@ public final class FeedDetailViewModel {
             && lhs.priceText == rhs.priceText
             && lhs.dealStatusText == rhs.dealStatusText
             && lhs.extraURL == rhs.extraURL
+            && lhs.subTabBadgeText == rhs.subTabBadgeText
+            && lhs.ratingInfo == rhs.ratingInfo
+            && lhs.videoInfo == rhs.videoInfo
     }
 
     private func fetchFeedDetail(appState: AppState) async -> FeedItem? {

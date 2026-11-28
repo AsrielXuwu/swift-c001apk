@@ -518,6 +518,11 @@ public struct ProductItem: Identifiable, Hashable, Sendable {
     public var tabs: [HomeSection]
     public var configVariants: [ProductConfigVariant]
     public var specEntries: [ProductSpecEntry]
+    public var specTags: [String]
+    public var ratingDimensions: [FeedRatingDimension]
+    public var ownerScore: String
+    public var ratingTotalNum: Int
+    public var isWished: Bool
 
     public init(json: JSON) {
         id = json.id.exists ? json.id.identifier : json.entityId.identifier
@@ -572,6 +577,31 @@ public struct ProductItem: Identifiable, Hashable, Sendable {
             configVariants = []
         }
         specEntries = ProductConfigVariant.extractSpecEntries(from: json, prefix: id)
+
+        var parsedSpecTags: [String] = []
+        var seenSpecTag = Set<String>()
+        let rawProductSpecs = json.product_specs.exists ? json.product_specs : json.productSpecs
+        if !rawProductSpecs.array.isEmpty {
+            for elem in rawProductSpecs.array {
+                let t = elem.string.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !t.isEmpty && seenSpecTag.insert(t).inserted { parsedSpecTags.append(t) }
+            }
+        } else if !rawProductSpecs.string.isEmpty {
+            let parts = rawProductSpecs.string.components(separatedBy: CharacterSet(charactersIn: "|·,，/"))
+            for part in parts {
+                let t = part.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !t.isEmpty && seenSpecTag.insert(t).inserted { parsedSpecTags.append(t) }
+            }
+        }
+        specTags = parsedSpecTags
+        ratingDimensions = FeedRatingDimension.parseList(from: json)
+        ownerScore = json.owner_star_average_score.string
+        ratingTotalNum = [
+            json.owner_rating_total_num.int,
+            json.rating_total_num.int,
+            json.star_total_count.int
+        ].first { $0 > 0 } ?? 0
+        isWished = json.userAction.wish.bool || json.userAction.wish.int > 0
     }
 }
 
@@ -588,6 +618,9 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
     public var isFollowed: Bool
     public var selectedTab: String
     public var tabs: [HomeSection]
+    public var ratingScore: String
+    public var ratingTotalNum: Int
+    public var ratingDimensions: [FeedRatingDimension]
 
     public static func cleanTitle(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -641,6 +674,18 @@ public struct TopicItem: Identifiable, Hashable, Sendable {
             ))
         }
         tabs = parsedTabs
+        ratingScore = [
+            json.owner_star_average_score.string,
+            json.star_average_score.string,
+            json.avg_score.string,
+            json.score.string
+        ].first { !$0.isEmpty && $0 != "0" && $0 != "0.0" } ?? ""
+        ratingTotalNum = [
+            json.owner_rating_total_num.int,
+            json.rating_total_num.int,
+            json.star_total_count.int
+        ].first { $0 > 0 } ?? 0
+        ratingDimensions = FeedRatingDimension.parseList(from: json)
     }
 
     private static func parseCompactCount(_ raw: String) -> Int {

@@ -327,45 +327,85 @@ public struct TopicDetailView: View {
     }
 
     private func topicHeaderCard(_ topic: TopicItem) -> some View {
-        HStack(spacing: 12) {
-            RemoteImageView(url: topic.logo, maxPixelSize: 180)
-                .frame(width: 58, height: 58)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
-                }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(TopicItem.cleanTitle(topic.title)).font(.headline)
-                Text(topicStatsText(topic))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if !topic.description.isEmpty {
-                    Text(topic.description)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                RemoteImageView(url: topic.logo, maxPixelSize: 180)
+                    .frame(width: 58, height: 58)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+                    }
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text(TopicItem.cleanTitle(topic.title)).font(.headline)
+                        if !topic.ratingScore.isEmpty {
+                            Label("\(topic.ratingScore) 分", systemImage: "star.fill")
+                                .font(.caption2.weight(.bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.15), in: Capsule())
+                                .foregroundStyle(Color.orange)
+                        }
+                    }
+                    Text(topicStatsText(topic))
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                    if !topic.description.isEmpty {
+                        Text(topic.description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                 }
+                Spacer(minLength: 8)
+                Button(topic.isFollowed ? "已关注" : "关注") {
+                    Task { await toggleFollow(topic) }
+                }
+                .font(.subheadline.weight(.semibold))
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .foregroundStyle(topic.isFollowed ? Color.primary : Color.white)
+                .background(topic.isFollowed ? Color(uiColor: .tertiarySystemFill) : Color.accentColor, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .strokeBorder(
+                            topic.isFollowed ? Color(uiColor: .separator).opacity(0.45) : Color.white.opacity(0.28),
+                            lineWidth: 0.8
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(isTogglingFollow)
             }
-            Spacer(minLength: 8)
-            Button(topic.isFollowed ? "已关注" : "关注") {
-                Task { await toggleFollow(topic) }
+
+            if !topic.ratingDimensions.isEmpty {
+                VStack(spacing: 5) {
+                    ForEach(topic.ratingDimensions.prefix(4)) { dim in
+                        HStack(spacing: 8) {
+                            Text(dim.name)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 56, alignment: .leading)
+                                .lineLimit(1)
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(Color.primary.opacity(0.08))
+                                    Capsule()
+                                        .fill(Color.orange)
+                                        .frame(width: max(4, geo.size.width * min(1.0, max(0, dim.score / 10.0))))
+                                }
+                            }
+                            .frame(height: 5)
+                            Text(String(format: "%.1f", dim.score))
+                                .font(.caption2.weight(.semibold))
+                                .monospacedDigit()
+                                .frame(width: 26, alignment: .trailing)
+                        }
+                    }
+                }
+                .padding(.top, 2)
             }
-            .font(.subheadline.weight(.semibold))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .foregroundStyle(topic.isFollowed ? Color.primary : Color.white)
-            .background(topic.isFollowed ? Color(uiColor: .tertiarySystemFill) : Color.accentColor, in: Capsule())
-            .overlay {
-                Capsule()
-                    .strokeBorder(
-                        topic.isFollowed ? Color(uiColor: .separator).opacity(0.45) : Color.white.opacity(0.28),
-                        lineWidth: 0.8
-                    )
-            }
-            .buttonStyle(.plain)
-            .disabled(isTogglingFollow)
         }
         .padding(16)
         .c001CardStyle(cornerRadius: 22)
@@ -974,6 +1014,49 @@ public struct ProductDetailView: View {
                 .disabled(isTogglingFollow)
             }
 
+            if !product.specTags.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(product.specTags, id: \.self) { tagText in
+                            Text(tagText)
+                                .font(.caption2.weight(.medium))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color(.tertiarySystemFill), in: Capsule())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .scrollEdgeEffectHidden(true)
+            }
+
+            if !product.ratingDimensions.isEmpty {
+                VStack(spacing: 5) {
+                    ForEach(product.ratingDimensions.prefix(4)) { dim in
+                        HStack(spacing: 8) {
+                            Text(dim.name)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 56, alignment: .leading)
+                                .lineLimit(1)
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule().fill(Color.primary.opacity(0.08))
+                                    Capsule()
+                                        .fill(Color.orange)
+                                        .frame(width: max(4, geo.size.width * min(1.0, max(0, dim.score / 10.0))))
+                                }
+                            }
+                            .frame(height: 5)
+                            Text(String(format: "%.1f", dim.score))
+                                .font(.caption2.weight(.semibold))
+                                .monospacedDigit()
+                                .frame(width: 26, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+
             if !product.recommendReason.isEmpty {
                 Text(product.recommendReason)
                     .font(.caption)
@@ -983,7 +1066,7 @@ public struct ProductDetailView: View {
                 Text(FeedHTMLParser.plainText(product.description))
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
-                    .lineLimit(4)
+                    .lineLimit(3)
             }
         }
         .padding(16)
@@ -1236,7 +1319,7 @@ public struct ProductDetailView: View {
                 fetched = try await API.productFeeds(
                     productID: productID,
                     title: product?.title ?? "",
-                    tabURL: chosenSort != nil ? nil : tabURL,
+                    tabURL: tabURL,
                     listType: sort,
                     page: 1
                 )
@@ -1279,7 +1362,7 @@ public struct ProductDetailView: View {
             fetched = try? await API.productFeeds(
                 productID: productID,
                 title: product?.title ?? "",
-                tabURL: chosenSort != nil ? nil : tabURL,
+                tabURL: tabURL,
                 listType: sort,
                 page: next
             )

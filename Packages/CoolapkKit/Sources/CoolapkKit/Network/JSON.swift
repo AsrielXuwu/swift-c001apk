@@ -147,8 +147,16 @@ public struct JSON: Hashable, Sendable {
     }
 
     public var date: Date? {
-        let stamp = int
-        guard stamp > 0 else { return nil }
-        return Date(timeIntervalSince1970: TimeInterval(stamp))
+        let raw = double
+        guard raw > 0 else { return nil }
+        let normalized: Double
+        if raw >= 1_000_000_000_000 {
+            normalized = raw / 1000.0
+        } else if raw >= 10_000_000_000 {
+            normalized = raw / 10.0
+        } else {
+            normalized = raw
+        }
+        return Date(timeIntervalSince1970: normalized)
     }
 }

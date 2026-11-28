@@ -96,7 +96,7 @@ public enum API: Sendable {
     public static func pageFeed(pageName: String, page: Int, type: String? = nil) async throws -> [HomeFeedRow] {
         var extra: [String: String] = [:]
         if let type { extra["type"] = type }
-        let items = try await client.dataList(url: pageName, page: page, extra: extra)
+        let items = try await dataListFollowingFlexList(url: pageName, page: page, extra: extra)
         return rows(from: items)
     }
 
@@ -118,7 +118,7 @@ public enum API: Sendable {
             return rows(from: json.data.array)
         }
         let parsed = parsePageLink(trimmed)
-        let items = try await client.dataList(url: parsed.url, page: page, extra: parsed.extra)
+        let items = try await dataListFollowingFlexList(url: parsed.url, page: page, extra: parsed.extra)
         return rows(from: items)
     }
 
@@ -177,7 +177,7 @@ public enum API: Sendable {
 
     public static func productFeed(pageLink: String, page: Int) async throws -> [HomeFeedRow] {
         let parsed = parsePageLink(pageLink)
-        let items = try await client.dataList(url: parsed.url, page: page, extra: parsed.extra)
+        let items = try await dataListFollowingFlexList(url: parsed.url, page: page, extra: parsed.extra)
         return rows(from: items)
     }
 
@@ -325,24 +325,88 @@ public enum API: Sendable {
             clean = String(clean.dropFirst("coolapk://".count))
             if !clean.hasPrefix("/") { clean = "/" + clean }
         }
+        if clean.hasPrefix("#/page?") || clean.hasPrefix("#page?") {
+            clean = String(clean.dropFirst())
+        }
+        var resolvedTarget = ""
+        var extra: [String: String] = [:]
         if clean.hasPrefix("/page?") || clean.hasPrefix("page?"),
            let components = URLComponents(string: clean.hasPrefix("/") ? clean : "/\(clean)"),
            let queryItems = components.queryItems {
-            var targetURL = ""
-            var extra: [String: String] = [:]
             for item in queryItems {
                 guard let value = item.value, !value.isEmpty else { continue }
                 if item.name == "url" {
-                    targetURL = value
+                    resolvedTarget = value.replacingOccurrences(of: "#", with: "")
                 } else {
                     extra[item.name] = value
                 }
             }
-            if !targetURL.isEmpty {
-                return (targetURL.replacingOccurrences(of: "#", with: ""), extra)
-            }
+        } else {
+            resolvedTarget = pageTarget(from: clean)
         }
-        return (pageTarget(from: clean), [:])
+
+        // Official Coolapk APK & coolapk-desktop (`client.rs:get_product_subtab_feeds`) requirement:
+        // When requesting product subtabs (`/product/feedList?type=subTabFeed&id=...&subId=6`),
+        // `/v6/page/dataList` requires `url=/page?url=/product/feedList` and top-level query params
+        // `type=subTabFeed`, `withSortCard=1`, `withSubTabFeedCard=1`, `ignoreEntityById=1`, `id=...`, `subId=...`
+        // so that the server attaches the structured subTabFeedCard (e.g. 到手价 final_price & SKU config).
+        let strippedTarget = resolvedTarget.hasPrefix("#") ? String(resolvedTarget.dropFirst()) : resolvedTarget
+        if strippedTarget.hasPrefix("/product/feedList"),
+           let targetComps = URLComponents(string: strippedTarget),
+           let targetQuery = targetComps.queryItems,
+           targetQuery.contains(where: { $0.name == "subId" || ($0.name == "type" && $0.value == "subTabFeed") }) {
+            for item in targetQuery {
+                if let value = item.value, !value.isEmpty, extra[item.name] == nil {
+                    extra[item.name] = value
+                }
+            }
+            if extra["type"] == nil { extra["type"] = "subTabFeed" }
+            if extra["cacheExpires"] == nil { extra["cacheExpires"] = "60" }
+            if extra["withSortCard"] == nil { extra["withSortCard"] = "1" }
+            extra["withSubTabFeedCard"] = "1"
+            if extra["ignoreEntityById"] == nil { extra["ignoreEntityById"] = "1" }
+            return ("/page?url=/product/feedList", extra)
+        }
+
+        return (resolvedTarget, extra)
+    }
+
+    private static func dataListFollowingFlexList(
+        url: String,
+        page: Int,
+        extra: [String: String]
+    ) async throws -> [JSON] {
+        var currentItems = try await client.dataList(url: url, page: page, extra: extra)
+        var visited: Set<String> = [url]
+        var hops = 0
+        while hops < 3 {
+            guard let configCard = currentItems.first(where: {
+                let tpl = $0.entityTemplate.string.lowercased()
+                let typ = $0.entityType.string.lowercased()
+                return tpl == "configcard" || typ == "configcard"
+            }) else {
+                break
+            }
+            let cfgExtra = configCard.extraDataArr.isObject ? configCard.extraDataArr : configCard.extraData.parsed
+            let isFlex = cfgExtra.flexList.int == 1 || cfgExtra.flexList.string == "1" || cfgExtra.flexList.bool
+            let flexURL = cfgExtra.url.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isFlex, !flexURL.isEmpty, !visited.contains(flexURL) else { break }
+            visited.insert(flexURL)
+            hops += 1
+            let parsedFlex = parsePageLink(flexURL)
+            var mergedExtra = extra
+            for (k, v) in parsedFlex.extra {
+                mergedExtra[k] = v
+            }
+            let nonConfigPrefix = currentItems.filter {
+                let tpl = $0.entityTemplate.string.lowercased()
+                let typ = $0.entityType.string.lowercased()
+                return tpl != "configcard" && typ != "configcard"
+            }
+            let nextItems = try await client.dataList(url: parsedFlex.url, page: page, extra: mergedExtra)
+            currentItems = (page == 1 ? nonConfigPrefix : []) + nextItems
+        }
+        return currentItems
     }
 
     public static func pageTarget(from link: String) -> String {
@@ -410,8 +474,9 @@ public enum API: Sendable {
 
             flushAll()
             switch item.entityType.string {
-            case "feed", "feed_reply", "reply", "forwardFeed", "feedLike", "like":
-                let payload = item.feedInfo.exists ? item.feedInfo : item
+            case "feed", "feed_reply", "reply", "forwardFeed", "feedLike", "like",
+                 "rating", "ratingFeed", "feed_rating", "nodeRating", "apkRating", "productRating":
+                let payload = Self.mergedFeedPayload(from: item)
                 rows.append(.feed(FeedItem(json: payload)))
             case "history", "recentHistory":
                 rows.append(.browse(BrowseItem(json: item)))
@@ -435,8 +500,8 @@ public enum API: Sendable {
                 rows.append(contentsOf: cardRows(item, template: template, index: index))
             default:
                 if item.feedInfo.exists {
-                    rows.append(.feed(FeedItem(json: item.feedInfo)))
-                } else if !item.message.string.isEmpty && (!item.uid.identifier.isEmpty || !item.userInfo.uid.identifier.isEmpty) {
+                    rows.append(.feed(FeedItem(json: Self.mergedFeedPayload(from: item))))
+                } else if Self.looksLikeFeedOrRatingJSON(item) {
                     rows.append(.feed(FeedItem(json: item)))
                 } else if !item.title.string.isEmpty && !item.url.string.isEmpty {
                     rows.append(.linkBar("misc-\(index)", [
@@ -454,6 +519,51 @@ public enum API: Sendable {
         }
         flushAll()
         return rows
+    }
+
+    private static func looksLikeFeedOrRatingJSON(_ item: JSON) -> Bool {
+        if item.feedInfo.isObject { return true }
+        let eType = item.entityType.string.lowercased()
+        if eType == "feed" || eType == "feed_reply" || eType == "reply"
+            || eType == "rating" || eType == "ratingfeed" || eType == "feed_rating"
+            || eType == "noderating" || eType == "apkrating" || eType == "productrating" {
+            return true
+        }
+        let hasUser = !item.uid.identifier.isEmpty || !item.userInfo.uid.identifier.isEmpty || !item.username.string.isEmpty
+        guard hasUser else { return false }
+        let hasContent = !item.message.string.isEmpty
+            || !item.message_title.string.isEmpty
+            || item.rating_score.double > 0
+            || !item.comment_good.string.isEmpty
+            || !item.comment_bad.string.isEmpty
+            || !item.comment_general.string.isEmpty
+            || item.v4_rating_message.exists
+            || !item.tsubdata.string.isEmpty
+            || item.tsubdata.isObject
+            || !item.picArr.array.isEmpty
+            || !item.pic.string.isEmpty
+        return hasContent
+    }
+
+    private static func mergedFeedPayload(from wrapper: JSON, inner: JSON? = nil) -> JSON {
+        let base: JSON
+        if let inner {
+            base = inner.feedInfo.isObject ? inner.feedInfo : inner
+        } else if wrapper.feedInfo.isObject {
+            base = wrapper.feedInfo
+        } else {
+            return wrapper
+        }
+        guard case var .object(baseDict) = base.value,
+              case let .object(wrapDict) = wrapper.value else {
+            return base
+        }
+        for (k, v) in wrapDict {
+            if baseDict[k] == nil {
+                baseDict[k] = v
+            }
+        }
+        return JSON(value: .object(baseDict))
     }
 
     private static func cardRows(_ item: JSON, template: String, index: Int) -> [HomeFeedRow] {
@@ -477,7 +587,21 @@ public enum API: Sendable {
             if !events.isEmpty { return titled(events.map { HomeFeedRow.event($0) }) }
         }
 
+        if template == "subTabFeedCard" || template.lowercased().contains("subtabfeed") {
+            let feedEntities = entities.filter { Self.looksLikeFeedOrRatingJSON($0) }
+            if !feedEntities.isEmpty {
+                return titled(feedEntities.map { .feed(FeedItem(json: Self.mergedFeedPayload(from: item, inner: $0))) })
+            }
+            if Self.looksLikeFeedOrRatingJSON(item) {
+                return [.feed(FeedItem(json: Self.mergedFeedPayload(from: item)))]
+            }
+        }
+
         if template == "listCard" || template == "productTimelineListCard" {
+            let feedEntities = entities.filter { Self.looksLikeFeedOrRatingJSON($0) }
+            if !feedEntities.isEmpty && feedEntities.count == entities.count {
+                return titled(feedEntities.map { .feed(FeedItem(json: Self.mergedFeedPayload(from: $0))) })
+            }
             let eventEntities = entities.filter {
                 $0.entityType.string == "event" || $0.url.string.contains("/event/")
             }
@@ -673,8 +797,11 @@ public enum API: Sendable {
             return text.isEmpty ? [] : [.notice("\(index)", text)]
 
         case "feedListCard":
-            if entities.count == 1, let entity = entities.first {
-                return [.feed(FeedItem(json: entity))]
+            let feedRows = entities
+                .filter { Self.looksLikeFeedOrRatingJSON($0) }
+                .map { HomeFeedRow.feed(FeedItem(json: Self.mergedFeedPayload(from: $0))) }
+            if !feedRows.isEmpty {
+                return titled(feedRows)
             }
             return title.isEmpty ? [] : [.sectionTitle(key: "\(index)", title: title, url: moreURL, subtitle: "")]
 
@@ -798,6 +925,29 @@ public enum API: Sendable {
         }
 
         let eType = entity.entityType.string.lowercased()
+        let eTemplate = entity.entityTemplate.string.lowercased()
+        let combinedType = "\(eType) \(eTemplate)"
+        if combinedType.contains("ershou") || combinedType.contains("secondhand") {
+            let isMainSecondHand = combinedType.contains("mainershou") || combinedType.contains("mainsecondhand")
+            let brand = [entity.brandId.identifier, entity.brand_id.identifier, entity.brand.string, entity.brandName.string, entity.brand_name.string].first { !$0.isEmpty } ?? ""
+            let pid = isMainSecondHand
+                ? ([entity.productId.identifier, entity.product_id.identifier].first { !$0.isEmpty && $0 != "0" } ?? "")
+                : ([entity.productId.identifier, entity.product_id.identifier, entity.id.identifier, entity.entityId.identifier].first { !$0.isEmpty && $0 != "0" } ?? "")
+            let sthType = [
+                entity.secondHandSthType.identifier,
+                entity.second_hand_sth_type.identifier,
+                entity.ershouType.identifier,
+                entity.ershou_type.identifier,
+                entity.secondHandType.identifier,
+                entity.second_hand_type.identifier,
+                isMainSecondHand ? entity.id.identifier : "100"
+            ].first { !$0.isEmpty } ?? ""
+            if !pid.isEmpty || !sthType.isEmpty {
+                let city = [entity.cityId.identifier, entity.city_id.identifier].first { !$0.isEmpty } ?? ""
+                let listType = [entity.dataListType.string, entity.data_list_type.string].first { !$0.isEmpty } ?? "staggered"
+                return "/feed/ershouList?brand=\(brand)&productId=\(pid)&cityId=\(city)&ershouType=\(sthType)&dataListType=\(listType)"
+            }
+        }
         let rawID = [entity.id.identifier, entity.entityId.identifier].first { !$0.isEmpty && $0 != "0" } ?? ""
         switch eType {
         case "topic", "topictag", "tag":
@@ -858,19 +1008,23 @@ public enum API: Sendable {
 
     public static func feedDetail(id: String, allowPublicFallback: Bool = true) async throws -> FeedItem {
         do {
-            let json = try await client.get("/v6/feed/detail", ["id": id], clearProofOnCaptcha: !allowPublicFallback)
+            let json = try await client.get("/v6/feed/detail", ["id": id, "withSubTabFeedCard": "1"], clearProofOnCaptcha: !allowPublicFallback)
             let data = json.data
             let entityType = data.entityType.string.lowercased()
             let parentFID = [data.fid.identifier, data.feed_id.identifier, data.feedId.identifier]
                 .first { !$0.isEmpty && $0 != "0" && $0 != id }
             if (entityType == "feed_reply" || entityType == "reply"),
                let parentFID,
-               let parentJSON = try? await client.get("/v6/feed/detail", ["id": parentFID], clearProofOnCaptcha: false),
+               let parentJSON = try? await client.get("/v6/feed/detail", ["id": parentFID, "withSubTabFeedCard": "1"], clearProofOnCaptcha: false),
                parentJSON.data.isObject,
                !parentJSON.data.id.identifier.isEmpty {
-                return FeedItem(json: parentJSON.data)
+                var parentItem = FeedItem(json: parentJSON.data)
+                await enrichSubTabPriceIfNeeded(&parentItem, rawJSON: parentJSON.data)
+                return parentItem
             }
-            return FeedItem(json: data)
+            var item = FeedItem(json: data)
+            await enrichSubTabPriceIfNeeded(&item, rawJSON: data)
+            return item
         } catch let error as APIError {
             // If `id` came from a notification reply link (`feed_reply` ID rather than top-level `feed` ID),
             // `/v6/feed/detail` returns "无法访问该数据". Probe replyDetail / replyList to resolve the parent `fid`.
@@ -883,6 +1037,54 @@ public enum API: Sendable {
                 }
             }
             throw error
+        }
+    }
+
+    /// When a product subtab post (such as a "数码产品 → 到手价" post like 75284108) is opened directly by ID,
+    /// if `/v6/feed/detail` omitted the subTabFeedCard payload that `/v6/page/dataList` (`withSubTabFeedCard=1`, `subId=6`) includes,
+    /// probe the product's `subId=6` subtab feed list to enrich `priceText` and `dealStatusText`.
+    private static func enrichSubTabPriceIfNeeded(_ item: inout FeedItem, rawJSON: JSON) async {
+        guard item.priceText.isEmpty else { return }
+        var candidateProductID = ""
+        if rawJSON.targetRow.targetType.string.lowercased() == "product" || rawJSON.targetRow.entityType.string.lowercased() == "product" || rawJSON.targetRow.url.string.contains("/product/") {
+            candidateProductID = rawJSON.targetRow.id.identifier
+        }
+        if candidateProductID.isEmpty {
+            for rel in item.relationEntities {
+                if let range = rel.url.range(of: "/product/") {
+                    let tail = String(rel.url[range.upperBound...])
+                    let pid = tail.split(whereSeparator: { !$0.isNumber }).first.map(String.init) ?? ""
+                    if !pid.isEmpty {
+                        candidateProductID = pid
+                        break
+                    }
+                }
+            }
+        }
+        guard !candidateProductID.isEmpty, candidateProductID != "0" else { return }
+        let extra: [String: String] = [
+            "cacheExpires": "60",
+            "type": "subTabFeed",
+            "withSortCard": "1",
+            "withSubTabFeedCard": "1",
+            "ignoreEntityById": "1",
+            "id": candidateProductID,
+            "subId": "6"
+        ]
+        for page in 1...2 {
+            guard let listItems = try? await client.dataList(
+                url: "/page?url=/product/feedList",
+                page: page,
+                extra: extra
+            ), !listItems.isEmpty else { break }
+            for row in rows(from: listItems) {
+                if case let .feed(candidate) = row,
+                   (candidate.id == item.id || candidate.effectiveFeedID == item.id),
+                   !candidate.priceText.isEmpty {
+                    item.mergePreservedMetadata(from: candidate)
+                    return
+                }
+            }
         }
     }
 
@@ -1080,17 +1282,27 @@ public enum API: Sendable {
         return link
     }
 
-    public static func createFeed(message: String, pictures: [String]) async throws {
+    public static func createFeed(
+        message: String,
+        pictures: [String],
+        publishStatus: String = "0",
+        subTabID: String = "",
+        subTabData: String = ""
+    ) async throws {
         var form: [String: String] = [
             "message": message,
             "type": "feed",
             "is_html_article": "0",
             "status": "1",
-            "publish_status": "0"
+            "publish_status": publishStatus
         ]
         if !pictures.isEmpty {
             form["pics"] = pictures.joined(separator: ",")
             form["picArr"] = pictures.joined(separator: ",")
+        }
+        if !subTabID.isEmpty, !subTabData.isEmpty {
+            form["tsubid"] = subTabID
+            form["tsubdata"] = subTabData
         }
         _ = try await client.post("/v6/feed/createFeed", form)
     }
@@ -1147,6 +1359,29 @@ public enum API: Sendable {
     public static func userFeeds(uid: String, page: Int) async throws -> [HomeFeedRow] {
         let json = try await client.get("/v6/user/feedList", ["uid": uid, "page": String(page), "isIncludeTop": "1"])
         return rows(from: json.data.array)
+    }
+
+    public static func userTabFeeds(uid: String, tabKey: String, page: Int) async throws -> [HomeFeedRow] {
+        switch tabKey {
+        case "feeds":
+            return try await userFeeds(uid: uid, page: page)
+        case "htmlFeeds":
+            let json = try await client.get("/v6/user/htmlFeedList", ["uid": uid, "page": String(page)])
+            return rows(from: json.data.array)
+        case "qa":
+            let json = try await client.get("/v6/user/questionAndAnswerList", ["uid": uid, "page": String(page)])
+            return rows(from: json.data.array)
+        case "coolpic":
+            return try await linkFeed(link: "#/feed/userCoolPictureFeedList?uid=\(uid)", page: page)
+        case "ratings":
+            return try await linkFeed(link: "/feed/nodeRatingList?uid=\(uid)&targetType=all&parseRatingToFeed=1", page: page)
+        case "ershou":
+            return try await linkFeed(link: "#/feed/userErshouList?uid=\(uid)", page: page)
+        case "likes":
+            return try await userLikeFeeds(uid: uid, page: page)
+        default:
+            return try await userFeeds(uid: uid, page: page)
+        }
     }
 
     public static func userList(uid: String, followers: Bool, page: Int) async throws -> [UserBrief] {

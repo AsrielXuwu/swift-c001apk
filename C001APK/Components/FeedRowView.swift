@@ -1,3 +1,4 @@
+import AVKit
 import CoolapkKit
 import SwiftUI
 import UIKit
@@ -44,7 +45,16 @@ public struct FeedRowView: View {
             if feed.kind == .answer && !feed.questionID.isEmpty {
                 questionBannerCard(questionID: feed.questionID, title: feed.questionTitle)
             }
+            if !feed.subTabBadgeText.isEmpty {
+                FeedSubTabBadgeView(feed: feed)
+            }
+            if let ratingInfo = feed.ratingInfo {
+                FeedRatingCardView(info: ratingInfo, style: .card)
+            }
             bodyContent
+            if let videoInfo = feed.videoInfo {
+                FeedVideoCardView(video: videoInfo)
+            }
             if !feed.mediaItems.isEmpty {
                 MediaGridView(items: feed.mediaItems)
             }
@@ -127,10 +137,21 @@ public struct FeedRowView: View {
                             .background(Color.accentColor.opacity(0.14), in: Capsule())
                             .foregroundStyle(Color.accentColor)
                     }
+
+                    if feed.isSelfOnly {
+                        Label("仅自己可见", systemImage: "lock.fill")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.15), in: Capsule())
+                            .foregroundStyle(Color.orange)
+                    }
                 }
 
                 let metaParts = [
                     Formatting.relativeTime(feed.dateline, fallback: feed.datelineText),
+                    feed.isModified ? "已编辑" : "",
+                    feed.readNum > 0 ? "\(Formatting.count(feed.readNum)) 浏览" : "",
                     feed.ipLocation,
                     feed.deviceTitle
                 ].filter { !$0.isEmpty }
@@ -694,6 +715,279 @@ public struct WrappingChipsLayout: Layout {
             )
             currentX += size.width + spacing
             rowHeight = max(rowHeight, size.height)
+        }
+    }
+}
+
+
+public struct FeedSubTabBadgeView: View {
+    public let feed: FeedItem
+
+    public init(feed: FeedItem) {
+        self.feed = feed
+    }
+
+    private var iconName: String {
+        switch feed.subTabID {
+        case "1": return "battery.100.bolt"
+        case "2": return "speedometer"
+        case "5": return "exclamationmark.bubble.fill"
+        default: return "sparkles"
+        }
+    }
+
+    private var badgeColor: Color {
+        switch feed.subTabID {
+        case "1": return .green
+        case "2": return .blue
+        case "5": return .orange
+        default: return .accentColor
+        }
+    }
+
+    public var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: iconName)
+                .font(.caption.weight(.semibold))
+            Text(feed.subTabBadgeText)
+                .font(.caption.weight(.semibold))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(badgeColor.opacity(0.14), in: Capsule())
+        .foregroundStyle(badgeColor)
+    }
+}
+
+public struct FeedRatingCardView: View {
+    public enum Style {
+        case card
+        case detail
+    }
+
+    public let info: FeedRatingInfo
+    public var style: Style = .card
+
+    @Environment(AppState.self) private var appState
+
+    public init(info: FeedRatingInfo, style: Style = .card) {
+        self.info = info
+        self.style = style
+    }
+
+    public var body: some View {
+        let baseFontSize = (style == .detail ? 15.0 : 14.2) * appState.settings.fontScale
+        let lineLimit: Int? = style == .detail ? nil : 3
+
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                if !info.targetLogo.isEmpty {
+                    RemoteImageView(url: info.targetLogo, maxPixelSize: 120)
+                        .frame(width: 38, height: 38)
+                        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        if !info.targetTitle.isEmpty {
+                            Text(info.targetTitle)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                        } else {
+                            Text("酷友点评")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                        }
+
+                        if info.isOwner {
+                            Text("机主")
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.accentColor.opacity(0.15), in: Capsule())
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+
+                    if info.starCount > 0 || info.scoreOutOf10 > 0 {
+                        HStack(spacing: 3) {
+                            ForEach(1...5, id: \.self) { idx in
+                                Image(systemName: idx <= info.starCount ? "star.fill" : "star")
+                                    .font(.caption2)
+                                    .foregroundStyle(idx <= info.starCount ? Color.orange : Color.secondary.opacity(0.35))
+                            }
+                            if info.scoreOutOf10 > 0 {
+                                Text(String(format: "%.1f 分", info.scoreOutOf10))
+                                    .font(.caption.weight(.bold))
+                                    .foregroundStyle(.orange)
+                                    .padding(.leading, 3)
+                            }
+                        }
+                    }
+                }
+
+                Spacer(minLength: 4)
+
+                if !info.targetURL.isEmpty {
+                    Button {
+                        appState.openRawLink(info.targetURL, title: info.targetTitle)
+                    } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .frame(width: 28, height: 28)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            if !info.dimensions.isEmpty {
+                VStack(spacing: 6) {
+                    ForEach(info.dimensions.prefix(style == .detail ? 8 : 4)) { dim in
+                        HStack(spacing: 8) {
+                            Text(dim.name)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 56, alignment: .leading)
+                                .lineLimit(1)
+
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.primary.opacity(0.08))
+                                    Capsule()
+                                        .fill(Color.orange)
+                                        .frame(width: max(4, geo.size.width * min(1.0, max(0, dim.score / 10.0))))
+                                }
+                            }
+                            .frame(height: 6)
+
+                            Text(String(format: "%.1f", dim.score))
+                                .font(.caption.weight(.semibold))
+                                .monospacedDigit()
+                                .foregroundStyle(.primary)
+                                .frame(width: 28, alignment: .trailing)
+                        }
+                    }
+                }
+            }
+
+            if !info.prosText.isEmpty {
+                ratingSectionRow(label: "优点", color: .green, text: info.prosText, fontSize: baseFontSize, lineLimit: lineLimit)
+            }
+            if !info.consText.isEmpty {
+                ratingSectionRow(label: "缺点", color: .red, text: info.consText, fontSize: baseFontSize, lineLimit: lineLimit)
+            }
+            if !info.summaryText.isEmpty {
+                ratingSectionRow(label: "总评", color: .accentColor, text: info.summaryText, fontSize: baseFontSize, lineLimit: lineLimit)
+            }
+            if !info.additionText.isEmpty && style == .detail {
+                ratingSectionRow(label: "追评", color: .purple, text: info.additionText, fontSize: baseFontSize, lineLimit: nil)
+            }
+        }
+        .padding(12)
+        .c001NestedSurface(cornerRadius: 16)
+    }
+
+    private func ratingSectionRow(label: String, color: Color, text: String, fontSize: CGFloat, lineLimit: Int?) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text(label)
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(color.opacity(0.15), in: Capsule())
+                .foregroundStyle(color)
+                .padding(.top, 2)
+
+            Text(FeedHTMLParser.plainText(text))
+                .font(.system(size: fontSize))
+                .foregroundStyle(.primary)
+                .lineLimit(lineLimit)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+public struct FeedVideoCardView: View {
+    public let video: FeedVideoInfo
+
+    @Environment(AppState.self) private var appState
+    @State private var showFullscreenPlayer = false
+
+    public init(video: FeedVideoInfo) {
+        self.video = video
+    }
+
+    public var body: some View {
+        Button {
+            if video.isExternalPage {
+                appState.openRawLink(video.url, title: video.title)
+            } else {
+                showFullscreenPlayer = true
+            }
+        } label: {
+            ZStack(alignment: .bottomTrailing) {
+                ZStack {
+                    if !video.coverURL.isEmpty {
+                        RemoteImageView(url: video.coverURL, maxPixelSize: 960, contentMode: .fill)
+                            .aspectRatio(16.0 / 9.0, contentMode: .fill)
+                            .frame(maxWidth: .infinity, maxHeight: 220)
+                            .clipped()
+                    } else {
+                        Rectangle()
+                            .fill(Color.black.opacity(0.82))
+                            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                            .frame(maxWidth: .infinity, maxHeight: 220)
+                    }
+
+                    Circle()
+                        .fill(.ultraThinMaterial)
+                        .frame(width: 52, height: 52)
+                        .overlay {
+                            Image(systemName: "play.fill")
+                                .font(.title3.weight(.bold))
+                                .foregroundStyle(.white)
+                                .offset(x: 2)
+                        }
+                        .shadow(color: .black.opacity(0.28), radius: 8, y: 3)
+                }
+
+                if !video.formattedDuration.isEmpty {
+                    Text(video.formattedDuration)
+                        .font(.caption2.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.black.opacity(0.62), in: Capsule())
+                        .padding(10)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 0.5)
+            }
+        }
+        .buttonStyle(.plain)
+        .sheet(isPresented: $showFullscreenPlayer) {
+            if let streamURL = URL(string: video.url) {
+                NavigationStack {
+                    VideoPlayer(player: AVPlayer(url: streamURL))
+                        .ignoresSafeArea()
+                        .navigationTitle(video.title.isEmpty ? "视频播放" : video.title)
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("完成") {
+                                    showFullscreenPlayer = false
+                                }
+                            }
+                        }
+                }
+            }
         }
     }
 }

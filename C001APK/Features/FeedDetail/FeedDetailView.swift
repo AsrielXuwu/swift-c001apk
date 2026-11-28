@@ -140,7 +140,7 @@ public struct FeedDetailView: View {
                             } label: {
                                 Label("转发列表", systemImage: "arrowshape.turn.up.right")
                             }
-                            if feed.changeCount > 0 {
+                            if feed.changeCount > 0 || feed.isModified {
                                 Button {
                                     engagementMode = .history(feed.id)
                                 } label: {
@@ -223,9 +223,17 @@ public struct FeedDetailView: View {
                         authorBar(feed)
                             .opacity(max(0.25, 1.0 - compactNavProgress * 0.65))
 
+                        if !feed.subTabBadgeText.isEmpty {
+                            FeedSubTabBadgeView(feed: feed)
+                        }
+
                         if !feed.messageTitle.isEmpty {
                             Text(feed.messageTitle)
                                 .font(.system(size: 20 * appState.settings.fontScale, weight: .bold))
+                        }
+
+                        if let ratingInfo = feed.ratingInfo {
+                            FeedRatingCardView(info: ratingInfo, style: .detail)
                         }
 
                         Group {
@@ -242,6 +250,9 @@ public struct FeedDetailView: View {
                                         ) { link in
                                             appState.openRawLink(link)
                                         }
+                                    }
+                                    if let videoInfo = feed.videoInfo {
+                                        FeedVideoCardView(video: videoInfo)
                                     }
                                     if !feed.mediaItems.isEmpty {
                                         if feed.kind == .feedArticle {
@@ -449,8 +460,18 @@ public struct FeedDetailView: View {
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(feed.username.isEmpty ? "匿名酷友" : feed.username)
-                    .font(.headline)
+                HStack(spacing: 6) {
+                    Text(feed.username.isEmpty ? "匿名酷友" : feed.username)
+                        .font(.headline)
+                    if feed.isSelfOnly {
+                        Label("仅自己可见", systemImage: "lock.fill")
+                            .font(.caption2.weight(.medium))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.15), in: Capsule())
+                            .foregroundStyle(Color.orange)
+                    }
+                }
                 let meta = [Formatting.relativeTime(feed.dateline, fallback: feed.datelineText), feed.ipLocation, feed.deviceTitle]
                     .filter { !$0.isEmpty }
                     .joined(separator: " · ")
@@ -651,6 +672,26 @@ public struct FeedDetailView: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
+
+            if feed.readNum > 0 {
+                Text("\(Formatting.count(feed.readNum)) 浏览")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if feed.isModified || feed.changeCount > 0 {
+                Button {
+                    engagementMode = .history(feed.id)
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: "clock.arrow.circlepath")
+                        Text("已编辑")
+                    }
+                    .font(.footnote.weight(.medium))
+                    .foregroundStyle(Color.accentColor)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding(.top, 4)
     }

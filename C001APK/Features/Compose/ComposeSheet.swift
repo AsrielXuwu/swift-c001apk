@@ -78,7 +78,7 @@ public struct ComposeSheet: View {
 
     private var activeBottomSlotHeight: CGFloat {
         if showEmojiPanel && keyboardHeight > 40 {
-            return 202 + keyboardHeight
+            return 210 + keyboardHeight
         }
         let emojiHeight = (showEmojiPanel || isHoldingSlotForKeyboard) ? max(260, lastKnownKeyboardHeight) : 0
         return max(keyboardHeight, emojiHeight)
@@ -201,7 +201,7 @@ public struct ComposeSheet: View {
     @ViewBuilder
     private func composeBottomEmojiSlot(slotHeight: CGFloat) -> some View {
         let strokeColor = Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.06)
-        let pickerHeight: CGFloat = (showEmojiPanel && keyboardHeight > 40) ? 196 : max(252, slotHeight - 8)
+        let pickerHeight: CGFloat = (showEmojiPanel && keyboardHeight > 40) ? 204 : max(252, slotHeight - 8)
         VStack(spacing: 0) {
             if showEmojiPanel || isHoldingSlotForKeyboard {
                 EmojiPickerView(height: pickerHeight) { name in
@@ -420,7 +420,68 @@ public struct ComposeSheet: View {
                 .scrollEdgeEffectHidden(true)
             }
 
+            if !isQuickReply && viewModel.subTabOption != .none {
+                productSubTabInputRow
+            }
+
             toolbarStrip
+        }
+    }
+
+    @ViewBuilder
+    private var productSubTabInputRow: some View {
+        switch viewModel.subTabOption {
+        case .none:
+            EmptyView()
+        case .daoshoujia:
+            HStack(spacing: 8) {
+                TextField("到手价（如 9599）", text: $viewModel.finalPriceInput)
+                    .font(.subheadline)
+                    .keyboardType(.decimalPad)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(.secondarySystemGroupedBackground).opacity(0.68), in: Capsule())
+                TextField("版本配置（如 16GB+512GB）", text: $viewModel.configNameInput)
+                    .font(.subheadline)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(.secondarySystemGroupedBackground).opacity(0.68), in: Capsule())
+            }
+        case .battery:
+            TextField("亮屏续航时长（小时，如 8.5）", text: $viewModel.batteryHoursInput)
+                .font(.subheadline)
+                .keyboardType(.decimalPad)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(.secondarySystemGroupedBackground).opacity(0.68), in: Capsule())
+        case .benchmark:
+            TextField("安兔兔跑分成绩（如 2850000）", text: $viewModel.antutuScoreInput)
+                .font(.subheadline)
+                .keyboardType(.numberPad)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color(.secondarySystemGroupedBackground).opacity(0.68), in: Capsule())
+        case .feedback:
+            HStack(spacing: 6) {
+                Text("严重程度：")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                ForEach([("1", "较低"), ("2", "一般"), ("3", "次要"), ("4", "严重"), ("5", "致命")], id: \.0) { code, label in
+                    let isSel = viewModel.feedbackLevel == code
+                    Button {
+                        viewModel.feedbackLevel = code
+                    } label: {
+                        Text(label)
+                            .font(.caption.weight(isSel ? .semibold : .regular))
+                            .padding(.horizontal, 9)
+                            .padding(.vertical, 5)
+                            .background(isSel ? Color.accentColor.opacity(0.18) : Color(.tertiarySystemFill), in: Capsule())
+                            .foregroundStyle(isSel ? Color.accentColor : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Spacer(minLength: 0)
+            }
         }
     }
 
@@ -633,6 +694,55 @@ public struct ComposeSheet: View {
                 .buttonStyle(.plain)
 
                 Spacer()
+
+                if !isQuickReply {
+                    Menu {
+                        ForEach(ComposeViewModel.ProductSubTabOption.allCases) { opt in
+                            Button {
+                                withAnimation(.snappy(duration: 0.2)) {
+                                    viewModel.subTabOption = opt
+                                }
+                            } label: {
+                                HStack {
+                                    Text(opt.title)
+                                    if viewModel.subTabOption == opt {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "tag")
+                                .font(.caption2.weight(.semibold))
+                            Text(viewModel.subTabOption.title)
+                                .font(.caption.weight(.semibold))
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 36)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .foregroundStyle(viewModel.subTabOption == .none ? Color.secondary : Color.accentColor)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        withAnimation(.snappy(duration: 0.18)) {
+                            viewModel.isSelfOnly.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: viewModel.isSelfOnly ? "lock.fill" : "globe")
+                                .font(.caption2.weight(.semibold))
+                            Text(viewModel.isSelfOnly ? "仅自己" : "公开")
+                                .font(.caption.weight(.semibold))
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 36)
+                        .glassEffect(.regular.interactive(), in: .capsule)
+                        .foregroundStyle(viewModel.isSelfOnly ? Color.orange : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
     }

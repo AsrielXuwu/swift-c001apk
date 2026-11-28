@@ -192,7 +192,7 @@ public struct ChatThreadView: View {
 
     private var activeBottomSlotHeight: CGFloat {
         if showEmojiPanel && keyboardHeight > 40 {
-            return 184 + keyboardHeight
+            return 210 + keyboardHeight
         }
         let emojiHeight = (showEmojiPanel || isHoldingSlotForKeyboard) ? max(260, lastKnownKeyboardHeight) : 0
         return max(keyboardHeight, emojiHeight)
@@ -228,9 +228,6 @@ public struct ChatThreadView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        Color.clear
-                            .frame(height: 18)
-
                         if !items.isEmpty && viewModel.hasMore {
                             Button("加载更早消息") {
                                 Task { await viewModel.loadOlder(appState: appState) }
@@ -323,10 +320,10 @@ public struct ChatThreadView: View {
             handleKeyboardFrameNotification(note, isHiding: true)
         }
         .c001PageBackground()
-        .navigationTitle("")
+        .navigationTitle(peerName.isEmpty ? "私信" : peerName)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .principal) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     appState.push(.user(
                         uid: peerUID,
@@ -335,31 +332,11 @@ public struct ChatThreadView: View {
                         transitionID: navAvatarID
                     ))
                 } label: {
-                    VStack(spacing: -8) {
-                        AvatarView(url: resolvedPeerAvatar, size: 46)
-                            .shadow(color: .black.opacity(0.16), radius: 3, y: 1.5)
-                            .zIndex(1)
-
-                        HStack(spacing: 3) {
-                            Text(peerName.isEmpty ? "私信" : peerName)
-                                .font(.system(size: 12.5, weight: .semibold))
-                                .foregroundStyle(.primary)
-                                .lineLimit(1)
-
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 9.5, weight: .bold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 11)
-                        .padding(.top, 7)
-                        .padding(.bottom, 4)
-                        .glassEffect(.regular.interactive(), in: .capsule)
-                    }
-                    .fixedSize()
-                    .applyZoomSource(id: navAvatarID, in: zoomNamespace, cornerRadius: 23)
+                    AvatarView(url: resolvedPeerAvatar, size: 32)
+                        .applyZoomSource(id: navAvatarID, in: zoomNamespace, cornerRadius: 16)
                 }
                 .buttonStyle(.plain)
-                .offset(y: 8)
+                .accessibilityLabel("查看用户主页")
             }
         }
         .task {
@@ -712,7 +689,7 @@ public struct ChatThreadView: View {
 
             if slotHeight > 0 {
                 let isEmojiKeyboardActive = showEmojiPanel && keyboardHeight > 40
-                let pickerHeight: CGFloat = isEmojiKeyboardActive ? 178 : max(252, slotHeight - 6)
+                let pickerHeight: CGFloat = isEmojiKeyboardActive ? 204 : max(252, slotHeight - 6)
                 VStack(spacing: 0) {
                     if showEmojiPanel || isHoldingSlotForKeyboard {
                         EmojiPickerView(height: pickerHeight) { name in

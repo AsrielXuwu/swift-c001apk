@@ -374,5 +374,100 @@ final class ModelTests: XCTestCase {
         XCTAssertEqual(FeedLink.resolve("coolapk://feed?id=75016216"), .feed("75016216"))
         XCTAssertEqual(FeedLink.resolve("c001apk://u/123456"), .user("123456"))
         XCTAssertEqual(FeedLink.resolve("https://m.coolapk.com/mp/feed/75277352"), .feed("75277352"))
+
+        // Item 1 (v18): Post 75284108 in "数码产品 → 到手价" where price 9599 is stored in structured tsubdata / subTabFeedCard
+        let daoshou75284108Raw = Data("""
+        {
+          "entityType": "feed",
+          "id": 75284108,
+          "uid": 3001,
+          "username": "数码首发用户",
+          "message": "首发终于到了，质感确实无敌，屏幕通透度比上一代提升明显。",
+          "tsubid": "6",
+          "tsubdata": "{\"final_price\":9599,\"config_id\":108,\"config_name\":\"16GB+512GB\"}",
+          "targetRow": {
+            "id": 5136,
+            "title": "旗舰新品 Pro",
+            "url": "/product/5136",
+            "targetType": "product"
+          }
+        }
+        """.utf8)
+        let daoshou75284108 = FeedItem(json: try JSON(data: daoshou75284108Raw))
+        XCTAssertFalse(daoshou75284108.isSecondHand)
+        XCTAssertTrue(daoshou75284108.hasPriceDisplay)
+        XCTAssertEqual(daoshou75284108.priceText, "¥9599")
+        XCTAssertEqual(daoshou75284108.dealStatusText, "到手价 · 16GB+512GB")
+        XCTAssertEqual(daoshou75284108.subTabID, "6")
+
+        // Also test subTabFeedCard & thousands-comma price ("¥9,599") and face-deal ershou
+        let subTabCardRaw = Data("""
+        {
+          "entityType": "feed",
+          "id": 75284109,
+          "uid": 3002,
+          "username": "好价分享",
+          "message": "线下门店直接提货",
+          "subTabFeedCard": {
+            "title": "到手价",
+            "value": "¥9,599",
+            "config_name": "24GB+1TB"
+          }
+        }
+        """.utf8)
+        let subTabCardFeed = FeedItem(json: try JSON(data: subTabCardRaw))
+        XCTAssertEqual(subTabCardFeed.priceText, "¥9599")
+        XCTAssertEqual(subTabCardFeed.dealStatusText, "到手价 · 24GB+1TB")
+
+        // Item 2 (v18): Rating post, battery subtab post, video post, and face-deal post
+        let ratingRaw = Data("""
+        {
+          "entityType": "feed",
+          "id": 88001,
+          "uid": 4001,
+          "username": "评测达人",
+          "feedType": "rating",
+          "rating_score": 9.2,
+          "buy_status": 1,
+          "comment_good": "续航极其顶，发热控制优秀",
+          "comment_bad": "机身略微偏重",
+          "comment_general": "今年综合体验最均衡的水桶旗舰",
+          "readNum": 604000,
+          "publish_status": 1,
+          "is_modified": 1,
+          "rating_item_info": [
+            {"name": "外观手感", "score": 9.5},
+            {"name": "系统流畅", "score": 9.0}
+          ]
+        }
+        """.utf8)
+        let ratingFeed = FeedItem(json: try JSON(data: ratingRaw))
+        XCTAssertEqual(ratingFeed.kind, .rating)
+        XCTAssertNotNil(ratingFeed.ratingInfo)
+        XCTAssertEqual(ratingFeed.ratingInfo?.starCount, 5)
+        XCTAssertEqual(ratingFeed.ratingInfo?.isOwner, true)
+        XCTAssertEqual(ratingFeed.ratingInfo?.prosText, "续航极其顶，发热控制优秀")
+        XCTAssertEqual(ratingFeed.ratingInfo?.dimensions.count, 2)
+        XCTAssertEqual(ratingFeed.readNum, 604000)
+        XCTAssertTrue(ratingFeed.isSelfOnly)
+        XCTAssertTrue(ratingFeed.isModified)
+
+        let faceDealRaw = Data("""
+        {
+          "entityType": "feed",
+          "id": 88002,
+          "uid": 4002,
+          "username": "同城卖家",
+          "feedType": "ershou",
+          "message": "仅限同城当面交易",
+          "ershou_info": {
+            "is_face_deal": 1,
+            "city": "北京"
+          }
+        }
+        """.utf8)
+        let faceDealFeed = FeedItem(json: try JSON(data: faceDealRaw))
+        XCTAssertTrue(faceDealFeed.isSecondHand)
+        XCTAssertEqual(faceDealFeed.priceText, "价格面议")
     }
 }

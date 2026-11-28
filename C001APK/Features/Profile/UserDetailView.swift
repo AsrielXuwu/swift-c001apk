@@ -11,8 +11,7 @@ public struct UserDetailView: View {
     @Environment(\.zoomNamespace) private var zoomNamespace
     @State private var transitionSeed = UUID().uuidString
     @State private var profile: UserProfile?
-    @State private var rows: [HomeFeedRow] = []
-    @State private var likedRows: [HomeFeedRow] = []
+    @State private var feedRowsByTab: [UserTab: [HomeFeedRow]] = [:]
     @State private var userCollections: [CollectionItem] = []
     @State private var followers: [UserBrief] = []
     @State private var following: [UserBrief] = []
@@ -54,12 +53,30 @@ public struct UserDetailView: View {
 
     private enum UserTab: String, CaseIterable, Identifiable {
         case feeds = "动态"
+        case htmlFeeds = "图文"
+        case qa = "问答"
+        case coolpic = "酷图"
+        case ratings = "点评"
+        case ershou = "二手"
         case likes = "赞过"
         case collections = "收藏夹"
         case following = "关注"
         case fans = "粉丝"
 
         var id: String { rawValue }
+
+        var apiKey: String {
+            switch self {
+            case .feeds: return "feeds"
+            case .htmlFeeds: return "htmlFeeds"
+            case .qa: return "qa"
+            case .coolpic: return "coolpic"
+            case .ratings: return "ratings"
+            case .ershou: return "ershou"
+            case .likes: return "likes"
+            case .collections, .following, .fans: return ""
+            }
+        }
     }
 
     public init(uid: String, initialUsername: String? = nil, initialAvatar: String? = nil, initialTab: String? = nil) {
@@ -435,8 +452,8 @@ public struct UserDetailView: View {
 
     private func isTabEmpty(_ item: UserTab) -> Bool {
         switch item {
-        case .feeds: return rows.isEmpty
-        case .likes: return likedRows.isEmpty
+        case .feeds, .htmlFeeds, .qa, .coolpic, .ratings, .ershou, .likes:
+            return (feedRowsByTab[item] ?? []).isEmpty
         case .collections: return userCollections.isEmpty
         case .following:
             let isSelf = appState.accounts.isLoggedIn && (appState.accounts.activeUID == uid || appState.currentUserProfile?.id == uid)
@@ -460,10 +477,8 @@ public struct UserDetailView: View {
                 .frame(maxWidth: .infinity, minHeight: 200)
         } else {
             switch item {
-            case .feeds:
-                feedList(rows, for: .feeds)
-            case .likes:
-                feedList(likedRows, for: .likes)
+            case .feeds, .htmlFeeds, .qa, .coolpic, .ratings, .ershou, .likes:
+                feedList(feedRowsByTab[item] ?? [], for: item)
             case .collections:
                 ForEach(Array(userCollections.enumerated()), id: \.element.id) { idx, col in
                     CollectionRowView(item: col)
@@ -554,22 +569,14 @@ public struct UserDetailView: View {
         let targetUID = resolvedNumericUID
         do {
             switch targetTab {
-            case .feeds:
-                let fetched = try await API.userFeeds(uid: targetUID, page: 1)
+            case .feeds, .htmlFeeds, .qa, .coolpic, .ratings, .ershou, .likes:
+                let fetched = try await API.userTabFeeds(uid: targetUID, tabKey: targetTab.apiKey, page: 1)
                 guard !Task.isCancelled else { return }
                 withAnimation(.smooth(duration: 0.24)) {
-                    rows = fetched
+                    feedRowsByTab[targetTab] = fetched
                     loadedTabs.insert(targetTab)
                 }
-                hasMoreByTab[.feeds] = !fetched.isEmpty
-            case .likes:
-                let fetched = try await API.userLikeFeeds(uid: targetUID, page: 1)
-                guard !Task.isCancelled else { return }
-                withAnimation(.smooth(duration: 0.24)) {
-                    likedRows = fetched
-                    loadedTabs.insert(targetTab)
-                }
-                hasMoreByTab[.likes] = !fetched.isEmpty
+                hasMoreByTab[targetTab] = !fetched.isEmpty
             case .collections:
                 if !appState.settings.enableCloudFavoritesLoad {
                     userCollections = []
@@ -629,18 +636,13 @@ public struct UserDetailView: View {
         let targetUID = resolvedNumericUID
         do {
             switch targetTab {
-            case .feeds:
-                let fetched = try await API.userFeeds(uid: targetUID, page: next)
-                var seen = Set(rows.map(\.id))
+            case .feeds, .htmlFeeds, .qa, .coolpic, .ratings, .ershou, .likes:
+                let fetched = try await API.userTabFeeds(uid: targetUID, tabKey: targetTab.apiKey, page: next)
+                let current = feedRowsByTab[targetTab] ?? []
+                var seen = Set(current.map(\.id))
                 let unique = fetched.filter { seen.insert($0.id).inserted }
-                rows.append(contentsOf: unique)
-                hasMoreByTab[.feeds] = !unique.isEmpty
-            case .likes:
-                let fetched = try await API.userLikeFeeds(uid: targetUID, page: next)
-                var seen = Set(likedRows.map(\.id))
-                let unique = fetched.filter { seen.insert($0.id).inserted }
-                likedRows.append(contentsOf: unique)
-                hasMoreByTab[.likes] = !unique.isEmpty
+                feedRowsByTab[targetTab] = current + unique
+                hasMoreByTab[targetTab] = !unique.isEmpty
             case .collections:
                 let fetched = try await API.collectionList(uid: targetUID, page: next)
                 var seen = Set(userCollections.map(\.id))
