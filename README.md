@@ -1,6 +1,18 @@
+<div align="center">
+
+<!-- ===================================================================== --> <!-- 预留 App 图标位置：将下方 src 替换为你的 App 图标路径，例如 docs/assets/logo.png --> <!-- ===================================================================== --> <p align="center"> <a href="https://www.google.com/search?q=https://github.com/AsrielXuwu/swift-c001apk"> <img src="docs/assets/app-icon-placeholder.png" alt="Swift C001APK (S001) App Icon" width="128" height="128" style="border-radius: 28px;" /> </a> </p>
+
 # Swift C001APK（S001）
 
 ### ✨ 「 iOS 端最好的酷安第三方客户端，没有之一 」 ✨
+
+<p align="center"> <b>100% 纯正原生 Swift 6 + SwiftUI 打造 · 遵循 Apple iOS 27 Liquid Glass（液态玻璃）设计规范</b><br/> 无广告 · 零追踪 · 全功能覆盖 · 丝滑无缝缩放过渡动画 · 本机与云端双轨同步 </p>
+
+<p align="center"> <a href="https://www.google.com/search?q=https://github.com/AsrielXuwu/swift-c001apk/releases/latest"> <img src="https://img.shields.io/github/v/release/AsrielXuwu/swift-c001apk?style=flat-square&logo=github&label=Latest%20Release&color=0A84FF" alt="Latest Release" /> </a> <a href="https://www.google.com/search?q=https://github.com/AsrielXuwu/swift-c001apk/actions/workflows/build.yml"> <img src="https://img.shields.io/github/actions/workflow/status/AsrielXuwu/swift-c001apk/build.yml?style=flat-square&logo=githubactions&label=CI%20Build" alt="Build Status" /> </a> <img src="https://img.shields.io/badge/Platform-iOS%2018%2B%20%7C%20iOS%2027%20Liquid%20Glass-000000?style=flat-square&logo=apple" alt="Platform" /> <img src="https://img.shields.io/badge/Swift-6.0-F05138?style=flat-square&logo=swift&logoColor=white" alt="Swift 6.0" /> <a href="https://www.google.com/search?q=https://github.com/AsrielXuwu/swift-c001apk/blob/main/LICENSE"> <img src="https://img.shields.io/badge/License-AGPL--3.0-blue?style=flat-square" alt="License" /> </a> <a href="https://www.google.com/search?q=https://t.me/swift_c001apk"> <img src="https://img.shields.io/badge/Telegram-交流群-26A5E4?style=flat-square&logo=telegram" alt="Telegram Group" /> </a> </p>
+
+<p align="center"> <a href="#-项目简介">项目简介</a> • <a href="#-核心特色与优势">核心特色</a> • <a href="#-应用截图预览">应用截图</a> • <a href="#-快速下载与安装含国内加速">快速下载</a> • <a href="#️-自定义编译与改名--改包名--换图标指南">自定义修改指南</a> • <a href="#-bug-反馈与交流社区">反馈与交流</a> • <a href="#-开源协议与免责声明">协议与免责声明</a> </p>
+
+</div>
 
 ## 📖 项目简介
 
@@ -62,13 +74,17 @@
 
 > 📌 *以下为应用截图展示位（你可以将实机截图放入仓库 `docs/screenshots/` 目录并替换下方图片路径）：*
 
+<div align="center">
+
 | 首页 · 动态与堆叠轮播 | 分区与发现中心 | 数码品牌分类库与参数对比 | 帖子详情与到手价识别 | 
 | ----- | ----- | ----- | ----- | 
-|  |  |  |  | 
+| <img src="docs/screenshots/home-placeholder.png" alt="首页动态" width="200" /> | <img src="docs/screenshots/partition-placeholder.png" alt="分区与发现" width="200" /> | <img src="docs/screenshots/brand-library-placeholder.png" alt="数码品牌分类库" width="200" /> | <img src="docs/screenshots/feed-detail-placeholder.png" alt="帖子详情" width="200" /> | <img src="docs/screenshots/feed-second-hand-trading.png" alt="二手交易帖" width="200" /> |
 
 | 个人中心（原生 SwiftUI） | 本机+云端双轨收藏夹 | 私信聊天与表情面板 | 底部 Tab 栏自由定制 | 
 | ----- | ----- | ----- | ----- | 
-|  |  |  |  | 
+| <img src="docs/screenshots/profile-placeholder.png" alt="个人中心" width="200" /> | <img src="docs/screenshots/favorites-placeholder.png" alt="双轨收藏夹" width="200" /> | <img src="docs/screenshots/chat-placeholder.png" alt="私信聊天" width="200" /> | <img src="docs/screenshots/tab-custom-placeholder.png" alt="Tab定制" width="200" /> | 
+
+</div>
 
 ## 🚀 快速下载与安装（含国内加速）
 
@@ -127,7 +143,6 @@ cd Packages/CoolapkKit && swift test && cd ../..
 # 4. 使用 Xcode 打开工程并连接真机或模拟器运行
 open C001APK.xcodeproj
 
-
 ```
 
 ### 2. 如何修改 App 显示名称、包名（Bundle ID）与 App 图标？
@@ -140,7 +155,6 @@ open C001APK.xcodeproj
     <key>CFBundleDisplayName</key>
     <string>Swift C001APK</string> <!-- 修改为你想要在桌面显示的名称，如 S001 或 酷安 -->
     
-    
     ```
 
 * **② 修改 App 包名（Bundle Identifier）**：
@@ -149,7 +163,6 @@ open C001APK.xcodeproj
 
     ```
     PRODUCT_BUNDLE_IDENTIFIER: app.awavenue.c001apk.ios # 修改为你的自定义包名
-    
     
     ```
 
@@ -179,7 +192,6 @@ open C001APK.xcodeproj
       }
     }
     
-    
     ```
 
   * 或者在执行 `xcodegen generate` 后用 Xcode 打开工程，点开左侧 `Assets.xcassets` → `AppIcon`，直接将 1024×1024 图片拖入图标槽位即可。
@@ -191,7 +203,6 @@ open C001APK.xcodeproj
 ```
 git tag v1.2.0
 git push origin v1.2.0
-
 
 ```
 
@@ -250,3 +261,7 @@ Swift C001APK（S001）在开发过程中参考并受益于以下优秀的开源
 3. **隐私与账号安全**：本客户端所有网络请求均由用户设备直连酷安官方服务器，**不包含任何第三方统计、广告 SDK 或中转后台服务器**，用户的 Cookie、Token 与本机收藏数据仅保存在用户设备本地（Keychain / App Sandbox）。因用户不当使用、频繁违规请求或第三方接口变更导致的任何账号限制或数据损失，开发者不承担任何法律责任。
 
 4. **合规要求**：请遵守当地法律法规及酷安社区管理规范，下载后请于 24 小时内学习研究，切勿利用本项目从事任何破坏网络服务正常运行的行为。如权利人认为本项目存在任何不当之处，请通过邮件 [`asrielxuwu@outlook.com`](https://www.google.com/search?q=mailto%3Aasrielxuwu%40outlook.com) 联系作者处理。
+
+<div align="center">
+如果觉得 <b>Swift C001APK（S001）</b> 对你有帮助，欢迎点亮右上角的 ⭐ <b>Star</b> 支持一下！
+</div>
