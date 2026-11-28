@@ -529,8 +529,8 @@ final class ModelTests: XCTestCase {
         XCTAssertTrue(HomeTabConfiguration.defaultOrder.contains(.review))
     }
 
-    func testGoodsRankingItemWithoutInlineProductsAndConsecutiveBannersCoalesce() {
-        let goodsCardJSON = JSONValue.parse("""
+    func testGoodsRankingItemWithoutInlineProductsAndConsecutiveBannersCoalesce() throws {
+        let goodsCardRaw = Data("""
         {
             "entityType": "card",
             "entityTemplate": "goodsListCard",
@@ -538,13 +538,14 @@ final class ModelTests: XCTestCase {
             "url": "/v6/goodsList/detail?id=9981",
             "pic": "https://image.coolapk.com/goods_cover.png"
         }
-        """)
+        """.utf8)
+        let goodsCardJSON = try JSON(data: goodsCardRaw)
         let ranking = GoodsRankingItem(json: goodsCardJSON)
         XCTAssertNotNil(ranking)
         XCTAssertEqual(ranking?.title, "2026 年度酷安数码好物榜")
         XCTAssertTrue(ranking?.products.isEmpty ?? false)
 
-        let rowsJSON = JSONValue.parse("""
+        let rowsRaw = Data("""
         {
             "data": [
                 {
@@ -561,7 +562,8 @@ final class ModelTests: XCTestCase {
                 }
             ]
         }
-        """)
+        """.utf8)
+        let rowsJSON = try JSON(data: rowsRaw)
         let rows = API.rows(from: rowsJSON.data)
         XCTAssertEqual(rows.count, 1)
         if case let .banners(_, items) = rows.first {
