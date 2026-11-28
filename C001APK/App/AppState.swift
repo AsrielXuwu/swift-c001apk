@@ -678,7 +678,7 @@ public final class AppState {
         }
         guard let resolved = FeedLink.resolve(raw) else { return }
         let route = AppRoute.from(feedLink: resolved, preferredTitle: title, transitionID: transitionID)
-        if case let .web(url) = route, settings.openInBrowser {
+        if case let .web(url, _) = route, settings.openInBrowser {
             UIApplication.shared.open(url)
             return
         }
